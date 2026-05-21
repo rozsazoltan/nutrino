@@ -1,0 +1,54 @@
+{
+  "name": "nutrino",
+  "private": true,
+  "version": "0.5.24",
+  "packageManager": "pnpm@10.32.1",
+  "type": "module",
+  "scripts": {
+    "desktop:dev": "pnpm --filter nutrino-desktop tauri:dev",
+    "desktop:build": "pnpm --filter nutrino-desktop tauri:build",
+    "desktop:web:dev": "pnpm --filter nutrino-desktop dev",
+    "desktop:web:build": "pnpm --filter nutrino-desktop build",
+    "mobile:dev": "pnpm --filter nutrino-mobile tauri:dev",
+    "mobile:build": "pnpm --filter nutrino-mobile tauri:build",
+    "mobile:android:init": "pnpm --filter nutrino-mobile android:init",
+    "mobile:android:patch": "pnpm --filter nutrino-mobile android:patch",
+    "mobile:android:dev": "pnpm --filter nutrino-mobile android:dev",
+    "mobile:android:build": "pnpm --filter nutrino-mobile android:build",
+    "mobile:android:doctor": "pnpm --filter nutrino-mobile android:doctor",
+    "mobile:android:clean": "pnpm --filter nutrino-mobile android:clean",
+    "mobile:ios:init": "pnpm --filter nutrino-mobile ios:init",
+    "mobile:ios:dev": "pnpm --filter nutrino-mobile ios:dev",
+    "mobile:ios:build": "pnpm --filter nutrino-mobile ios:build",
+    "web:build": "pnpm desktop:web:build && pnpm --filter nutrino-mobile build",
+    "check": "pnpm web:build",
+    "mobile:android:apk": "pnpm --filter nutrino-mobile android:apk",
+    "mobile:android:aab": "pnpm --filter nutrino-mobile android:aab",
+    "mobile:android:universal": "pnpm --filter nutrino-mobile android:universal",
+    "mobile:android:apk:release": "pnpm --filter nutrino-mobile android:apk:release",
+    "mobile:android:universal:release": "pnpm --filter nutrino-mobile android:universal:release",
+    "mobile:android:apk:dev": "pnpm --filter nutrino-mobile android:apk:dev",
+    "mobile:android:apk:stable": "pnpm --filter nutrino-mobile android:apk:stable",
+    "mobile:android:apk:stable:debug": "pnpm --filter nutrino-mobile android:apk:stable:debug",
+    "mobile:android:apk:dev:debug": "pnpm --filter nutrino-mobile android:apk:dev:debug",
+    "mobile:android:apk:debug": "pnpm --filter nutrino-mobile android:apk:debug",
+    "mobile:android:universal:debug": "pnpm --filter nutrino-mobile android:universal:debug"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rozsazoltan/nutrino.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rozsazoltan/nutrino/issues"
+  },
+  "homepage": "https://github.com/rozsazoltan/nutrino#readme",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

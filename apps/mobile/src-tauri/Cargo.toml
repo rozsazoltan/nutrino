@@ -1,0 +1,33 @@
+[package]
+name = "nutrino_mobile"
+version = "0.5.24"
+description = "nutrino mobile Tauri v2 Android client"
+authors = ["nutrino"]
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "nutrino_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+
+[target."cfg(any(target_os = \"android\", target_os = \"ios\"))".dependencies]
+tauri-plugin-share = "2"
+
+[target."cfg(target_os = \"android\")".dependencies]
+tauri-plugin-android-fs = { version = "28", default-features = false }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+strip = "symbols"
+

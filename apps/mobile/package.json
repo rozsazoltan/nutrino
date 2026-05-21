@@ -1,0 +1,59 @@
+{
+  "name": "nutrino-mobile",
+  "private": true,
+  "version": "0.5.24",
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 1421",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 1421",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "android:init": "node scripts/android-channel.mjs --channel dev && tauri android init && node scripts/patch-android-generated.mjs --channel dev",
+    "android:patch": "node scripts/patch-android-generated.mjs --channel dev",
+    "android:dev": "node scripts/android-dev-host.mjs",
+    "android:dev:host": "node scripts/android-dev-host.mjs",
+    "android:build": "node scripts/android-build.mjs --channel dev --apk --target aarch64",
+    "android:doctor": "node scripts/android-doctor.mjs",
+    "ios:init": "tauri ios init",
+    "ios:dev": "tauri ios dev",
+    "ios:build": "tauri ios build",
+    "android:apk": "node scripts/android-build.mjs --channel dev --apk --target aarch64",
+    "android:aab": "node scripts/android-build.mjs --channel stable --aab --target aarch64 --target armv7",
+    "android:universal": "node scripts/android-build.mjs --channel dev --apk",
+    "android:clean": "node scripts/android-clean.mjs",
+    "android:apk:release": "node scripts/android-build.mjs --channel stable --apk --target aarch64",
+    "android:universal:release": "node scripts/android-build.mjs --channel stable --apk",
+    "android:apk:dev": "node scripts/android-build.mjs --channel dev --apk --target aarch64",
+    "android:apk:stable": "node scripts/android-build.mjs --channel stable --apk --target aarch64",
+    "android:apk:stable:debug": "node scripts/android-build.mjs --channel stable --apk --debug --target aarch64",
+    "android:apk:dev:debug": "node scripts/android-build.mjs --channel dev --apk --debug --target aarch64",
+    "android:apk:debug": "node scripts/android-build.mjs --channel dev --apk --debug --target aarch64",
+    "android:universal:debug": "node scripts/android-build.mjs --channel dev --apk --debug"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "vue": "^3.5.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-fs": "^2.4.0",
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0",
+    "@vitejs/plugin-vue": "^5.2.0",
+    "typescript": "^5.9.0",
+    "vite": "^6.4.0",
+    "vue-tsc": "^2.2.0"
+  },
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rozsazoltan/nutrino.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rozsazoltan/nutrino/issues"
+  },
+  "homepage": "https://github.com/rozsazoltan/nutrino#readme"
+}
