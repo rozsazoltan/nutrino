@@ -10,6 +10,9 @@ import type {
   ActivityDefinition,
   ActivityInput,
   DesktopSettings,
+  SyncInboxEntry,
+  SyncInboxCommitResult,
+  CatalogDuplicateSuggestion,
 } from '../types';
 
 export const commands = {
@@ -41,4 +44,11 @@ export const commands = {
   getDesktopSettings: () => invoke<DesktopSettings>('get_desktop_settings'),
   saveDesktopSettings: (settings: DesktopSettings) => invoke<DesktopSettings>('save_desktop_settings', { settings }),
   rememberCurrentWindow: () => invoke<DesktopSettings>('remember_current_window'),
+  setServerPassword: (password: string) => invoke<ServerStatus>('set_server_password', { password }),
+  listSyncInbox: () => invoke<SyncInboxEntry[]>('list_sync_inbox'),
+  acceptSyncInbox: (entryId: string) => invoke<SyncInboxCommitResult>('accept_sync_inbox', { entryId }),
+  rejectSyncInbox: (entryId: string) => invoke<void>('reject_sync_inbox', { entryId }),
+  updateSyncInboxPayload: (entryId: string, payloadJson: string) => invoke<SyncInboxEntry>('update_sync_inbox_payload', { entryId, payloadJson }),
+  mergeCatalogItem: (kind: string, aliasId: string, canonicalId: string) => invoke<void>('merge_catalog_item', { kind, aliasId, canonicalId }),
+  listCatalogDuplicateSuggestions: () => invoke<CatalogDuplicateSuggestion[]>('list_catalog_duplicate_suggestions'),
 };

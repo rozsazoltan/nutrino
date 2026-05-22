@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Mutex,
@@ -21,8 +22,8 @@ use tokio::sync::oneshot;
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
-const APP_NAME: &str = "nutrino Desktop";
-const APP_VERSION: &str = "0.5.16";
+const APP_NAME: &str = "Nutrino Desktop";
+const APP_VERSION: &str = "0.6.17";
 
 struct ServerRuntime {
     port: u16,
@@ -55,6 +56,8 @@ struct ServerStatus {
     port: Option<u16>,
     base_url: Option<String>,
     token: String,
+    password_set: bool,
+    app_channel: String,
     source_id: String,
     auth_required: bool,
     dev_mode: bool,
@@ -69,8 +72,79 @@ struct HealthResponse {
     source_id: String,
     version: String,
     auth_required: bool,
+    app_channel: String,
     dev_mode: bool,
     catalog_revision: i64,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CatalogAlias {
+    kind: String,
+    alias_id: String,
+    canonical_id: String,
+    source_id: Option<String>,
+    updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SyncInboxSummary {
+    foods: usize,
+    recipes: usize,
+    recipe_items: usize,
+    activities: usize,
+    intakes: usize,
+    weight_logs: usize,
+    activity_logs: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MergeCandidate {
+    kind: String,
+    incoming_id: String,
+    incoming_name: String,
+    canonical_id: String,
+    canonical_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CatalogDuplicateItem {
+    id: String,
+    name: String,
+    subtitle: String,
+    updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CatalogDuplicateSuggestion {
+    kind: String,
+    reason: String,
+    confidence: String,
+    score: u8,
+    key: String,
+    items: Vec<CatalogDuplicateItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SyncInboxEntry {
+    id: String,
+    source_id: String,
+    device_name: Option<String>,
+    received_at: i64,
+    status: String,
+    summary: SyncInboxSummary,
+    merge_candidates: Vec<MergeCandidate>,
+    payload: SyncPushRequest,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SyncInboxCommitResult {
+    accepted: bool,
+    merged: usize,
+    inserted_or_updated: usize,
+    intakes: usize,
+    weight_logs: usize,
+    activity_logs: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,12 +256,15 @@ struct RecipeInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IntakePayload {
     id: String,
+    item_type: Option<String>,
     food_id: String,
     source_id: String,
     consumed_at: i64,
     meal_type: String,
     amount_g: f64,
     food_snapshot_json: String,
+    note_title: Option<String>,
+    note_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,6 +319,7 @@ struct SyncPullResponse {
     recipes: Vec<Recipe>,
     recipe_items: Vec<RecipeItem>,
     activities: Vec<ActivityDefinition>,
+    aliases: Vec<CatalogAlias>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -249,8 +327,15 @@ struct SyncPullQuery {
     since: Option<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SyncPushRequest {
+    source_id: Option<String>,
+    device_name: Option<String>,
+    sent_at: Option<i64>,
+    foods: Option<Vec<Food>>,
+    recipes: Option<Vec<Recipe>>,
+    recipe_items: Option<Vec<RecipeItem>>,
+    activities: Option<Vec<ActivityDefinition>>,
     intakes: Vec<IntakePayload>,
     weight_logs: Vec<WeightLogPayload>,
     activity_logs: Vec<ActivityLogPayload>,
@@ -380,6 +465,13 @@ pub fn run() {
             get_desktop_settings,
             save_desktop_settings,
             remember_current_window,
+            set_server_password,
+            list_sync_inbox,
+            accept_sync_inbox,
+            reject_sync_inbox,
+            update_sync_inbox_payload,
+            merge_catalog_item,
+            list_catalog_duplicate_suggestions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running nutrino Desktop");
@@ -453,11 +545,14 @@ fn init_database(path: &Path) -> Result<()> {
         CREATE TABLE IF NOT EXISTS intakes (
             id TEXT PRIMARY KEY,
             source_id TEXT NOT NULL,
+            item_type TEXT NOT NULL DEFAULT 'food',
             food_id TEXT NOT NULL,
             consumed_at INTEGER NOT NULL,
             meal_type TEXT NOT NULL,
             amount_g REAL NOT NULL,
             food_snapshot_json TEXT NOT NULL,
+            note_title TEXT,
+            note_description TEXT,
             synced_at INTEGER,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
@@ -498,17 +593,42 @@ fn init_database(path: &Path) -> Result<()> {
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         );
+
+
+        CREATE TABLE IF NOT EXISTS item_aliases (
+            kind TEXT NOT NULL,
+            alias_id TEXT NOT NULL,
+            canonical_id TEXT NOT NULL,
+            source_id TEXT,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (kind, alias_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_inbox (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            device_name TEXT,
+            received_at INTEGER NOT NULL,
+            payload_json TEXT NOT NULL,
+            summary_json TEXT NOT NULL,
+            merge_candidates_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            applied_at INTEGER
+        );
         "#,
     )?;
 
     let _ = conn.execute("ALTER TABLE weight_logs ADD COLUMN bmi REAL NOT NULL DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE foods ADD COLUMN note TEXT", []);
     let _ = conn.execute("ALTER TABLE recipes ADD COLUMN note TEXT", []);
+    let _ = conn.execute("ALTER TABLE intakes ADD COLUMN item_type TEXT NOT NULL DEFAULT 'food'", []);
+    let _ = conn.execute("ALTER TABLE intakes ADD COLUMN note_title TEXT", []);
+    let _ = conn.execute("ALTER TABLE intakes ADD COLUMN note_description TEXT", []);
     retire_builtin_sample_catalog(&conn)?;
     seed_default_activities(&conn)?;
 
     ensure_setting(&conn, "source_id", &format!("desktop-{}", Uuid::new_v4()))?;
-    ensure_setting(&conn, "server_token", &Uuid::new_v4().to_string())?;
+    migrate_server_password(&conn)?;
     ensure_setting(&conn, "server_port", "8090")?;
     ensure_setting(&conn, "remember_window_state", "false")?;
     ensure_setting(&conn, "launch_at_startup", "false")?;
@@ -550,6 +670,24 @@ fn ensure_setting(conn: &Connection, key: &str, default_value: &str) -> Result<(
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)",
             params![key, default_value],
+        )?;
+    }
+    Ok(())
+}
+
+
+fn migrate_server_password(conn: &Connection) -> Result<()> {
+    let existing_password: Option<String> = conn
+        .query_row("SELECT value FROM settings WHERE key = 'server_password'", [], |row| row.get(0))
+        .optional()?;
+    if existing_password.is_none() {
+        let old_token: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'server_token'", [], |row| row.get(0))
+            .optional()?;
+        let value = old_token.unwrap_or_default();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('server_password', ?1)",
+            params![value],
         )?;
     }
     Ok(())
@@ -675,15 +813,16 @@ async fn start_api_server_internal(port: u16, state: &AppState) -> Result<Server
 
     let conn = open_conn(&state.db_path)?;
     set_setting(&conn, "server_port", &port.to_string())?;
-    let token = setting(&conn, "server_token")?;
+    let token = setting(&conn, "server_password")?;
     let source_id = setting(&conn, "source_id")?;
+    let auth_required = auth_required_for_token(&token);
     drop(conn);
 
     let api_state = ApiState {
         db_path: state.db_path.clone(),
         token,
         source_id,
-        auth_required: auth_required(),
+        auth_required,
         dev_mode: dev_mode(),
     };
 
@@ -986,6 +1125,78 @@ fn remember_current_window(app: tauri::AppHandle, state: State<'_, AppState>) ->
     Ok(settings)
 }
 
+
+#[tauri::command]
+fn set_server_password(state: State<'_, AppState>, password: String) -> Result<ServerStatus, String> {
+    let conn = open_conn(&state.db_path).map_err(stringify_error)?;
+    set_setting(&conn, "server_password", password.trim()).map_err(stringify_error)?;
+    drop(conn);
+    server_status(&state).map_err(stringify_error)
+}
+
+
+#[tauri::command]
+fn list_sync_inbox(state: State<'_, AppState>) -> Result<Vec<SyncInboxEntry>, String> {
+    db_list_sync_inbox(&state.db_path).map_err(stringify_error)
+}
+
+#[tauri::command]
+fn accept_sync_inbox(state: State<'_, AppState>, entry_id: String) -> Result<SyncInboxCommitResult, String> {
+    let conn = open_conn(&state.db_path).map_err(stringify_error)?;
+    let payload_json: String = conn.query_row(
+        "SELECT payload_json FROM sync_inbox WHERE id = ?1 AND status = 'pending'",
+        params![&entry_id],
+        |row| row.get(0),
+    ).map_err(stringify_error)?;
+    let payload: SyncPushRequest = serde_json::from_str(&payload_json).map_err(stringify_error)?;
+    let result = commit_sync_payload(&conn, &payload).map_err(stringify_error)?;
+    conn.execute(
+        "UPDATE sync_inbox SET status = 'accepted', applied_at = ?1 WHERE id = ?2",
+        params![now_ms(), &entry_id],
+    ).map_err(stringify_error)?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn reject_sync_inbox(state: State<'_, AppState>, entry_id: String) -> Result<(), String> {
+    let conn = open_conn(&state.db_path).map_err(stringify_error)?;
+    conn.execute(
+        "UPDATE sync_inbox SET status = 'rejected', applied_at = ?1 WHERE id = ?2 AND status = 'pending'",
+        params![now_ms(), &entry_id],
+    ).map_err(stringify_error)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn update_sync_inbox_payload(state: State<'_, AppState>, entry_id: String, payload_json: String) -> Result<SyncInboxEntry, String> {
+    let conn = open_conn(&state.db_path).map_err(stringify_error)?;
+    let payload: SyncPushRequest = serde_json::from_str(&payload_json).map_err(stringify_error)?;
+    let normalized_payload_json = serde_json::to_string_pretty(&payload).map_err(stringify_error)?;
+    let summary = summarize_sync_payload(&payload);
+    let summary_json = serde_json::to_string(&summary).map_err(stringify_error)?;
+    let merge_candidates = find_merge_candidates(&conn, &payload).map_err(stringify_error)?;
+    let merge_json = serde_json::to_string(&merge_candidates).map_err(stringify_error)?;
+    conn.execute(
+        r#"UPDATE sync_inbox
+           SET payload_json = ?1, summary_json = ?2, merge_candidates_json = ?3
+           WHERE id = ?4 AND status = 'pending'"#,
+        params![normalized_payload_json, summary_json, merge_json, &entry_id],
+    ).map_err(stringify_error)?;
+    db_get_sync_inbox_entry(&conn, &entry_id).map_err(stringify_error)
+}
+
+#[tauri::command]
+fn merge_catalog_item(state: State<'_, AppState>, kind: String, alias_id: String, canonical_id: String) -> Result<(), String> {
+    let conn = open_conn(&state.db_path).map_err(stringify_error)?;
+    merge_catalog_item_internal(&conn, &kind, &alias_id, &canonical_id, None).map_err(stringify_error)
+}
+
+#[tauri::command]
+fn list_catalog_duplicate_suggestions(state: State<'_, AppState>) -> Result<Vec<CatalogDuplicateSuggestion>, String> {
+    let conn = open_conn(&state.db_path).map_err(stringify_error)?;
+    find_catalog_duplicate_suggestions(&conn).map_err(stringify_error)
+}
+
 #[tauri::command]
 fn export_activities_csv(state: State<'_, AppState>) -> Result<String, String> {
     let activities = db_list_active_activities(&state.db_path).map_err(stringify_error)?;
@@ -1132,10 +1343,541 @@ fn import_recipes_csv(state: State<'_, AppState>, csv_text: String) -> Result<Im
     Ok(ImportCommitResult { inserted_or_updated, skipped, errors })
 }
 
+
+
+fn query_active_foods(conn: &Connection) -> Result<Vec<Food>> {
+    let mut stmt = conn.prepare(
+        r#"SELECT id, source_id, name, brand, note, default_unit, serving_size_g,
+                 kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
+                 sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
+           FROM foods WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE"#,
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(Food {
+            id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, brand: row.get(3)?, note: row.get(4)?, default_unit: row.get(5)?, serving_size_g: row.get(6)?,
+            kcal_per_100g: row.get(7)?, carbs_per_100g: row.get(8)?, fat_per_100g: row.get(9)?, protein_per_100g: row.get(10)?, sugars_per_100g: row.get(11)?, fiber_per_100g: row.get(12)?, salt_per_100g: row.get(13)?, updated_at: row.get(14)?, deleted_at: row.get(15)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn query_active_recipes(conn: &Connection) -> Result<Vec<Recipe>> {
+    let mut stmt = conn.prepare(
+        r#"SELECT id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at
+           FROM recipes WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE"#,
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(Recipe { id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, description: row.get(3)?, note: row.get(4)?, total_weight_g: row.get(5)?, servings_count: row.get(6)?, updated_at: row.get(7)?, deleted_at: row.get(8)? })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn query_active_activities(conn: &Connection) -> Result<Vec<ActivityDefinition>> {
+    let mut stmt = conn.prepare(
+        r#"SELECT id, code, name, description, activity_type, met, kcal_per_min, updated_at, deleted_at
+           FROM activities WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE"#,
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ActivityDefinition { id: row.get(0)?, code: row.get(1)?, name: row.get(2)?, description: row.get(3)?, activity_type: row.get(4)?, met: row.get(5)?, kcal_per_min: row.get(6)?, updated_at: row.get(7)?, deleted_at: row.get(8)? })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn summarize_sync_payload(payload: &SyncPushRequest) -> SyncInboxSummary {
+    SyncInboxSummary {
+        foods: payload.foods.as_ref().map(|v| v.len()).unwrap_or(0),
+        recipes: payload.recipes.as_ref().map(|v| v.len()).unwrap_or(0),
+        recipe_items: payload.recipe_items.as_ref().map(|v| v.len()).unwrap_or(0),
+        activities: payload.activities.as_ref().map(|v| v.len()).unwrap_or(0),
+        intakes: payload.intakes.len(),
+        weight_logs: payload.weight_logs.len(),
+        activity_logs: payload.activity_logs.len(),
+    }
+}
+
+fn normalize_text(value: &str) -> String {
+    value.trim().to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn number_key(value: f64) -> i64 {
+    (value * 1000.0).round() as i64
+}
+
+fn optional_number_key(value: Option<f64>) -> i64 {
+    number_key(value.unwrap_or(0.0))
+}
+
+fn food_signature(food: &Food) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        normalize_text(&food.name),
+        normalize_text(food.brand.as_deref().unwrap_or("")),
+        normalize_text(food.note.as_deref().unwrap_or("")),
+        normalize_text(&food.default_unit),
+        optional_number_key(food.serving_size_g),
+        number_key(food.kcal_per_100g),
+        number_key(food.carbs_per_100g),
+        number_key(food.fat_per_100g),
+        number_key(food.protein_per_100g),
+        number_key(food.sugars_per_100g),
+        number_key(food.fiber_per_100g),
+        number_key(food.salt_per_100g),
+    )
+}
+
+fn recipe_signature(recipe: &Recipe) -> String {
+    format!(
+        "{}|{}|{}|{}|{}",
+        normalize_text(&recipe.name),
+        normalize_text(recipe.description.as_deref().unwrap_or("")),
+        normalize_text(recipe.note.as_deref().unwrap_or("")),
+        optional_number_key(recipe.total_weight_g),
+        optional_number_key(recipe.servings_count),
+    )
+}
+
+fn activity_signature(activity: &ActivityDefinition) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}",
+        normalize_text(&activity.code),
+        normalize_text(&activity.name),
+        normalize_text(activity.description.as_deref().unwrap_or("")),
+        normalize_text(&activity.activity_type),
+        number_key(activity.met),
+        number_key(activity.kcal_per_min),
+    )
+}
+
+fn find_existing_food_duplicate(conn: &Connection, incoming: &Food) -> Result<Option<Food>> {
+    let existing = query_active_foods(conn)?;
+    Ok(existing.into_iter().find(|item| item.id != incoming.id && food_signature(item) == food_signature(incoming)))
+}
+
+fn find_existing_recipe_duplicate(conn: &Connection, incoming: &Recipe) -> Result<Option<Recipe>> {
+    let existing = query_active_recipes(conn)?;
+    Ok(existing.into_iter().find(|item| item.id != incoming.id && recipe_signature(item) == recipe_signature(incoming)))
+}
+
+fn find_existing_activity_duplicate(conn: &Connection, incoming: &ActivityDefinition) -> Result<Option<ActivityDefinition>> {
+    let existing = query_active_activities(conn)?;
+    Ok(existing.into_iter().find(|item| item.id != incoming.id && activity_signature(item) == activity_signature(incoming)))
+}
+
+fn find_merge_candidates(conn: &Connection, payload: &SyncPushRequest) -> Result<Vec<MergeCandidate>> {
+    let mut candidates = Vec::new();
+    if let Some(foods) = &payload.foods {
+        for food in foods {
+            if let Some(existing) = find_existing_food_duplicate(conn, food)? {
+                candidates.push(MergeCandidate { kind: "food".into(), incoming_id: food.id.clone(), incoming_name: food.name.clone(), canonical_id: existing.id, canonical_name: existing.name });
+            }
+        }
+    }
+    if let Some(recipes) = &payload.recipes {
+        for recipe in recipes {
+            if let Some(existing) = find_existing_recipe_duplicate(conn, recipe)? {
+                candidates.push(MergeCandidate { kind: "recipe".into(), incoming_id: recipe.id.clone(), incoming_name: recipe.name.clone(), canonical_id: existing.id, canonical_name: existing.name });
+            }
+        }
+    }
+    if let Some(activities) = &payload.activities {
+        for activity in activities {
+            if let Some(existing) = find_existing_activity_duplicate(conn, activity)? {
+                candidates.push(MergeCandidate { kind: "activity".into(), incoming_id: activity.id.clone(), incoming_name: activity.name.clone(), canonical_id: existing.id, canonical_name: existing.name });
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+fn loose_name_key(value: &str) -> String {
+    value
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|ch| if ch.is_alphanumeric() { ch } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn duplicate_ids_key(kind: &str, item_ids: &[String]) -> String {
+    let mut ids = item_ids.to_vec();
+    ids.sort();
+    format!("{}:{}", kind, ids.join("|"))
+}
+
+fn push_duplicate_group(
+    suggestions: &mut Vec<CatalogDuplicateSuggestion>,
+    seen: &mut HashSet<String>,
+    kind: &str,
+    reason: &str,
+    confidence: &str,
+    score: u8,
+    key: String,
+    mut items: Vec<CatalogDuplicateItem>,
+) {
+    if items.len() < 2 {
+        return;
+    }
+    items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| b.updated_at.cmp(&a.updated_at)));
+    let ids = items.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+    let seen_key = duplicate_ids_key(kind, &ids);
+    if seen.contains(&seen_key) {
+        return;
+    }
+    seen.insert(seen_key);
+    suggestions.push(CatalogDuplicateSuggestion {
+        kind: kind.to_string(),
+        reason: reason.to_string(),
+        confidence: confidence.to_string(),
+        score,
+        key,
+        items,
+    });
+}
+
+fn find_catalog_duplicate_suggestions(conn: &Connection) -> Result<Vec<CatalogDuplicateSuggestion>> {
+    let foods = query_active_foods(conn)?;
+    let recipes = query_active_recipes(conn)?;
+    let activities = query_active_activities(conn)?;
+    let mut suggestions = Vec::new();
+    let mut seen = HashSet::new();
+
+    let mut food_exact: HashMap<String, Vec<CatalogDuplicateItem>> = HashMap::new();
+    let mut food_name: HashMap<String, Vec<CatalogDuplicateItem>> = HashMap::new();
+    for food in foods {
+        let item = CatalogDuplicateItem {
+            id: food.id.clone(),
+            name: food.name.clone(),
+            subtitle: format!(
+                "{} kcal / 100g · {} · {}",
+                (food.kcal_per_100g * 10.0).round() / 10.0,
+                food.brand.clone().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "no brand".into()),
+                food.default_unit
+            ),
+            updated_at: food.updated_at,
+        };
+        food_exact.entry(food_signature(&food)).or_default().push(item.clone());
+        let name_key = loose_name_key(&food.name);
+        if !name_key.is_empty() {
+            food_name.entry(name_key).or_default().push(item);
+        }
+    }
+    for (key, items) in food_exact {
+        push_duplicate_group(&mut suggestions, &mut seen, "food", "Exact same food data", "high", 100, key, items);
+    }
+    for (key, items) in food_name {
+        push_duplicate_group(&mut suggestions, &mut seen, "food", "Same normalized food name", "medium", 75, key, items);
+    }
+
+    let mut recipe_name: HashMap<String, Vec<CatalogDuplicateItem>> = HashMap::new();
+    let mut recipe_meta: HashMap<String, Vec<CatalogDuplicateItem>> = HashMap::new();
+    for recipe in recipes {
+        let item = CatalogDuplicateItem {
+            id: recipe.id.clone(),
+            name: recipe.name.clone(),
+            subtitle: format!(
+                "{} servings · {}g total",
+                recipe.servings_count.unwrap_or(0.0),
+                recipe.total_weight_g.unwrap_or(0.0)
+            ),
+            updated_at: recipe.updated_at,
+        };
+        recipe_meta.entry(recipe_signature(&recipe)).or_default().push(item.clone());
+        let name_key = loose_name_key(&recipe.name);
+        if !name_key.is_empty() {
+            recipe_name.entry(name_key).or_default().push(item);
+        }
+    }
+    for (key, items) in recipe_meta {
+        push_duplicate_group(&mut suggestions, &mut seen, "recipe", "Exact same recipe metadata", "high", 92, key, items);
+    }
+    for (key, items) in recipe_name {
+        push_duplicate_group(&mut suggestions, &mut seen, "recipe", "Same normalized recipe name", "medium", 72, key, items);
+    }
+
+    let mut activity_exact: HashMap<String, Vec<CatalogDuplicateItem>> = HashMap::new();
+    let mut activity_name: HashMap<String, Vec<CatalogDuplicateItem>> = HashMap::new();
+    let mut activity_code: HashMap<String, Vec<CatalogDuplicateItem>> = HashMap::new();
+    for activity in activities {
+        let item = CatalogDuplicateItem {
+            id: activity.id.clone(),
+            name: activity.name.clone(),
+            subtitle: format!(
+                "code {} · MET {} · {} kcal/min · {}",
+                activity.code,
+                (activity.met * 10.0).round() / 10.0,
+                (activity.kcal_per_min * 10.0).round() / 10.0,
+                activity.activity_type
+            ),
+            updated_at: activity.updated_at,
+        };
+        activity_exact.entry(activity_signature(&activity)).or_default().push(item.clone());
+        let name_key = loose_name_key(&activity.name);
+        if !name_key.is_empty() {
+            activity_name.entry(name_key).or_default().push(item.clone());
+        }
+        let code_key = loose_name_key(&activity.code);
+        if !code_key.is_empty() && code_key != "custom" {
+            activity_code.entry(code_key).or_default().push(item);
+        }
+    }
+    for (key, items) in activity_exact {
+        push_duplicate_group(&mut suggestions, &mut seen, "activity", "Exact same activity data", "high", 100, key, items);
+    }
+    for (key, items) in activity_name {
+        push_duplicate_group(&mut suggestions, &mut seen, "activity", "Same normalized activity name", "medium", 78, key, items);
+    }
+    for (key, items) in activity_code {
+        push_duplicate_group(&mut suggestions, &mut seen, "activity", "Same activity code", "medium", 70, key, items);
+    }
+
+    suggestions.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.kind.cmp(&b.kind)).then_with(|| a.key.cmp(&b.key)));
+    Ok(suggestions)
+}
+
+fn insert_alias(conn: &Connection, kind: &str, alias_id: &str, canonical_id: &str, source_id: Option<&str>, now: i64) -> Result<()> {
+    if alias_id.trim().is_empty() || canonical_id.trim().is_empty() || alias_id == canonical_id {
+        return Ok(());
+    }
+    conn.execute(
+        r#"INSERT INTO item_aliases (kind, alias_id, canonical_id, source_id, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5)
+        ON CONFLICT(kind, alias_id) DO UPDATE SET canonical_id = excluded.canonical_id, source_id = excluded.source_id, updated_at = excluded.updated_at"#,
+        params![kind, alias_id, canonical_id, source_id, now],
+    )?;
+    Ok(())
+}
+
+fn merge_catalog_item_internal(conn: &Connection, kind: &str, alias_id: &str, canonical_id: &str, source_id: Option<&str>) -> Result<()> {
+    let kind = kind.trim();
+    let alias_id = alias_id.trim().trim_start_matches("recipe:");
+    let canonical_id = canonical_id.trim().trim_start_matches("recipe:");
+    if alias_id.is_empty() || canonical_id.is_empty() || alias_id == canonical_id {
+        return Ok(());
+    }
+
+    let now = now_ms();
+    insert_alias(conn, kind, alias_id, canonical_id, source_id, now)?;
+
+    match kind {
+        "food" => {
+            conn.execute(
+                "UPDATE intakes SET food_id = ?1, updated_at = ?3 WHERE item_type = 'food' AND food_id = ?2",
+                params![canonical_id, alias_id, now],
+            )?;
+            conn.execute(
+                "UPDATE recipe_items SET food_id = ?1, updated_at = ?3 WHERE food_id = ?2",
+                params![canonical_id, alias_id, now],
+            )?;
+            conn.execute(
+                "UPDATE foods SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                params![now, alias_id],
+            )?;
+            conn.execute("UPDATE foods SET updated_at = ?1 WHERE id = ?2", params![now, canonical_id])?;
+        }
+        "recipe" => {
+            let alias_recipe_ref = format!("recipe:{}", alias_id);
+            let canonical_recipe_ref = format!("recipe:{}", canonical_id);
+            conn.execute(
+                "UPDATE intakes SET food_id = ?1, updated_at = ?4 WHERE item_type = 'recipe' AND (food_id = ?2 OR food_id = ?3)",
+                params![canonical_recipe_ref, alias_id, alias_recipe_ref, now],
+            )?;
+            conn.execute(
+                "UPDATE recipe_items SET deleted_at = ?1, updated_at = ?1 WHERE recipe_id = ?2 AND deleted_at IS NULL",
+                params![now, alias_id],
+            )?;
+            conn.execute(
+                "UPDATE recipes SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                params![now, alias_id],
+            )?;
+            conn.execute("UPDATE recipes SET updated_at = ?1 WHERE id = ?2", params![now, canonical_id])?;
+        }
+        "activity" => {
+            conn.execute(
+                "UPDATE activity_logs SET activity_id = ?1, updated_at = ?3 WHERE activity_id = ?2",
+                params![canonical_id, alias_id, now],
+            )?;
+            conn.execute(
+                "UPDATE activities SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                params![now, alias_id],
+            )?;
+            conn.execute("UPDATE activities SET updated_at = ?1 WHERE id = ?2", params![now, canonical_id])?;
+        }
+        _ => return Err(anyhow!("unsupported catalog kind: {}", kind)),
+    }
+
+    Ok(())
+}
+
+fn resolve_alias(conn: &Connection, kind: &str, id: &str) -> Result<String> {
+    let mut current = id.trim_start_matches("recipe:").to_string();
+    for _ in 0..16 {
+        let next: Option<String> = conn.query_row(
+            "SELECT canonical_id FROM item_aliases WHERE kind = ?1 AND alias_id = ?2",
+            params![kind, current],
+            |row| row.get(0),
+        ).optional()?;
+        match next {
+            Some(value) if !value.is_empty() && value != current => current = value,
+            _ => break,
+        }
+    }
+    Ok(current)
+}
+
+fn canonical_food_ref(conn: &Connection, id: &str) -> Result<String> {
+    resolve_alias(conn, "food", id)
+}
+
+fn canonical_recipe_ref(conn: &Connection, id: &str) -> Result<String> {
+    resolve_alias(conn, "recipe", id.trim_start_matches("recipe:"))
+}
+
+fn canonical_activity_ref(conn: &Connection, id: Option<String>) -> Result<Option<String>> {
+    match id {
+        Some(value) if !value.trim().is_empty() => Ok(Some(resolve_alias(conn, "activity", &value)?)),
+        _ => Ok(None),
+    }
+}
+
+fn commit_sync_payload(conn: &Connection, payload: &SyncPushRequest) -> Result<SyncInboxCommitResult> {
+    let now = now_ms();
+    let source_id = payload.source_id.as_deref();
+    let mut merged = 0_usize;
+    let mut inserted_or_updated = 0_usize;
+
+    if let Some(foods) = &payload.foods {
+        for food in foods {
+            if let Some(existing) = find_existing_food_duplicate(conn, food)? {
+                merge_catalog_item_internal(conn, "food", &food.id, &existing.id, source_id)?;
+                merged += 1;
+            } else {
+                let mut next = food.clone();
+                next.updated_at = if next.updated_at > 0 { next.updated_at } else { now };
+                upsert_food(conn, &next)?;
+                inserted_or_updated += 1;
+            }
+        }
+    }
+
+    if let Some(activities) = &payload.activities {
+        for activity in activities {
+            if let Some(existing) = find_existing_activity_duplicate(conn, activity)? {
+                merge_catalog_item_internal(conn, "activity", &activity.id, &existing.id, source_id)?;
+                merged += 1;
+            } else {
+                let mut next = activity.clone();
+                next.updated_at = if next.updated_at > 0 { next.updated_at } else { now };
+                upsert_activity(conn, &next)?;
+                inserted_or_updated += 1;
+            }
+        }
+    }
+
+    if let Some(recipes) = &payload.recipes {
+        for recipe in recipes {
+            if let Some(existing) = find_existing_recipe_duplicate(conn, recipe)? {
+                merge_catalog_item_internal(conn, "recipe", &recipe.id, &existing.id, source_id)?;
+                merged += 1;
+            } else {
+                conn.execute(
+                    r#"INSERT INTO recipes (id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    ON CONFLICT(id) DO UPDATE SET source_id = excluded.source_id, name = excluded.name, description = excluded.description, note = excluded.note, total_weight_g = excluded.total_weight_g, servings_count = excluded.servings_count, updated_at = excluded.updated_at, deleted_at = excluded.deleted_at"#,
+                    params![&recipe.id, &recipe.source_id, &recipe.name, &recipe.description, &recipe.note, &recipe.total_weight_g, &recipe.servings_count, if recipe.updated_at > 0 { recipe.updated_at } else { now }, &recipe.deleted_at],
+                )?;
+                inserted_or_updated += 1;
+            }
+        }
+    }
+
+    if let Some(recipe_items) = &payload.recipe_items {
+        for item in recipe_items {
+            let raw_recipe_id = item.recipe_id.trim_start_matches("recipe:");
+            let recipe_id = canonical_recipe_ref(conn, &item.recipe_id)?;
+            if recipe_id != raw_recipe_id {
+                continue;
+            }
+            let food_id = canonical_food_ref(conn, &item.food_id)?;
+            conn.execute(
+                r#"INSERT INTO recipe_items (id, recipe_id, food_id, amount_g, updated_at, deleted_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(id) DO UPDATE SET recipe_id = excluded.recipe_id, food_id = excluded.food_id, amount_g = excluded.amount_g, updated_at = excluded.updated_at, deleted_at = excluded.deleted_at"#,
+                params![&item.id, recipe_id, food_id, item.amount_g, if item.updated_at > 0 { item.updated_at } else { now }, &item.deleted_at],
+            )?;
+            inserted_or_updated += 1;
+        }
+    }
+
+    for intake in &payload.intakes {
+        let item_type = intake.item_type.clone().unwrap_or_else(|| "food".into());
+        let food_id = match item_type.as_str() {
+            "recipe" => format!("recipe:{}", canonical_recipe_ref(conn, &intake.food_id)?),
+            "note" => intake.food_id.clone(),
+            _ => canonical_food_ref(conn, &intake.food_id)?,
+        };
+        conn.execute(
+            r#"
+            INSERT INTO intakes (id, source_id, item_type, food_id, consumed_at, meal_type, amount_g, food_snapshot_json, note_title, note_description, synced_at, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?11)
+            ON CONFLICT(id) DO UPDATE SET
+                source_id = excluded.source_id,
+                item_type = excluded.item_type,
+                food_id = excluded.food_id,
+                consumed_at = excluded.consumed_at,
+                meal_type = excluded.meal_type,
+                amount_g = excluded.amount_g,
+                food_snapshot_json = excluded.food_snapshot_json,
+                note_title = excluded.note_title,
+                note_description = excluded.note_description,
+                synced_at = excluded.synced_at,
+                updated_at = excluded.updated_at
+            "#,
+            params![&intake.id, &intake.source_id, item_type, food_id, intake.consumed_at, &intake.meal_type, intake.amount_g, &intake.food_snapshot_json, &intake.note_title, &intake.note_description, now],
+        )?;
+    }
+
+    for weight in &payload.weight_logs {
+        conn.execute(
+            r#"
+            INSERT INTO weight_logs (id, measured_at, weight_kg, bmi, source, synced_at, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6)
+            ON CONFLICT(id) DO UPDATE SET measured_at = excluded.measured_at, weight_kg = excluded.weight_kg, bmi = excluded.bmi, source = excluded.source, synced_at = excluded.synced_at, updated_at = excluded.updated_at
+            "#,
+            params![&weight.id, weight.measured_at, weight.weight_kg, weight.bmi.unwrap_or(0.0), &weight.source, now],
+        )?;
+    }
+
+    for activity in &payload.activity_logs {
+        let activity_id = canonical_activity_ref(conn, activity.activity_id.clone())?;
+        conn.execute(
+            r#"
+            INSERT INTO activity_logs (id, activity_id, activity_name, performed_at, duration_min, kcal, source, synced_at, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?8)
+            ON CONFLICT(id) DO UPDATE SET activity_id = excluded.activity_id, activity_name = excluded.activity_name, performed_at = excluded.performed_at, duration_min = excluded.duration_min, kcal = excluded.kcal, source = excluded.source, synced_at = excluded.synced_at, updated_at = excluded.updated_at
+            "#,
+            params![&activity.id, activity_id, &activity.activity_name, activity.performed_at, activity.duration_min, activity.kcal, &activity.source, now],
+        )?;
+    }
+
+    Ok(SyncInboxCommitResult {
+        accepted: true,
+        merged,
+        inserted_or_updated,
+        intakes: payload.intakes.len(),
+        weight_logs: payload.weight_logs.len(),
+        activity_logs: payload.activity_logs.len(),
+    })
+}
+
 fn server_status(state: &AppState) -> Result<ServerStatus> {
     let conn = open_conn(&state.db_path)?;
-    let token = setting(&conn, "server_token")?;
+    let token = setting(&conn, "server_password")?;
     let source_id = setting(&conn, "source_id")?;
+    let auth_required = auth_required_for_token(&token);
+    let password_set = !token.trim().is_empty();
     let runtime = state.server.lock().map_err(|_| anyhow!("server lock poisoned"))?;
     let port = runtime.as_ref().map(|server| server.port);
     Ok(ServerStatus {
@@ -1143,20 +1885,31 @@ fn server_status(state: &AppState) -> Result<ServerStatus> {
         bind_address: port.map(|p| format!("0.0.0.0:{p}")),
         port,
         base_url: port.map(|p| format!("http://<desktop-lan-ip>:{p}/api/v1")),
+        password_set,
         token,
+        app_channel: app_channel(),
         source_id,
-        auth_required: auth_required(),
+        auth_required,
         dev_mode: dev_mode(),
         catalog_revision: db_catalog_revision(&state.db_path).unwrap_or(0),
     })
 }
 
-fn dev_mode() -> bool {
-    cfg!(dev)
+fn app_channel() -> String {
+    match std::env::var("NUTRINO_APP_CHANNEL").unwrap_or_default().to_lowercase().as_str() {
+        "dev" => "dev".into(),
+        "stable" => "stable".into(),
+        _ if cfg!(debug_assertions) => "dev".into(),
+        _ => "stable".into(),
+    }
 }
 
-fn auth_required() -> bool {
-    !dev_mode()
+fn dev_mode() -> bool {
+    app_channel() == "dev"
+}
+
+fn auth_required_for_token(token: &str) -> bool {
+    !token.trim().is_empty()
 }
 
 async fn health(AxumState(state): AxumState<ApiState>) -> impl IntoResponse {
@@ -1167,6 +1920,7 @@ async fn health(AxumState(state): AxumState<ApiState>) -> impl IntoResponse {
         source_id: state.source_id.clone(),
         version: APP_VERSION.to_string(),
         auth_required: state.auth_required,
+        app_channel: if state.dev_mode { "dev".into() } else { "stable".into() },
         dev_mode: state.dev_mode,
         catalog_revision: db_catalog_revision(&state.db_path).unwrap_or(0),
     })
@@ -1183,6 +1937,7 @@ async fn sync_pull(
     let recipes = db_list_recipes_for_sync(&state.db_path, since).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let recipe_items = db_list_recipe_items(&state.db_path, since).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let activities = db_list_activities_for_sync(&state.db_path, since).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let aliases = db_list_aliases_for_sync(&state.db_path, since).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(SyncPullResponse {
         server_time: now_ms(),
         source_id: state.source_id.clone(),
@@ -1190,6 +1945,7 @@ async fn sync_pull(
         recipes,
         recipe_items,
         activities,
+        aliases,
     }))
 }
 
@@ -1201,80 +1957,24 @@ async fn sync_push(
     authorize(&headers, &state.token, state.auth_required)?;
     let conn = open_conn(&state.db_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let now = now_ms();
-
-    for intake in payload.intakes {
-        conn.execute(
-            r#"
-            INSERT INTO intakes (id, source_id, food_id, consumed_at, meal_type, amount_g, food_snapshot_json, synced_at, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?8)
-            ON CONFLICT(id) DO UPDATE SET
-                source_id = excluded.source_id,
-                food_id = excluded.food_id,
-                consumed_at = excluded.consumed_at,
-                meal_type = excluded.meal_type,
-                amount_g = excluded.amount_g,
-                food_snapshot_json = excluded.food_snapshot_json,
-                synced_at = excluded.synced_at,
-                updated_at = excluded.updated_at
-            "#,
-            params![
-                intake.id,
-                intake.source_id,
-                intake.food_id,
-                intake.consumed_at,
-                intake.meal_type,
-                intake.amount_g,
-                intake.food_snapshot_json,
-                now
-            ],
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
-
-    for weight in payload.weight_logs {
-        conn.execute(
-            r#"
-            INSERT INTO weight_logs (id, measured_at, weight_kg, bmi, source, synced_at, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6)
-            ON CONFLICT(id) DO UPDATE SET
-                measured_at = excluded.measured_at,
-                weight_kg = excluded.weight_kg,
-                bmi = excluded.bmi,
-                source = excluded.source,
-                synced_at = excluded.synced_at,
-                updated_at = excluded.updated_at
-            "#,
-            params![weight.id, weight.measured_at, weight.weight_kg, weight.bmi.unwrap_or(0.0), weight.source, now],
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
-
-    for activity in payload.activity_logs {
-        conn.execute(
-            r#"
-            INSERT INTO activity_logs (id, activity_id, activity_name, performed_at, duration_min, kcal, source, synced_at, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?8)
-            ON CONFLICT(id) DO UPDATE SET
-                activity_id = excluded.activity_id,
-                activity_name = excluded.activity_name,
-                performed_at = excluded.performed_at,
-                duration_min = excluded.duration_min,
-                kcal = excluded.kcal,
-                source = excluded.source,
-                synced_at = excluded.synced_at,
-                updated_at = excluded.updated_at
-            "#,
-            params![activity.id, activity.activity_id, activity.activity_name, activity.performed_at, activity.duration_min, activity.kcal, activity.source, now],
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
+    let source_id = payload.source_id.clone().unwrap_or_else(|| state.source_id.clone());
+    let inbox_id = format!("sync-inbox-{}", Uuid::new_v4());
+    let summary = summarize_sync_payload(&payload);
+    let merge_candidates = find_merge_candidates(&conn, &payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let payload_json = serde_json::to_string(&payload).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let summary_json = serde_json::to_string(&summary).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let merge_json = serde_json::to_string(&merge_candidates).map_err(|_| StatusCode::BAD_REQUEST)?;
+    conn.execute(
+        r#"INSERT INTO sync_inbox (id, source_id, device_name, received_at, payload_json, summary_json, merge_candidates_json, status, applied_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', NULL)"#,
+        params![inbox_id, source_id, payload.device_name, now, payload_json, summary_json, merge_json],
+    ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(SyncPushResponse {
         accepted: true,
         server_time: now,
     }))
 }
-
 async fn api_list_foods(
     AxumState(state): AxumState<ApiState>,
     headers: HeaderMap,
@@ -1387,6 +2087,80 @@ fn food_from_input(input: FoodInput, source_id: String) -> Result<Food> {
         updated_at: now_ms(),
         deleted_at: None,
     })
+}
+
+
+fn db_list_aliases_for_sync(path: &Path, since: i64) -> Result<Vec<CatalogAlias>> {
+    let conn = open_conn(path)?;
+    let mut stmt = conn.prepare(
+        r#"SELECT kind, alias_id, canonical_id, source_id, updated_at
+           FROM item_aliases
+           WHERE updated_at > ?1
+           ORDER BY kind, alias_id"#,
+    )?;
+    let rows = stmt.query_map([since], |row| {
+        Ok(CatalogAlias {
+            kind: row.get(0)?,
+            alias_id: row.get(1)?,
+            canonical_id: row.get(2)?,
+            source_id: row.get(3)?,
+            updated_at: row.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn sync_inbox_entry_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncInboxEntry> {
+    let summary_json: String = row.get(5)?;
+    let merge_json: String = row.get(6)?;
+    let payload_json: String = row.get(7)?;
+    let summary = serde_json::from_str(&summary_json).unwrap_or(SyncInboxSummary { foods: 0, recipes: 0, recipe_items: 0, activities: 0, intakes: 0, weight_logs: 0, activity_logs: 0 });
+    let merge_candidates = serde_json::from_str(&merge_json).unwrap_or_default();
+    let payload = serde_json::from_str(&payload_json).unwrap_or(SyncPushRequest {
+        source_id: None,
+        device_name: None,
+        sent_at: None,
+        foods: Some(vec![]),
+        recipes: Some(vec![]),
+        recipe_items: Some(vec![]),
+        activities: Some(vec![]),
+        intakes: vec![],
+        weight_logs: vec![],
+        activity_logs: vec![],
+    });
+    Ok(SyncInboxEntry {
+        id: row.get(0)?,
+        source_id: row.get(1)?,
+        device_name: row.get(2)?,
+        received_at: row.get(3)?,
+        status: row.get(4)?,
+        summary,
+        merge_candidates,
+        payload,
+    })
+}
+
+fn db_get_sync_inbox_entry(conn: &Connection, entry_id: &str) -> Result<SyncInboxEntry> {
+    let entry = conn.query_row(
+        r#"SELECT id, source_id, device_name, received_at, status, summary_json, merge_candidates_json, payload_json
+           FROM sync_inbox
+           WHERE id = ?1 AND status = 'pending'"#,
+        params![entry_id],
+        sync_inbox_entry_from_row,
+    )?;
+    Ok(entry)
+}
+
+fn db_list_sync_inbox(path: &Path) -> Result<Vec<SyncInboxEntry>> {
+    let conn = open_conn(path)?;
+    let mut stmt = conn.prepare(
+        r#"SELECT id, source_id, device_name, received_at, status, summary_json, merge_candidates_json, payload_json
+           FROM sync_inbox
+           WHERE status = 'pending'
+           ORDER BY received_at DESC"#,
+    )?;
+    let rows = stmt.query_map([], sync_inbox_entry_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn db_list_active_foods(path: &Path) -> Result<Vec<Food>> {
@@ -1975,7 +2749,7 @@ fn db_query_activities(path: &Path, since: i64, active_only: bool) -> Result<Vec
 fn db_catalog_revision(path: &Path) -> Result<i64> {
     let conn = open_conn(path)?;
     let mut max_value = 0_i64;
-    for table in ["foods", "recipes", "recipe_items", "activities"] {
+    for table in ["foods", "recipes", "recipe_items", "activities", "item_aliases"] {
         let sql = format!("SELECT COALESCE(MAX(updated_at), 0) FROM {table}");
         let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap_or(0);
         if value > max_value { max_value = value; }

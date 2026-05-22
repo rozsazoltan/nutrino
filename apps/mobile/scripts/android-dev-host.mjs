@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { DEV_APPLICATION_ID } from './android-channel.mjs';
+import { DEV_APPLICATION_ID, channelConfig } from './android-channel.mjs';
 
 function parseExplicitHost(argv) {
   const args = argv.slice(2).filter(Boolean);
@@ -72,20 +72,33 @@ function ensureAndroidProjectExists() {
   if (!fs.existsSync(androidDir)) {
     console.error(`\nAndroid project is missing: ${androidDir}`);
     console.error('Run this once first:');
+    console.error('  pnpm init:android');
+    console.error('or from apps/mobile:');
     console.error('  pnpm android:init\n');
     process.exit(1);
   }
 }
 
+function androidGeneratedKotlinDir(applicationId) {
+  return path.join(process.cwd(), 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'java', ...applicationId.split('.'), 'generated');
+}
+
 function cleanEnv(host) {
   const env = {};
+  const config = channelConfig('dev');
   for (const [key, value] of Object.entries(process.env)) {
     if (!key || key.includes('=') || value === undefined || String(value).includes('\u0000')) continue;
     env[key] = String(value);
   }
 
   env.TAURI_DEV_HOST = host;
-  env.NUTRINO_ANDROID_CHANNEL = 'dev';
+  env.NUTRINO_ANDROID_CHANNEL = config.channel;
+  env.VITE_NUTRINO_CHANNEL = config.channel;
+  env.VITE_NUTRINO_APP_NAME = config.label;
+  env.TAURI_ANDROID_PACKAGE_UNESCAPED = config.applicationId;
+  env.WRY_ANDROID_PACKAGE = config.applicationId;
+  env.WRY_ANDROID_LIBRARY = 'nutrino_mobile_lib';
+  env.WRY_ANDROID_KOTLIN_FILES_OUT_DIR = androidGeneratedKotlinDir(config.applicationId);
   env.NUTRINO_ANDROID_DEV_HOST = host;
   env.NUTRINO_DEV_API_BASE_URL = `http://${host}:8090/api/v1`;
   env.CARGO_BUILD_JOBS = env.CARGO_BUILD_JOBS || String(cpuCount());

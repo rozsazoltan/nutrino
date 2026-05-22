@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "nutrino Desktop",
-  "version": "0.5.24",
-  "identifier": "dev.rozsa.nutrino.desktop",
+  "productName": "Nutrino Desktop",
+  "version": "0.6.17",
+  "identifier": "net.datarose.nutrino.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "nutrino Desktop",
+        "title": "Nutrino Desktop",
         "width": 1200,
         "height": 820,
         "minWidth": 980,

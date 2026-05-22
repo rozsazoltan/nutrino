@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { channelConfig, parseChannel, patchTauriConfig } from './android-channel.mjs';
 
@@ -14,6 +15,9 @@ const androidAppGradlePaths = [
   path.join(androidDir, 'app', 'build.gradle.kts'),
   path.join(androidDir, 'app', 'build.gradle'),
 ];
+const NATIVE_STATE_VERSION = 4;
+const forceNativeClean = process.argv.includes('--force-native-clean')
+  || process.env.NUTRINO_FORCE_ANDROID_NATIVE_CLEAN === '1';
 
 function cpuCount() {
   return Math.max(2, Math.min(os.cpus()?.length || 4, 8));
@@ -165,6 +169,65 @@ function ensureLauncherBackgroundColor() {
   return xml !== original;
 }
 
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function upsertStringResource(xml, name, value) {
+  const escaped = escapeXml(value);
+  const regex = new RegExp(`<string\\s+name="${name}"[^>]*>[^<]*<\\/string>`, 'g');
+  if (regex.test(xml)) {
+    return xml.replace(regex, `<string name="${name}">${escaped}</string>`);
+  }
+  if (xml.includes('</resources>')) {
+    return xml.replace('</resources>', `    <string name="${name}">${escaped}</string>\n</resources>`);
+  }
+  return `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <string name="${name}">${escaped}</string>\n</resources>\n`;
+}
+
+function patchAndroidLabelResources(config) {
+  if (!fs.existsSync(androidResDir)) return false;
+
+  const valuesDirs = fs.readdirSync(androidResDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('values'))
+    .map((entry) => path.join(androidResDir, entry.name));
+  const primaryValuesDir = path.join(androidResDir, 'values');
+  if (!valuesDirs.includes(primaryValuesDir)) valuesDirs.unshift(primaryValuesDir);
+
+  let changed = false;
+  for (const valuesDir of valuesDirs) {
+    fs.mkdirSync(valuesDir, { recursive: true });
+    const stringsPath = path.join(valuesDir, 'strings.xml');
+    const original = fs.existsSync(stringsPath)
+      ? fs.readFileSync(stringsPath, 'utf8')
+      : '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n</resources>\n';
+
+    let xml = original;
+    // Older generated Android projects may keep the launcher label in a string
+    // resource even after the manifest/applicationId was patched. Replace every
+    // previous Nutrino label variant, then make the common app-name keys explicit.
+    xml = xml.replace(/>\s*Nutrino Dev\s*</g, `>${escapeXml(config.label)}<`);
+    xml = xml.replace(/>\s*Nutrino\s*</g, `>${escapeXml(config.label)}<`);
+    for (const name of ['app_name', 'app_label', 'tauri_app_name']) {
+      xml = upsertStringResource(xml, name, config.label);
+    }
+
+    if (xml !== original) {
+      fs.writeFileSync(stringsPath, xml);
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+
 function findAndroidAppGradlePath() {
   return androidAppGradlePaths.find((candidate) => fs.existsSync(candidate));
 }
@@ -254,6 +317,84 @@ ${markerEnd}
 
   fs.writeFileSync(gradlePath, source);
   return source !== original;
+}
+
+
+function hashFileIfExists(filePath) {
+  if (!fs.existsSync(filePath)) return '';
+  return fs.readFileSync(filePath);
+}
+
+function currentNativeIdentityHash(config) {
+  const hash = crypto.createHash('sha256');
+  hash.update(`nativeStateVersion=${NATIVE_STATE_VERSION}\n`);
+  hash.update(`applicationId=${config.applicationId}\n`);
+  hash.update(`channel=${config.channel}\n`);
+  hash.update(`label=${config.label}\n`);
+  hash.update(`productName=${config.productName}\n`);
+  for (const relative of ['src-tauri/Cargo.toml', 'src-tauri/build.rs', 'src-tauri/tauri.conf.json']) {
+    hash.update(`file=${relative}\n`);
+    hash.update(hashFileIfExists(path.join(projectRoot, relative)));
+    hash.update('\n');
+  }
+  return hash.digest('hex');
+}
+
+function removePathIfExists(targetPath) {
+  if (!fs.existsSync(targetPath)) return false;
+  fs.rmSync(targetPath, { recursive: true, force: true });
+  return true;
+}
+
+function cleanStaleAndroidNativeState(config) {
+  if (!fs.existsSync(androidDir)) return false;
+
+  const statePath = path.join(androidDir, '.nutrino-android-native-state.json');
+  const nextState = {
+    nativeStateVersion: NATIVE_STATE_VERSION,
+    applicationId: config.applicationId,
+    channel: config.channel,
+    label: config.label,
+    productName: config.productName,
+    nativeIdentityHash: currentNativeIdentityHash(config),
+  };
+
+  let previous = null;
+  if (fs.existsSync(statePath)) {
+    try {
+      previous = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    } catch {
+      previous = null;
+    }
+  }
+
+  const needsClean = forceNativeClean
+    || !previous
+    || previous.nativeStateVersion !== nextState.nativeStateVersion
+    || previous.applicationId !== nextState.applicationId
+    || previous.channel !== nextState.channel
+    || previous.label !== nextState.label
+    || previous.productName !== nextState.productName
+    || previous.nativeIdentityHash !== nextState.nativeIdentityHash;
+
+  if (!needsClean) return false;
+
+  const tauriTargetDir = path.join(projectRoot, 'src-tauri', 'target');
+
+  // JNI entrypoint symbols are generated from the active Android package. A
+  // stale cross-compiled Rust target can still contain old Java_* exports even
+  // when Gradle/Kotlin has already moved to the new package. Removing the whole
+  // mobile target directory is slower on the next build, but it is safer than
+  // leaving a dev APK that starts and immediately crashes with UnsatisfiedLinkError.
+  removePathIfExists(tauriTargetDir);
+
+  removePathIfExists(path.join(androidDir, 'app', 'src', 'main', 'jniLibs'));
+  removePathIfExists(path.join(androidDir, 'app', 'build'));
+  removePathIfExists(path.join(androidDir, 'build'));
+  removePathIfExists(path.join(androidDir, '.gradle'));
+
+  fs.writeFileSync(statePath, `${JSON.stringify(nextState, null, 2)}\n`);
+  return true;
 }
 
 function normalizeMainActivitySource(source, config) {
@@ -366,7 +507,9 @@ const identityPatched = patchAndroidApplicationId(config);
 const signingPatched = patchReleaseSigningFallback();
 const iconsPatched = patchAndroidIcons();
 const launcherColorPatched = ensureLauncherBackgroundColor();
+const labelResourcesPatched = patchAndroidLabelResources(config);
 const manifestPatched = patchManifest(config);
+const nativeStateCleaned = cleanStaleAndroidNativeState(config);
 const generatedKotlinCleaned = cleanGeneratedKotlinPackages();
 const activityPackagePatched = patchMainActivityPackage(config);
-console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);
+console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);

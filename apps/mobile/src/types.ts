@@ -3,10 +3,22 @@ export type Gender = 'female' | 'male' | 'non_binary';
 export type ActivityLevel = 'sedentary' | 'low_active' | 'active' | 'very_active';
 export type AppLanguage = 'system' | 'en' | 'hu';
 export type ThemeMode = 'system' | 'light' | 'dark';
+export type AppChannel = 'dev' | 'stable';
+export type CatalogKind = 'food' | 'recipe' | 'activity';
+
+export interface CatalogAlias {
+  kind: CatalogKind;
+  alias_id: string;
+  canonical_id: string;
+  source_id?: string;
+  updated_at: number;
+}
 
 export interface PairingConfig {
   baseUrl: string;
   token: string;
+  password?: string;
+  channel?: AppChannel;
   sourceId: string;
   lastSyncAt: number;
   lastSyncError?: string;
@@ -42,6 +54,7 @@ export interface Food {
   salt_per_100g?: number | null;
   updated_at: number;
   deleted_at?: number | null;
+  pending_sync?: boolean;
 }
 
 export interface Recipe {
@@ -54,6 +67,7 @@ export interface Recipe {
   servings_count?: number | null;
   updated_at: number;
   deleted_at?: number | null;
+  pending_sync?: boolean;
 }
 
 export interface RecipeItem {
@@ -63,10 +77,12 @@ export interface RecipeItem {
   amount_g: number;
   updated_at: number;
   deleted_at?: number | null;
+  pending_sync?: boolean;
 }
 
 export interface ActivityDefinition {
   id: string;
+  source_id?: string;
   code: string;
   name: string;
   description?: string | null;
@@ -76,12 +92,13 @@ export interface ActivityDefinition {
   kcal_per_min: number;
   updated_at: number;
   deleted_at?: number | null;
+  pending_sync?: boolean;
 }
 
 export interface Intake {
   id: string;
   source_id: string;
-  item_type: 'food' | 'recipe';
+  item_type: 'food' | 'recipe' | 'note';
   food_id: string;
   consumed_at: number;
   meal_type: MealType;
@@ -89,6 +106,8 @@ export interface Intake {
   unit: 'g' | 'serving';
   serving_qty?: number | null;
   food_snapshot_json: string;
+  note_title?: string | null;
+  note_description?: string | null;
   pending_sync: boolean;
   created_at: number;
   updated_at: number;
@@ -123,6 +142,7 @@ export interface ServerHealth {
   name?: string;
   version?: string;
   auth_required?: boolean;
+  app_channel?: AppChannel;
   dev_mode?: boolean;
   catalog_revision?: number;
 }
@@ -134,17 +154,28 @@ export interface SyncPullResponse {
   recipes?: Recipe[];
   recipe_items?: RecipeItem[];
   activities?: ActivityDefinition[];
+  aliases?: CatalogAlias[];
 }
 
 export interface SyncPushRequest {
+  source_id?: string;
+  device_name?: string;
+  sent_at?: number;
+  foods?: Food[];
+  recipes?: Recipe[];
+  recipe_items?: RecipeItem[];
+  activities?: ActivityDefinition[];
   intakes: Array<{
     id: string;
+    item_type: string;
     food_id: string;
     source_id: string;
     consumed_at: number;
     meal_type: string;
     amount_g: number;
     food_snapshot_json: string;
+    note_title?: string | null;
+    note_description?: string | null;
   }>;
   weight_logs: Array<{
     id: string;
@@ -195,6 +226,7 @@ export interface AppState {
   intakes: Intake[];
   activityLogs: ActivityLog[];
   weightLogs: WeightLog[];
+  catalogAliases: CatalogAlias[];
 }
 
 export interface SyncResult {

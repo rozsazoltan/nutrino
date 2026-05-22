@@ -1,3 +1,0 @@
-recipe_id,name,description,note,servings_count,ingredients_json
-recipe-hotdog,hotdog,1 db hotdog kifli + 1 db virsli,Alap recept a korábbi importból; márkák és mennyiségek igény szerint módosíthatók.,1,"[{""food_id"": ""food-hotdog-kifli-pantastico-1db-625g"", ""amount_g"": 62.5}, {""food_id"": ""food-virsli-becsult-1db-50g"", ""amount_g"": 50}]"
-recipe-hamburger,hamburger,1 db hamburger zsömle + 1 db hamburger hús + 1 db lapka sajt,Egyszerű házi hamburger alaprecept; szósz és zöldség nélkül.,1,"[{""food_id"": ""food-hamburger-zsomle-penny-1db-50g"", ""amount_g"": 50}, {""food_id"": ""food-hamburger-hus-penny-1db-50g"", ""amount_g"": 50}, {""food_id"": ""food-lapka-sajt-gouda-penny-1db-20g"", ""amount_g"": 20}]"

@@ -8,6 +8,9 @@ import type {
   Gender,
   Intake,
   PairingConfig,
+  AppChannel,
+  CatalogAlias,
+  CatalogKind,
   Recipe,
   RecipeItem,
   UserProfile,
@@ -44,14 +47,26 @@ export function inferDevBaseUrl(): string {
   return 'http://192.168.1.202:8090/api/v1';
 }
 
+export function runtimeChannel(): AppChannel {
+  const explicit = String(import.meta.env.VITE_NUTRINO_CHANNEL || '').toLowerCase();
+  if (explicit === 'dev' || explicit === 'stable') return explicit;
+  return import.meta.env.DEV ? 'dev' : 'stable';
+}
+
 export function isDevMode(): boolean {
-  return Boolean(import.meta.env.DEV);
+  return runtimeChannel() === 'dev';
+}
+
+export function runtimeAppName(base = 'Nutrino'): string {
+  return isDevMode() ? `${base} Dev` : base;
 }
 
 export function defaultPairing(): PairingConfig {
   return {
     baseUrl: inferDevBaseUrl(),
     token: '',
+    password: '',
+    channel: runtimeChannel(),
     sourceId: generateId('mobile'),
     lastSyncAt: 0,
     catalogRevision: 0,
@@ -102,8 +117,10 @@ export function defaultState(): AppState {
     intakes: [],
     activityLogs: [],
     weightLogs: [],
+    catalogAliases: [],
   };
 }
+
 
 export function loadState(): AppState {
   const defaults = defaultState();
@@ -123,8 +140,10 @@ export function loadState(): AppState {
       pairing: {
         ...defaults.pairing,
         ...storedPairing,
-        baseUrl: import.meta.env.DEV ? defaults.pairing.baseUrl : String(storedPairing.baseUrl ?? defaults.pairing.baseUrl),
-        token: import.meta.env.DEV ? '' : String(storedPairing.token ?? ''),
+        baseUrl: String(storedPairing.baseUrl ?? defaults.pairing.baseUrl),
+        token: String(storedPairing.token ?? storedPairing.password ?? ''),
+        password: String(storedPairing.password ?? storedPairing.token ?? ''),
+        channel: runtimeChannel(),
       },
       profile: {
         ...defaults.profile,
@@ -134,10 +153,11 @@ export function loadState(): AppState {
       foods: Array.isArray(parsed.foods) ? parsed.foods : [],
       recipes: Array.isArray(parsed.recipes) ? parsed.recipes : [],
       recipeItems: Array.isArray(parsed.recipeItems) ? parsed.recipeItems : [],
-      activities: Array.isArray(parsed.activities) && parsed.activities.length ? parsed.activities : defaults.activities,
+      activities: Array.isArray(parsed.activities) ? parsed.activities : defaults.activities,
       intakes: Array.isArray(parsed.intakes) ? parsed.intakes : [],
       activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
       weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
+      catalogAliases: Array.isArray(parsed.catalogAliases) ? parsed.catalogAliases : [],
     };
   } catch {
     return defaults;
@@ -251,6 +271,62 @@ export function recipeAsFood(recipe: Recipe, items: RecipeItem[], foods: Food[])
   };
 }
 
+
+function aliasKey(kind: CatalogKind, id: string): string {
+  return `${kind}:${id}`;
+}
+
+export function mergeAliases(current: CatalogAlias[] = [], incoming: CatalogAlias[] = []): CatalogAlias[] {
+  const map = new Map<string, CatalogAlias>();
+  for (const alias of current) map.set(aliasKey(alias.kind, alias.alias_id), alias);
+  for (const alias of incoming) {
+    if (!alias.alias_id || !alias.canonical_id || alias.alias_id === alias.canonical_id) continue;
+    map.set(aliasKey(alias.kind, alias.alias_id), alias);
+  }
+  return [...map.values()].sort((a, b) => `${a.kind}:${a.alias_id}`.localeCompare(`${b.kind}:${b.alias_id}`));
+}
+
+export function resolveCatalogId(state: AppState, kind: CatalogKind, id: string): string {
+  const clean = kind === 'recipe' && id.startsWith('recipe:') ? id.slice('recipe:'.length) : id;
+  let current = clean;
+  const visited = new Set<string>();
+  for (let i = 0; i < 12; i += 1) {
+    const key = aliasKey(kind, current);
+    if (visited.has(key)) break;
+    visited.add(key);
+    const alias = state.catalogAliases.find((entry) => entry.kind === kind && entry.alias_id === current);
+    if (!alias || !alias.canonical_id || alias.canonical_id === current) break;
+    current = alias.canonical_id;
+  }
+  return current;
+}
+
+export function canonicalizeStateReferences(state: AppState): AppState {
+  const canonicalRecipe = (id: string) => resolveCatalogId(state, 'recipe', id);
+  const canonicalFood = (id: string) => resolveCatalogId(state, 'food', id);
+  const canonicalActivity = (id?: string | null) => id ? resolveCatalogId(state, 'activity', id) : id;
+
+  return {
+    ...state,
+    recipeItems: state.recipeItems.map((item) => ({
+      ...item,
+      recipe_id: canonicalRecipe(item.recipe_id),
+      food_id: canonicalFood(item.food_id),
+    })),
+    intakes: state.intakes.map((intake) => {
+      if (intake.item_type === 'note') return intake;
+      const kind: CatalogKind = intake.item_type === 'recipe' ? 'recipe' : 'food';
+      const canonical = resolveCatalogId(state, kind, intake.food_id);
+      const normalized = kind === 'recipe' ? `recipe:${canonical}` : canonical;
+      return normalized === intake.food_id ? intake : { ...intake, food_id: normalized, pending_sync: true, updated_at: Date.now() };
+    }),
+    activityLogs: state.activityLogs.map((log) => {
+      const canonical = canonicalActivity(log.activity_id);
+      return canonical === log.activity_id ? log : { ...log, activity_id: canonical, pending_sync: true, updated_at: Date.now() };
+    }),
+  };
+}
+
 export function catalogItems(state: AppState): Array<Food | RecipeFood> {
   const recipeFoods = state.recipes.map((recipe) => recipeAsFood(
     recipe,
@@ -261,7 +337,10 @@ export function catalogItems(state: AppState): Array<Food | RecipeFood> {
 }
 
 export function findCatalogItem(state: AppState, id: string): Food | RecipeFood | undefined {
-  return catalogItems(state).find((item) => item.id === id || item.id === `recipe:${id}`);
+  const rawRecipeId = id.startsWith('recipe:') ? id.slice('recipe:'.length) : id;
+  const recipeId = resolveCatalogId(state, 'recipe', rawRecipeId);
+  const foodId = resolveCatalogId(state, 'food', id);
+  return catalogItems(state).find((item) => item.id === id || item.id === foodId || item.id === `recipe:${recipeId}` || item.id === `recipe:${rawRecipeId}`);
 }
 
 export function calculateKcal(food: Food, amountG: number): number {

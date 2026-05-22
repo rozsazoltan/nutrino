@@ -55,10 +55,6 @@ console.log(`Kotlin incremental disabled intentionally: ${/kotlin\.incremental\s
 console.log('\nExpected first run:');
 console.log('  pnpm install');
 console.log('  pnpm android:init');
-console.log('  pnpm android:dev -- --host 192.168.1.202');
-console.log('\nFast dev APK build:');
-console.log('  pnpm android:apk');
-console.log('\nStable release APK for your phone:');
-console.log('  pnpm android:apk:stable');
-console.log('\nUniversal all-ABI APK, slower and larger:');
-console.log('  pnpm android:universal');
+console.log('  cd ../.. && pnpm dev:android -- --host 192.168.1.202');
+console.log('\nStable APK build from repository root:');
+console.log('  cd ../.. && pnpm build:android');
