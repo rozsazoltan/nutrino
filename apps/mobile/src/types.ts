@@ -5,6 +5,7 @@ export type AppLanguage = 'system' | 'en' | 'hu';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type AppChannel = 'dev' | 'stable';
 export type CatalogKind = 'food' | 'recipe' | 'activity';
+export type FoodCatalogKind = 'food' | 'ingredient';
 
 export interface CatalogAlias {
   kind: CatalogKind;
@@ -12,6 +13,18 @@ export interface CatalogAlias {
   canonical_id: string;
   source_id?: string;
   updated_at: number;
+}
+
+export interface GitHubCsvSource {
+  id: string;
+  owner: string;
+  repo: string;
+  branch?: string;
+  path?: string;
+  token?: string;
+  enabled: boolean;
+  lastSyncAt?: number;
+  lastStatus?: string;
 }
 
 export interface PairingConfig {
@@ -42,6 +55,7 @@ export interface Food {
   source_id: string;
   name: string;
   brand?: string | null;
+  catalog_kind?: FoodCatalogKind;
   note?: string | null;
   default_unit: string;
   serving_size_g?: number | null;
@@ -52,6 +66,7 @@ export interface Food {
   sugars_per_100g?: number | null;
   fiber_per_100g?: number | null;
   salt_per_100g?: number | null;
+  barcode?: string | null;
   updated_at: number;
   deleted_at?: number | null;
   pending_sync?: boolean;
@@ -227,6 +242,7 @@ export interface AppState {
   activityLogs: ActivityLog[];
   weightLogs: WeightLog[];
   catalogAliases: CatalogAlias[];
+  githubSources: GitHubCsvSource[];
 }
 
 export interface SyncResult {

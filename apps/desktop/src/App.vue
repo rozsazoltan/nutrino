@@ -4,11 +4,13 @@ import { lucideSvg, type IconName } from './icons';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readFile, writeFile } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
+import * as QRCode from 'qrcode';
 import { commands } from './lib/commands';
 import type { ActivityDefinition, ActivityInput, CatalogDuplicateSuggestion, DesktopSettings, Food, FoodInput, Recipe, RecipeDetail, RecipeInput, RecipeInputItem, ServerStatus, SyncInboxEntry, SyncPushPayload } from './types';
 
 type Tab = 'dashboard' | 'foods' | 'recipes' | 'activities' | 'server' | 'settings';
 type CatalogKind = 'food' | 'recipe' | 'activity';
+type RecipeCatalogItem = Food & { catalog_source: 'food' | 'recipe' };
 type ModalKind = CatalogKind | null;
 
 const tab = ref<Tab>('dashboard');
@@ -21,6 +23,8 @@ const syncInbox = ref<SyncInboxEntry[]>([]);
 const duplicateSuggestions = ref<CatalogDuplicateSuggestion[]>([]);
 const duplicateCanonicalSelections = ref<Record<string, string>>({});
 const mergePicker = ref<{ kind: CatalogKind; aliasId: string; aliasName: string; query: string; selectedId: string } | null>(null);
+const qrDialog = ref<{ title: string; svg: string; payload: string } | null>(null);
+const skipCsvDuplicates = ref(true);
 const reviewingInboxEntry = ref<SyncInboxEntry | null>(null);
 const reviewPayloadText = ref('');
 const reviewAdvancedJson = ref(false);
@@ -36,15 +40,15 @@ const foodSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const recipeQuery = ref('');
 const recipeSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const settings = ref<DesktopSettings | null>(null);
-const appVersion = '0.6.17';
+const appVersion = '0.8.0';
 const appChannel = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
 const appName = appChannel === 'dev' ? 'Nutrino Desktop Dev' : 'Nutrino Desktop';
 document.title = appName;
 const repositoryUrl = 'https://github.com/rozsazoltan/nutrino';
 const issueUrl = 'https://github.com/rozsazoltan/nutrino/issues/new/choose';
 const starUrl = 'https://github.com/rozsazoltan/nutrino/stargazers';
-const foodCsvHeader = 'id,name,brand,note,default_unit,serving_size_g,kcal_per_100g,carbs_per_100g,fat_per_100g,protein_per_100g,sugars_per_100g,fiber_per_100g,salt_per_100g';
-const recipeCsvHeader = 'recipe_id,name,description,note,servings_count,ingredients_json';
+const foodCsvHeader = 'id,name,brand,catalog_kind,note,barcode,default_unit,serving_size_g,kcal_per_100g,carbs_per_100g,fat_per_100g,protein_per_100g,sugars_per_100g,fiber_per_100g,salt_per_100g';
+const recipeCsvHeader = 'recipe_id,name,description,note,total_weight_g,servings_count,ingredients_json';
 const activityCsvHeader = 'id,code,name,description,activity_type,met,kcal_per_min';
 const csvImportNotes = [
   'Keep the first row as the exact header row shown here.',
@@ -76,6 +80,7 @@ const thirdPartyNotices: ThirdPartyNotice[] = [
   { name: 'Tauri', license: 'MIT OR Apache-2.0', purpose: 'Native desktop/mobile runtime, app shell and platform bridge.', url: 'https://tauri.app/' },
   { name: 'Rust', license: 'MIT OR Apache-2.0', purpose: 'Systems language and native backend ecosystem used by Tauri.', url: 'https://www.rust-lang.org/' },
   { name: 'JSZip', license: 'MIT OR GPL-3.0', purpose: 'Creation and validation of portable ZIP backups.', url: 'https://github.com/Stuk/jszip' },
+  { name: 'qrcode', license: 'MIT', purpose: 'Generating catalog QR codes in the desktop app.', url: 'https://github.com/soldair/node-qrcode' },
   { name: 'tauri-plugin-android-fs', license: 'MIT OR Apache-2.0', purpose: 'Android Storage Access Framework file picker used for reliable mobile ZIP backup import/export.', url: 'https://docs.rs/crate/tauri-plugin-android-fs/latest' },
   { name: 'Lucide Icons', license: 'ISC', purpose: 'Open-source SVG icon set used across the app interface.', url: 'https://lucide.dev/', note: 'Some Lucide icons are derived from Feather Icons, MIT licensed.' },
   { name: 'Vite', license: 'MIT', purpose: 'Development server and frontend production build tooling.', url: 'https://vite.dev/' },
@@ -93,9 +98,11 @@ const emptyFoodForm = (): FoodInput => ({
   id: null,
   name: '',
   brand: '',
+  catalog_kind: 'food',
   note: '',
+  barcode: '',
   default_unit: 'g',
-  serving_size_g: 100,
+  serving_size_g: null,
   kcal_per_100g: 0,
   carbs_per_100g: 0,
   fat_per_100g: 0,
@@ -120,13 +127,15 @@ const emptyRecipeForm = (): RecipeInput => ({
   name: '',
   description: '',
   note: '',
-  servings_count: 1,
+  total_weight_g: null,
+  servings_count: null,
   items: [{ food_id: '', amount_g: 100 }],
 });
 
 const foodForm = ref<FoodInput>(emptyFoodForm());
 const activityForm = ref<ActivityInput>(emptyActivityForm());
 const recipeForm = ref<RecipeInput>(emptyRecipeForm());
+const recipeIngredientSearch = ref<Record<number, string>>({});
 
 const editingFoodId = computed(() => foodForm.value.id || null);
 const editingRecipeId = computed(() => recipeForm.value.id || null);
@@ -137,9 +146,29 @@ const totalRecipes = computed(() => recipes.value.length);
 const totalActivities = computed(() => activities.value.length);
 const avgKcal = computed(() => foods.value.length ? Math.round(foods.value.reduce((sum, food) => sum + food.kcal_per_100g, 0) / foods.value.length) : 0);
 
+const totalIngredients = computed(() => foods.value.filter((food) => food.catalog_kind === 'ingredient').length);
+const totalPreparedFoods = computed(() => foods.value.filter((food) => food.catalog_kind !== 'ingredient').length);
+const latestFoodUpdatedAt = computed(() => latestUpdatedAt(foods.value));
+const latestRecipeUpdatedAt = computed(() => latestUpdatedAt(recipes.value.map((detail) => detail.recipe)));
+const latestActivityUpdatedAt = computed(() => latestUpdatedAt(activities.value));
+
+function latestUpdatedAt(items: Array<{ updated_at?: number | null; deleted_at?: number | null }>): number | null {
+  const latest = items.filter((item) => !item.deleted_at).reduce((max, item) => Math.max(max, Number(item.updated_at || 0)), 0);
+  return latest > 0 ? latest : null;
+}
+
+function formatFreshness(value: number | null): string {
+  if (!value) return 'never';
+  return new Date(value).toLocaleString();
+}
+
+function foodKindLabel(food: Food): string {
+  return food.catalog_kind === 'ingredient' ? 'Ingredient' : 'Food';
+}
+
 const sortedFoods = computed(() => {
   const q = foodQuery.value.trim().toLowerCase();
-  const items = q ? foods.value.filter((food) => `${food.name} ${food.brand ?? ''} ${food.note ?? ''} ${food.id}`.toLowerCase().includes(q)) : [...foods.value];
+  const items = q ? foods.value.filter((food) => `${food.name} ${food.brand ?? ''} ${food.note ?? ''} ${food.barcode ?? ''} ${food.id}`.toLowerCase().includes(q)) : [...foods.value];
   return items.sort((a, b) => {
     if (foodSort.value === 'kcal') return b.kcal_per_100g - a.kcal_per_100g;
     if (foodSort.value === 'protein') return b.protein_per_100g - a.protein_per_100g;
@@ -488,6 +517,49 @@ async function mergeDuplicateSuggestion(suggestion: CatalogDuplicateSuggestion) 
   }
 }
 
+
+async function mergeAllDuplicateSuggestions() {
+  const suggestions = duplicateSuggestions.value.filter((suggestion) => {
+    const canonicalId = duplicateCanonicalId(suggestion);
+    return canonicalId && suggestion.items.some((item) => item.id !== canonicalId);
+  });
+  if (!suggestions.length) return;
+  const aliasCount = suggestions.reduce((count, suggestion) => count + suggestion.items.filter((item) => item.id !== duplicateCanonicalId(suggestion)).length, 0);
+  if (!window.confirm(`Execute ${suggestions.length} merge suggestion(s) and merge ${aliasCount} duplicate item(s) into the selected kept items?`)) return;
+  loading.value = true;
+  try {
+    let merged = 0;
+    for (const suggestion of suggestions) {
+      const canonicalId = duplicateCanonicalId(suggestion);
+      for (const alias of suggestion.items.filter((item) => item.id !== canonicalId)) {
+        await commands.mergeCatalogItem(suggestion.kind, alias.id, canonicalId);
+        merged++;
+      }
+    }
+    setMessage(`${merged} duplicate item(s) merged.`);
+    await refreshAll();
+  } catch (error) {
+    setMessage(String(error));
+  } finally {
+    loading.value = false;
+  }
+}
+
+function encodeCatalogQrPayload(kind: CatalogKind, item: Food | Recipe | ActivityDefinition): string {
+  const json = JSON.stringify({ app: 'nutrino', version: 1, kind, item });
+  return `nutrino-catalog-v1:${btoa(unescape(encodeURIComponent(json)))}`;
+}
+
+async function showCatalogQr(kind: CatalogKind, item: Food | Recipe | ActivityDefinition, title: string) {
+  try {
+    const payload = encodeCatalogQrPayload(kind, item);
+    const svg = await QRCode.toString(payload, { type: 'svg', margin: 1, width: 280 });
+    qrDialog.value = { title, svg, payload };
+  } catch (error) {
+    setMessage(String(error));
+  }
+}
+
 async function acceptInboxEntry(entry: SyncInboxEntry) {
   if (!window.confirm('Record this mobile upload on the server? Exact duplicates will be merged and aliases will sync back to mobile.')) return;
   loading.value = true;
@@ -522,9 +594,11 @@ function openFoodModal(food?: Food) {
       id: food.id,
       name: food.name,
       brand: food.brand ?? '',
+      catalog_kind: food.catalog_kind === 'ingredient' ? 'ingredient' : 'food',
       note: food.note ?? '',
+      barcode: food.barcode ?? '',
       default_unit: food.default_unit,
-      serving_size_g: food.serving_size_g ?? 100,
+      serving_size_g: food.serving_size_g ?? null,
       kcal_per_100g: food.kcal_per_100g,
       carbs_per_100g: food.carbs_per_100g,
       fat_per_100g: food.fat_per_100g,
@@ -563,14 +637,22 @@ function openRecipeModal(recipe?: RecipeDetail) {
       name: recipe.recipe.name,
       description: recipe.recipe.description ?? '',
       note: recipe.recipe.note ?? '',
-      servings_count: recipe.recipe.servings_count ?? 1,
+      total_weight_g: recipe.recipe.total_weight_g ?? null,
+      servings_count: recipe.recipe.servings_count ?? null,
       items: recipe.items.map((item) => ({ food_id: item.food_id, amount_g: item.amount_g })),
     };
   } else {
     recipeForm.value = emptyRecipeForm();
   }
   if (!recipeForm.value.items.length) addRecipeItem();
+  recipeIngredientSearch.value = {};
   modal.value = 'recipe';
+}
+
+function requestCloseModal() {
+  if (!modal.value || window.confirm('Close this data-entry panel without saving?')) {
+    closeModal();
+  }
 }
 
 function closeModal() {
@@ -580,10 +662,43 @@ function closeModal() {
 async function saveFood() {
   loading.value = true;
   try {
-    await commands.saveFood(foodForm.value);
+    await commands.saveFood({
+      ...foodForm.value,
+      brand: foodForm.value.catalog_kind === 'ingredient' ? null : foodForm.value.brand,
+    });
     setMessage(editingFoodId.value ? 'Food updated.' : 'Food created.');
     closeModal();
     foodForm.value = emptyFoodForm();
+    await refreshAll();
+  } catch (error) {
+    setMessage(String(error));
+  } finally {
+    loading.value = false;
+  }
+}
+
+
+async function moveFoodCatalogKind(food: Food, catalogKind: 'food' | 'ingredient') {
+  loading.value = true;
+  try {
+    await commands.saveFood({
+      id: food.id,
+      name: food.name,
+      brand: catalogKind === 'ingredient' ? null : food.brand ?? null,
+      catalog_kind: catalogKind,
+      note: food.note ?? null,
+      barcode: food.barcode ?? null,
+      default_unit: food.default_unit,
+      serving_size_g: food.serving_size_g ?? null,
+      kcal_per_100g: food.kcal_per_100g,
+      carbs_per_100g: food.carbs_per_100g,
+      fat_per_100g: food.fat_per_100g,
+      protein_per_100g: food.protein_per_100g,
+      sugars_per_100g: food.sugars_per_100g,
+      fiber_per_100g: food.fiber_per_100g,
+      salt_per_100g: food.salt_per_100g,
+    });
+    setMessage(catalogKind === 'ingredient' ? 'Moved to ingredients.' : 'Moved to foods.');
     await refreshAll();
   } catch (error) {
     setMessage(String(error));
@@ -634,7 +749,7 @@ async function importFoodsFromFile(event: Event) {
   if (!text) return;
   loading.value = true;
   try {
-    const result = await commands.commitCsv(text);
+    const result = await commands.commitCsv(text, skipCsvDuplicates.value);
     setMessage(`Imported ${result.inserted_or_updated} foods. Skipped ${result.skipped}.`);
     await refreshAll();
   } catch (error) {
@@ -649,7 +764,7 @@ async function importRecipesFromFile(event: Event) {
   if (!text) return;
   loading.value = true;
   try {
-    const result = await commands.importRecipesCsv(text);
+    const result = await commands.importRecipesCsv(text, skipCsvDuplicates.value);
     setMessage(`Imported ${result.inserted_or_updated} recipes. Skipped ${result.skipped}.`);
     await refreshAll();
   } catch (error) {
@@ -664,7 +779,7 @@ async function importActivitiesFromFile(event: Event) {
   if (!text) return;
   loading.value = true;
   try {
-    const result = await commands.importActivitiesCsv(text);
+    const result = await commands.importActivitiesCsv(text, skipCsvDuplicates.value);
     setMessage(`Imported ${result.inserted_or_updated} activities. Skipped ${result.skipped}.`);
     await refreshAll();
   } catch (error) {
@@ -686,7 +801,7 @@ async function exportFoods() {
 
 
 function addRecipeItem() {
-  recipeForm.value.items.push({ food_id: foods.value[0]?.id ?? '', amount_g: 100 });
+  recipeForm.value.items.push({ food_id: recipeCatalogItems.value[0]?.id ?? '', amount_g: 100 });
 }
 
 function removeRecipeItem(index: number) {
@@ -695,7 +810,7 @@ function removeRecipeItem(index: number) {
 }
 
 function selectedFood(item: RecipeInputItem) {
-  return foods.value.find((food) => food.id === item.food_id) ?? null;
+  return recipeCatalogItems.value.find((food) => food.id === item.food_id) ?? null;
 }
 
 function recipeItemServingSize(item: RecipeInputItem) {
@@ -747,9 +862,10 @@ const recipeFormNutrition = computed(() => {
     protein += food.protein_per_100g * item.amount_g / 100;
   }
 
-  const ratio = totalWeight > 0 ? 100 / totalWeight : 0;
+  const finishedWeight = Number(recipeForm.value.total_weight_g || 0) > 0 ? Number(recipeForm.value.total_weight_g) : totalWeight;
+  const ratio = finishedWeight > 0 ? 100 / finishedWeight : 0;
   return {
-    totalWeight,
+    totalWeight: finishedWeight,
     kcalTotal: kcal,
     kcalPer100g: kcal * ratio,
     carbsPer100g: carbs * ratio,
@@ -829,6 +945,51 @@ const filteredActivities = computed(() => {
     .toLowerCase()
     .includes(q));
 });
+
+
+function recipeDetailAsCatalogItem(detail: RecipeDetail): RecipeCatalogItem {
+  const totalWeight = detail.recipe.total_weight_g && detail.recipe.total_weight_g > 0 ? detail.recipe.total_weight_g : detail.nutrition.total_weight_g;
+  const serving = detail.recipe.servings_count && detail.recipe.servings_count > 0 && totalWeight > 0 ? totalWeight / detail.recipe.servings_count : null;
+  return {
+    id: `recipe:${detail.recipe.id}`,
+    source_id: detail.recipe.source_id,
+    name: detail.recipe.name,
+    brand: 'Recipe',
+    catalog_kind: 'food',
+    note: detail.recipe.note ?? detail.recipe.description ?? null,
+    barcode: null,
+    default_unit: serving ? 'serving' : 'g',
+    serving_size_g: serving,
+    kcal_per_100g: detail.nutrition.kcal_per_100g,
+    carbs_per_100g: detail.nutrition.carbs_per_100g,
+    fat_per_100g: detail.nutrition.fat_per_100g,
+    protein_per_100g: detail.nutrition.protein_per_100g,
+    sugars_per_100g: 0,
+    fiber_per_100g: 0,
+    salt_per_100g: 0,
+    updated_at: detail.recipe.updated_at,
+    deleted_at: detail.recipe.deleted_at,
+    catalog_source: 'recipe',
+  };
+}
+
+const recipeCatalogItems = computed<RecipeCatalogItem[]>(() => [
+  ...foods.value.map((food) => ({ ...food, catalog_source: 'food' as const })),
+  ...recipes.value
+    .filter((detail) => detail.recipe.id !== editingRecipeId.value)
+    .map(recipeDetailAsCatalogItem),
+].sort((a, b) => a.name.localeCompare(b.name)));
+
+function recipeIngredientOptions(index: number): RecipeCatalogItem[] {
+  const q = String(recipeIngredientSearch.value[index] || '').trim().toLowerCase();
+  if (!q) return recipeCatalogItems.value;
+  return recipeCatalogItems.value.filter((item) => `${item.name} ${item.brand ?? ''} ${item.note ?? ''} ${item.id}`.toLowerCase().includes(q));
+}
+
+function recipeIngredientLabel(item: RecipeCatalogItem): string {
+  if (item.catalog_source === 'recipe') return `Recipe · ${item.name}`;
+  return `${foodKindLabel(item)} · ${item.name}${item.brand ? ` · ${item.brand}` : ''}`;
+}
 
 const groupedActivities = computed(() => {
   const groups = new Map<string, ActivityDefinition[]>();
@@ -1061,7 +1222,8 @@ async function importAppDataZip() {
         name: detail.recipe.name,
         description: detail.recipe.description ?? '',
         note: detail.recipe.note ?? '',
-        servings_count: detail.recipe.servings_count ?? 1,
+        total_weight_g: detail.recipe.total_weight_g ?? null,
+        servings_count: detail.recipe.servings_count ?? null,
         items: detail.items.map((item) => ({ food_id: item.food_id, amount_g: item.amount_g })),
       });
     }
@@ -1189,14 +1351,15 @@ onBeforeUnmount(() => {
             </div>
           </article>
           <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <article class="metric-card"><span class="inline-svg" v-html="icon('foods')"></span><p>Foods</p><strong>{{ totalFoods }}</strong></article>
+            <article class="metric-card"><span class="inline-svg" v-html="icon('foods')"></span><p>Foods</p><strong>{{ totalPreparedFoods }}</strong></article>
+            <article class="metric-card"><span class="inline-svg" v-html="icon('foods')"></span><p>Ingredients</p><strong>{{ totalIngredients }}</strong></article>
             <article class="metric-card"><span class="inline-svg" v-html="icon('recipes')"></span><p>Recipes</p><strong>{{ totalRecipes }}</strong></article>
             <article class="metric-card"><span class="inline-svg" v-html="icon('activities')"></span><p>Activities</p><strong>{{ totalActivities }}</strong></article>
             <article class="metric-card"><span class="inline-svg" v-html="icon('dashboard')"></span><p>Average kcal / 100g</p><strong>{{ avgKcal }}</strong></article>
           </div>
           <article class="card">
             <h2 class="text-xl font-bold">Offline-first local architecture</h2>
-            <p class="mt-3 text-neutral-600">This desktop app owns the food catalog, recipe catalog, activity catalog and LAN API. Mobile syncs the catalog, then keeps working from its local cache whenever the desktop server is unavailable.</p>
+            <p class="mt-3 text-neutral-600">This desktop app owns the food catalog, recipe catalog, activity catalog and LAN API. Mobile syncs the catalog, then keeps working from its local cache whenever the desktop server is unavailable.</p><div class="catalog-freshness-row mt-3"><span>Foods: {{ formatFreshness(latestFoodUpdatedAt) }}</span><span>Recipes: {{ formatFreshness(latestRecipeUpdatedAt) }}</span><span>Activities: {{ formatFreshness(latestActivityUpdatedAt) }}</span></div>
           </article>
         </div>
 
@@ -1208,13 +1371,13 @@ onBeforeUnmount(() => {
             </div>
             <div class="flex flex-wrap gap-2">
               <button class="btn-secondary icon-button" @click="refreshAll"><span class="inline-svg" v-html="icon('refresh')"></span>Refresh</button>
-              <label class="btn-secondary icon-button file-action"><span class="inline-svg" v-html="icon('import')"></span>Import CSV<input type="file" accept=".csv,text/csv" @change="importFoodsFromFile" /></label>
+              <label class="btn-secondary icon-button file-action"><span class="inline-svg" v-html="icon('import')"></span>Import CSV<input type="file" accept=".csv,text/csv" @change="importFoodsFromFile" /></label><label class="csv-skip-toggle"><input v-model="skipCsvDuplicates" type="checkbox" /> Skip duplicates</label>
               <button class="btn-secondary icon-button" @click="exportFoods"><span class="inline-svg" v-html="icon('export')"></span>Export CSV</button>
               <button class="btn-primary icon-button" @click="openFoodModal()"><span class="inline-svg" v-html="icon('add')"></span>Add food</button>
             </div>
           </div>
           <article class="card catalog-controls">
-            <input v-model="foodQuery" class="input" placeholder="Search foods by name, brand, note or ID..." />
+            <input v-model="foodQuery" class="input" placeholder="Search foods by name, brand, barcode, note or ID..." />
             <select v-model="foodSort" class="input"><option value="name">Sort by name</option><option value="kcal">Sort by kcal</option><option value="protein">Sort by protein</option><option value="carbs">Sort by carbs</option><option value="fat">Sort by fat</option></select>
           </article>
           <article class="card csv-format-card">
@@ -1233,7 +1396,7 @@ onBeforeUnmount(() => {
                 </thead>
                 <tbody>
                   <tr v-for="food in sortedFoods" :key="food.id">
-                    <td><strong>{{ food.name }}</strong><br /><span class="muted">{{ food.brand || 'No brand' }}</span><small v-if="food.note" class="block muted">{{ food.note }}</small></td>
+                    <td><strong>{{ food.name }}</strong><br /><span class="muted">{{ foodKindLabel(food) }} · {{ food.brand || 'No brand' }}</span><small v-if="food.note" class="block muted">{{ food.note }}</small></td>
                     <td class="font-mono text-xs">{{ food.id }}</td>
                     <td>{{ round(food.kcal_per_100g) }}</td>
                     <td>{{ round(food.carbs_per_100g) }}g</td>
@@ -1241,7 +1404,7 @@ onBeforeUnmount(() => {
                     <td>{{ round(food.protein_per_100g) }}g</td>
                     <td>
                       <button class="link-button icon-only-label" @click="openFoodModal(food)"><span class="inline-svg" v-html="icon('edit')"></span>Edit</button>
-                      <button class="link-button icon-only-label" @click="mergeCatalogInto('food', food.id, food.name)"><span class="inline-svg" v-html="icon('refresh')"></span>Merge into</button>
+                      <button class="link-button icon-only-label" @click="mergeCatalogInto('food', food.id, food.name)"><span class="inline-svg" v-html="icon('refresh')"></span>Merge into</button><button v-if="food.catalog_kind !== 'ingredient'" class="link-button icon-only-label" @click="moveFoodCatalogKind(food, 'ingredient')">Move to ingredients</button><button v-else class="link-button icon-only-label" @click="moveFoodCatalogKind(food, 'food')">Move to foods</button><button class="link-button icon-only-label" @click="showCatalogQr('food', food, food.name)"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
                       <button class="link-button danger icon-only-label" @click="removeFood(food)"><span class="inline-svg" v-html="icon('trash')"></span>Delete</button>
                     </td>
                   </tr>
@@ -1257,7 +1420,7 @@ onBeforeUnmount(() => {
               <h2 class="section-title">Recipes</h2>
               <p class="section-subtitle">Build reusable meals from foods. Nutrition is calculated from ingredients.</p>
             </div>
-            <div class="flex flex-wrap gap-2"><label class="btn-secondary icon-button file-action"><span class="inline-svg" v-html="icon('import')"></span>Import CSV<input type="file" accept=".csv,text/csv" @change="importRecipesFromFile" /></label><button class="btn-secondary icon-button" @click="exportRecipes"><span class="inline-svg" v-html="icon('export')"></span>Export CSV</button><button class="btn-primary icon-button" @click="openRecipeModal()"><span class="inline-svg" v-html="icon('add')"></span>Add recipe</button></div>
+            <div class="flex flex-wrap gap-2"><label class="btn-secondary icon-button file-action"><span class="inline-svg" v-html="icon('import')"></span>Import CSV<input type="file" accept=".csv,text/csv" @change="importRecipesFromFile" /></label><label class="csv-skip-toggle"><input v-model="skipCsvDuplicates" type="checkbox" /> Skip duplicates</label><button class="btn-secondary icon-button" @click="exportRecipes"><span class="inline-svg" v-html="icon('export')"></span>Export CSV</button><button class="btn-primary icon-button" @click="openRecipeModal()"><span class="inline-svg" v-html="icon('add')"></span>Add recipe</button></div>
           </div>
           <article class="card catalog-controls">
             <input v-model="recipeQuery" class="input" placeholder="Search recipes by name, description, note or ID..." />
@@ -1280,7 +1443,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="flex gap-2">
                   <button class="link-button icon-only-label" @click="openRecipeModal(recipe)"><span class="inline-svg" v-html="icon('edit')"></span>Edit</button>
-                  <button class="link-button icon-only-label" @click="mergeCatalogInto('recipe', recipe.recipe.id, recipe.recipe.name)"><span class="inline-svg" v-html="icon('refresh')"></span>Merge into</button>
+                  <button class="link-button icon-only-label" @click="mergeCatalogInto('recipe', recipe.recipe.id, recipe.recipe.name)"><span class="inline-svg" v-html="icon('refresh')"></span>Merge into</button><button class="link-button icon-only-label" @click="showCatalogQr('recipe', recipe.recipe, recipe.recipe.name)"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
                   <button class="link-button danger icon-only-label" @click="removeRecipe(recipe)"><span class="inline-svg" v-html="icon('trash')"></span>Delete</button>
                 </div>
               </div>
@@ -1305,7 +1468,7 @@ onBeforeUnmount(() => {
               <h2 class="section-title">Activities</h2>
               <p class="section-subtitle">OpenNutriTracker activity catalog with editable MET and kcal/min values.</p>
             </div>
-            <div class="flex flex-wrap gap-2"><label class="btn-secondary icon-button file-action"><span class="inline-svg" v-html="icon('import')"></span>Import CSV<input type="file" accept=".csv,text/csv" @change="importActivitiesFromFile" /></label><button class="btn-secondary icon-button" @click="exportActivities"><span class="inline-svg" v-html="icon('export')"></span>Export CSV</button><button class="btn-primary icon-button" @click="openActivityModal()"><span class="inline-svg" v-html="icon('add')"></span>Add activity</button></div>
+            <div class="flex flex-wrap gap-2"><label class="btn-secondary icon-button file-action"><span class="inline-svg" v-html="icon('import')"></span>Import CSV<input type="file" accept=".csv,text/csv" @change="importActivitiesFromFile" /></label><label class="csv-skip-toggle"><input v-model="skipCsvDuplicates" type="checkbox" /> Skip duplicates</label><button class="btn-secondary icon-button" @click="exportActivities"><span class="inline-svg" v-html="icon('export')"></span>Export CSV</button><button class="btn-primary icon-button" @click="openActivityModal()"><span class="inline-svg" v-html="icon('add')"></span>Add activity</button></div>
           </div>
           <article class="card">
             <input v-model="activityQuery" class="input" placeholder="Search activity, type, code..." />
@@ -1335,7 +1498,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="mt-3 flex gap-2">
                   <button class="link-button icon-only-label" @click="openActivityModal(activity)"><span class="inline-svg" v-html="icon('edit')"></span>Edit</button>
-                  <button class="link-button icon-only-label" @click="mergeCatalogInto('activity', activity.id, activity.name)"><span class="inline-svg" v-html="icon('refresh')"></span>Merge into</button>
+                  <button class="link-button icon-only-label" @click="mergeCatalogInto('activity', activity.id, activity.name)"><span class="inline-svg" v-html="icon('refresh')"></span>Merge into</button><button class="link-button icon-only-label" @click="showCatalogQr('activity', activity, activity.name)"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
                   <button class="link-button danger icon-only-label" @click="removeActivity(activity)"><span class="inline-svg" v-html="icon('trash')"></span>Delete</button>
                 </div>
               </article>
@@ -1374,7 +1537,7 @@ onBeforeUnmount(() => {
               <h2 class="text-xl font-bold">Merge suggestions</h2>
               <p class="mt-2 muted">Nutrino can list likely duplicate foods, recipes and activities before any sync is involved. Choose which item should stay, then merge the rest into it, or open an item and rename it if it is only badly named.</p>
             </div>
-            <button class="btn-secondary" :disabled="loading" @click="refreshAll">Refresh</button>
+            <button class="btn-secondary" :disabled="loading" @click="refreshAll">Refresh</button><button class="btn-primary" :disabled="loading || !duplicateSuggestions.length" @click="mergeAllDuplicateSuggestions">Merge all selected</button>
           </div>
           <div v-if="!duplicateSuggestions.length" class="empty-state mt-4">No likely duplicate catalog items found.</div>
           <div v-else class="duplicate-suggestion-grid mt-4">
@@ -1573,6 +1736,15 @@ onBeforeUnmount(() => {
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="qrDialog" class="modal-backdrop" @click.self="qrDialog = null">
+        <section class="modal-card qr-modal">
+          <div class="modal-title-row"><div><p class="modal-kicker">catalog QR</p><h2>{{ qrDialog.title }}</h2><p class="muted">Scan this with the mobile app to review, edit and save the item locally. The phone will warn if it looks like a duplicate.</p></div></div>
+          <div class="qr-preview" v-html="qrDialog.svg"></div>
+          <textarea class="input textarea-input" rows="3" readonly :value="qrDialog.payload"></textarea>
+          <div class="dialog-actions"><button class="btn-primary" @click="qrDialog = null">Done</button></div>
+        </section>
+      </div>
+
       <div v-if="mergePicker" class="modal-backdrop" @click.self="closeMergePicker">
         <section class="modal-card merge-picker-modal">
           <div class="modal-header">
@@ -1724,7 +1896,7 @@ onBeforeUnmount(() => {
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="modal" class="modal-backdrop" @click.self="closeModal">
+      <div v-if="modal" class="modal-backdrop" @click.self="requestCloseModal">
         <section class="modal-card">
           <div class="modal-header">
             <div>
@@ -1733,12 +1905,13 @@ onBeforeUnmount(() => {
               <h2 v-if="modal === 'recipe'" class="text-2xl font-bold">{{ editingRecipeId ? 'Edit recipe' : 'Add recipe' }}</h2>
               <h2 v-if="modal === 'activity'" class="text-2xl font-bold">{{ editingActivityId ? 'Edit activity' : 'Add activity' }}</h2>
             </div>
-            <button class="btn-secondary" @click="closeModal">Close</button>
+            <button class="btn-secondary" @click="requestCloseModal">Close</button>
           </div>
 
           <div v-if="modal === 'food'" class="modal-body grid gap-3">
             <label class="field-label">Name</label><input v-model="foodForm.name" class="input" placeholder="Food name" />
-            <label class="field-label">Brand / source label</label><input v-model="foodForm.brand" class="input" placeholder="Optional" />
+            <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">Catalog type</label><select v-model="foodForm.catalog_kind" class="input mt-1"><option value="food">Food / prepared item</option><option value="ingredient">Ingredient / raw material</option></select></div><div><label class="field-label">Brand / source label</label><input v-model="foodForm.brand" class="input mt-1" :disabled="foodForm.catalog_kind === 'ingredient'" placeholder="Optional for food" /></div></div>
+            <label class="field-label">Barcode / EAN / UPC</label><input v-model="foodForm.barcode" class="input" placeholder="Optional" />
             <label class="field-label">Note</label><textarea v-model="foodForm.note" class="input textarea-input" rows="3" placeholder="Optional note, source, portion hint or cooking detail"></textarea>
             <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">Default unit</label><input v-model="foodForm.default_unit" class="input mt-1" /></div><div><label class="field-label">Serving size g</label><input v-model.number="foodForm.serving_size_g" class="input mt-1" type="number" min="0" step="0.1" /></div></div>
             <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">kcal / 100g</label><input v-model.number="foodForm.kcal_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">Carbs / 100g</label><input v-model.number="foodForm.carbs_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">Fat / 100g</label><input v-model.number="foodForm.fat_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">Protein / 100g</label><input v-model.number="foodForm.protein_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">Sugars / 100g</label><input v-model.number="foodForm.sugars_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">Fiber / 100g</label><input v-model.number="foodForm.fiber_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">Salt / 100g</label><input v-model.number="foodForm.salt_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div></div>
@@ -1749,13 +1922,16 @@ onBeforeUnmount(() => {
             <label class="field-label">Name</label><input v-model="recipeForm.name" class="input" placeholder="Recipe name" />
             <label class="field-label">Description</label><input v-model="recipeForm.description" class="input" placeholder="Optional" />
             <label class="field-label">Note</label><textarea v-model="recipeForm.note" class="input textarea-input" rows="3" placeholder="Optional note, source, portion hint or cooking detail"></textarea>
-            <label class="field-label">Servings</label><input v-model.number="recipeForm.servings_count" class="input" type="number" min="1" step="0.1" />
+            <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">Finished weight g</label><input v-model.number="recipeForm.total_weight_g" class="input mt-1" type="number" min="0" step="0.1" placeholder="Optional; e.g. soup after cooking" /></div><div><label class="field-label">Servings</label><input v-model.number="recipeForm.servings_count" class="input mt-1" type="number" min="0" step="0.1" placeholder="Optional" /></div></div>
             <div class="rounded-2xl bg-soft p-3">
               <div v-for="(item, index) in recipeForm.items" :key="index" class="recipe-ingredient-editor mb-3 grid gap-2 sm:grid-cols-[1fr_120px_120px_auto]">
-                <select v-model="item.food_id" class="input" @change="onRecipeItemFoodChange(item)">
-                  <option value="">Choose food</option>
-                  <option v-for="food in foods" :key="food.id" :value="food.id">{{ food.name }}</option>
-                </select>
+                <div class="recipe-ingredient-picker">
+                  <input v-model="recipeIngredientSearch[index]" class="input mb-2" type="search" placeholder="Search food, ingredient or recipe..." />
+                  <select v-model="item.food_id" class="input" @change="onRecipeItemFoodChange(item)">
+                    <option value="">Choose food, ingredient or recipe</option>
+                    <option v-for="food in recipeIngredientOptions(index)" :key="food.id" :value="food.id">{{ recipeIngredientLabel(food) }}</option>
+                  </select>
+                </div>
                 <label class="compact-unit-field">
                   <span>g</span>
                   <input v-model.number="item.amount_g" class="input" type="number" min="0" step="0.1" placeholder="grams" />

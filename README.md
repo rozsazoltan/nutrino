@@ -1,8 +1,8 @@
 # nutrino
 
-Offline-first nutrition tracker built with Tauri v2 for logging daily meals, calories, macros, activity, BMI, and weight, with desktop database sync for foods and recipes.
+Offline-first nutrition tracker built with Tauri v2 for logging daily meals, calories, macros, activity, BMI, and weight, with desktop/GitHub CSV catalog sync for foods, recipes and activities.
 
-`nutrino` is designed for people who want nutrition tracking without depending on public food databases or online food search. You maintain your own food, recipe, and activity catalog on a desktop server. The mobile app syncs that catalog on your local network and keeps diary data offline on the device.
+`nutrino` is designed for people who want nutrition tracking without depending on public food databases or online food search. You maintain your own food, recipe, and activity catalog on a desktop server and/or in one or more GitHub CSV repositories. The mobile app syncs available catalog sources on demand or daily and keeps diary data offline on the device.
 
 - [What it is](#what-it-is)
 - [How it works](#how-it-works)
@@ -32,6 +32,7 @@ Desktop app
 
 Mobile app
   ├─ pulls foods, recipes and activities from the desktop server
+  ├─ can also read Nutrino CSV files from one or more GitHub repositories
   ├─ can create foods, recipes, activities, diary entries and kcal notes offline
   ├─ pushes pending local changes when the desktop server is reachable
   ├─ monitors server health and catalog_revision
@@ -45,7 +46,9 @@ The desktop app can protect the LAN API with an optional server password. Leavin
 - Local food catalog management with optional notes; fresh installs start with an empty food/recipe catalog
 - Recipe builder using stable food IDs and optional recipe notes; recipes are imported or created by the user
 - Activity catalog management
-- CSV import/export for foods, recipes, and activities
+- CSV import/export for foods, recipes, and activities, with duplicate-skip import mode
+- Duplicate suggestion review with selected-item merge and “merge all selected” support
+- QR generation for foods, recipes and activities so mobile can import individual catalog items
 - ZIP backup/restore with manifest validation
 - Local LAN API server for mobile sync
 - System tray support
@@ -58,7 +61,8 @@ The desktop app can protect the LAN API with an optional server password. Leavin
 - Offline-first daily diary
 - Home dashboard with today-only calories, supplied/burned values, and macro rings that roll over at midnight
 - Meal sections: Activity, Breakfast, Lunch, Dinner, Snack
-- Food and recipe picker with shared search, including notes
+- Food and recipe picker with shared search, exact-match grouping, barcode/QR scan entry, and notes
+- Optional GitHub CSV sources with multiple repos, optional paths and optional token for higher API limits
 - Local recipe customization per diary entry
 - Activity logging from catalog, watch, or manual kcal input
 - Calendar diary with weight, BMI, daily macros, and editable day unlock
@@ -223,7 +227,7 @@ On Windows, the Vite dev servers ignore Rust/Tauri build output directories such
 
 Nutrino detects its channel at runtime. Vite/Tauri dev sessions show the Dev channel inside the app. Packaged builds are stable and use the normal `Nutrino` app name.
 
-Use `pnpm dev:android` only for live development. It intentionally uses Tauri's `build.devUrl` and a Vite dev server, so that app expects your desktop dev server to be reachable from the phone.
+Use `pnpm dev:android` only for live development. It intentionally uses Tauri's `build.devUrl` and a Vite dev server, so that app expects your desktop dev server to be reachable from the phone. The dev script tracks app version/channel identity and clears stale native, JNI and Gradle artifacts before launching when that identity changes, so version bumps should no longer require manually restarting from a broken Android state.
 
 ```bash
 pnpm init:android

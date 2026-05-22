@@ -12,12 +12,16 @@ export interface ServerStatus {
   catalog_revision: number;
 }
 
+export type FoodCatalogKind = 'food' | 'ingredient';
+
 export interface Food {
   id: string;
   source_id: string;
   name: string;
   brand?: string | null;
+  catalog_kind?: FoodCatalogKind;
   note?: string | null;
+  barcode?: string | null;
   default_unit: string;
   serving_size_g?: number | null;
   kcal_per_100g: number;
@@ -35,7 +39,9 @@ export interface FoodInput {
   id?: string | null;
   name: string;
   brand?: string | null;
+  catalog_kind?: FoodCatalogKind;
   note?: string | null;
+  barcode?: string | null;
   default_unit?: string | null;
   serving_size_g?: number | null;
   kcal_per_100g: number;
@@ -88,6 +94,7 @@ export interface RecipeInput {
   name: string;
   description?: string | null;
   note?: string | null;
+  total_weight_g?: number | null;
   servings_count?: number | null;
   items: RecipeInputItem[];
 }
