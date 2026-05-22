@@ -1,7 +1,7 @@
 {
   "name": "nutrino-mobile",
   "private": true,
-  "version": "0.8.0",
+  "version": "0.10.3",
   "type": "module",
   "packageManager": "pnpm@10.32.1",
   "scripts": {
@@ -11,7 +11,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "android:init": "node scripts/android-channel.mjs --channel stable && tauri android init && node scripts/patch-android-generated.mjs --channel stable",
+    "android:init": "node scripts/android-init.mjs --channel stable",
     "android:patch": "node scripts/patch-android-generated.mjs --channel stable",
     "android:dev": "node scripts/android-dev-host.mjs",
     "android:build": "node scripts/android-build.mjs --channel stable --apk --target aarch64",
@@ -19,7 +19,10 @@
     "android:clean": "node scripts/android-clean.mjs",
     "ios:init": "tauri ios init",
     "ios:dev": "tauri ios dev",
-    "ios:build": "tauri ios build"
+    "ios:build": "tauri ios build",
+    "android:init:dev": "node scripts/android-init.mjs --channel dev",
+    "android:reset": "node scripts/android-clean.mjs --generated --gradle-transforms",
+    "android:clean:rust": "node scripts/android-clean.mjs --all"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",

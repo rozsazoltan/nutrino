@@ -5,6 +5,7 @@ import type {
   AppState,
   AppSettings,
   Food,
+  Ingredient,
   Gender,
   Intake,
   PairingConfig,
@@ -112,6 +113,7 @@ export function defaultState(): AppState {
     pairing: defaultPairing(),
     profile: defaultProfile(),
     foods: [],
+    ingredients: [],
     recipes: [],
     recipeItems: [],
     activities: fallbackActivities,
@@ -135,6 +137,16 @@ export function loadState(): AppState {
     const storedProfile: Partial<UserProfile> = parsed.profile ?? {};
     const storedSettings: Partial<AppSettings> = parsed.settings ?? {};
 
+    const rawFoods = Array.isArray(parsed.foods) ? parsed.foods.map(normalizeFood) : [];
+    const migratedIngredients = rawFoods
+      .filter((food) => food.catalog_kind === 'ingredient')
+      .map(foodToIngredient);
+    const parsedIngredients = Array.isArray((parsed as any).ingredients)
+      ? ((parsed as any).ingredients as Ingredient[]).map(normalizeIngredient)
+      : [];
+    const foods = rawFoods.filter((food) => food.catalog_kind !== 'ingredient').map((food) => ({ ...food, catalog_kind: 'food' as const }));
+    const ingredients = mergeById(parsedIngredients, migratedIngredients);
+
     return {
       ...defaults,
       ...parsed,
@@ -152,7 +164,8 @@ export function loadState(): AppState {
         ...storedProfile,
         plan_start_weight_kg: storedProfile.plan_start_weight_kg || storedProfile.current_weight_kg || defaults.profile.current_weight_kg,
       },
-      foods: Array.isArray(parsed.foods) ? parsed.foods : [],
+      foods,
+      ingredients,
       recipes: Array.isArray(parsed.recipes) ? parsed.recipes : [],
       recipeItems: Array.isArray(parsed.recipeItems) ? parsed.recipeItems : [],
       activities: Array.isArray(parsed.activities) ? parsed.activities : defaults.activities,
@@ -232,8 +245,8 @@ export function normalizeGitHubSource(source: Partial<GitHubCsvSource> | null | 
 export function normalizeFood(food: Food): Food {
   return {
     ...food,
-    brand: food.catalog_kind === 'ingredient' ? null : food.brand ?? null,
-    catalog_kind: food.catalog_kind === 'ingredient' ? 'ingredient' : 'food',
+    brand: food.brand ?? null,
+    catalog_kind: 'food',
     note: food.note ?? null,
     default_unit: food.default_unit || 'g',
     serving_size_g: food.serving_size_g ?? null,
@@ -244,6 +257,63 @@ export function normalizeFood(food: Food): Food {
   };
 }
 
+export function normalizeIngredient(ingredient: Ingredient): Ingredient {
+  return {
+    ...ingredient,
+    note: ingredient.note ?? null,
+    default_unit: ingredient.default_unit || 'g',
+    serving_size_g: ingredient.serving_size_g ?? null,
+    sugars_per_100g: ingredient.sugars_per_100g ?? 0,
+    fiber_per_100g: ingredient.fiber_per_100g ?? 0,
+    salt_per_100g: ingredient.salt_per_100g ?? 0,
+  };
+}
+
+export function ingredientAsFood(ingredient: Ingredient): Food {
+  return {
+    id: `ingredient:${ingredient.id}`,
+    source_id: ingredient.source_id,
+    name: ingredient.name,
+    brand: 'Ingredient',
+    catalog_kind: 'ingredient',
+    note: ingredient.note ?? null,
+    default_unit: ingredient.default_unit || 'g',
+    serving_size_g: ingredient.serving_size_g ?? null,
+    kcal_per_100g: ingredient.kcal_per_100g,
+    carbs_per_100g: ingredient.carbs_per_100g,
+    fat_per_100g: ingredient.fat_per_100g,
+    protein_per_100g: ingredient.protein_per_100g,
+    sugars_per_100g: ingredient.sugars_per_100g ?? 0,
+    fiber_per_100g: ingredient.fiber_per_100g ?? 0,
+    salt_per_100g: ingredient.salt_per_100g ?? 0,
+    barcode: null,
+    updated_at: ingredient.updated_at,
+    deleted_at: ingredient.deleted_at,
+    pending_sync: ingredient.pending_sync,
+  };
+}
+
+function foodToIngredient(food: Food): Ingredient {
+  return normalizeIngredient({
+    id: food.id,
+    source_id: food.source_id,
+    name: food.name,
+    note: food.note ?? null,
+    default_unit: food.default_unit || 'g',
+    serving_size_g: food.serving_size_g ?? null,
+    kcal_per_100g: food.kcal_per_100g,
+    carbs_per_100g: food.carbs_per_100g,
+    fat_per_100g: food.fat_per_100g,
+    protein_per_100g: food.protein_per_100g,
+    sugars_per_100g: food.sugars_per_100g ?? 0,
+    fiber_per_100g: food.fiber_per_100g ?? 0,
+    salt_per_100g: food.salt_per_100g ?? 0,
+    updated_at: food.updated_at,
+    deleted_at: food.deleted_at,
+    pending_sync: food.pending_sync,
+  });
+}
+
 export function foodSnapshot(item: Food | RecipeFood): string {
   return JSON.stringify(item);
 }
@@ -252,7 +322,7 @@ export interface RecipeFood extends Food {
   recipe_id: string;
 }
 
-function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[], recipes: Recipe[], allItems: RecipeItem[], visited: Set<string>): RecipeFood {
+function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[], ingredients: Ingredient[], recipes: Recipe[], allItems: RecipeItem[], visited: Set<string>): RecipeFood {
   if (visited.has(recipe.id)) {
     return {
       id: `recipe:${recipe.id}`,
@@ -294,12 +364,18 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
             referenced,
             allItems.filter((entry) => entry.recipe_id === referenced.id && !entry.deleted_at),
             foods,
+            ingredients,
             recipes,
             allItems,
             visited,
           );
         })()
-      : foods.find((entry) => entry.id === item.food_id && !entry.deleted_at);
+      : item.food_id.startsWith('ingredient:')
+        ? (() => {
+            const ingredient = ingredients.find((entry) => entry.id === item.food_id.slice('ingredient:'.length) && !entry.deleted_at);
+            return ingredient ? ingredientAsFood(ingredient) : undefined;
+          })()
+        : foods.find((entry) => entry.id === item.food_id && !entry.deleted_at);
     if (!food) continue;
     kcal += food.kcal_per_100g * item.amount_g / 100;
     carbs += food.carbs_per_100g * item.amount_g / 100;
@@ -335,8 +411,8 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
   };
 }
 
-export function recipeAsFood(recipe: Recipe, items: RecipeItem[], foods: Food[], recipes: Recipe[] = [], allItems: RecipeItem[] = items): RecipeFood {
-  return recipeAsFoodInternal(recipe, items, foods.map(normalizeFood), recipes, allItems, new Set<string>());
+export function recipeAsFood(recipe: Recipe, items: RecipeItem[], foods: Food[], ingredients: Ingredient[] = [], recipes: Recipe[] = [], allItems: RecipeItem[] = items): RecipeFood {
+  return recipeAsFoodInternal(recipe, items, foods.map(normalizeFood), ingredients.map(normalizeIngredient), recipes, allItems, new Set<string>());
 }
 
 
@@ -355,7 +431,7 @@ export function mergeAliases(current: CatalogAlias[] = [], incoming: CatalogAlia
 }
 
 export function resolveCatalogId(state: AppState, kind: CatalogKind, id: string): string {
-  const clean = kind === 'recipe' && id.startsWith('recipe:') ? id.slice('recipe:'.length) : id;
+  const clean = kind === 'recipe' && id.startsWith('recipe:') ? id.slice('recipe:'.length) : kind === 'ingredient' && id.startsWith('ingredient:') ? id.slice('ingredient:'.length) : id;
   let current = clean;
   const visited = new Set<string>();
   for (let i = 0; i < 12; i += 1) {
@@ -372,6 +448,7 @@ export function resolveCatalogId(state: AppState, kind: CatalogKind, id: string)
 export function canonicalizeStateReferences(state: AppState): AppState {
   const canonicalRecipe = (id: string) => resolveCatalogId(state, 'recipe', id);
   const canonicalFood = (id: string) => resolveCatalogId(state, 'food', id);
+  const canonicalIngredient = (id: string) => resolveCatalogId(state, 'ingredient', id);
   const canonicalActivity = (id?: string | null) => id ? resolveCatalogId(state, 'activity', id) : id;
 
   return {
@@ -379,7 +456,9 @@ export function canonicalizeStateReferences(state: AppState): AppState {
     recipeItems: state.recipeItems.map((item) => {
       const foodId = item.food_id.startsWith('recipe:')
         ? `recipe:${canonicalRecipe(item.food_id.slice('recipe:'.length))}`
-        : canonicalFood(item.food_id);
+        : item.food_id.startsWith('ingredient:')
+          ? `ingredient:${canonicalIngredient(item.food_id.slice('ingredient:'.length))}`
+          : canonicalFood(item.food_id);
       return {
         ...item,
         recipe_id: canonicalRecipe(item.recipe_id),
@@ -388,9 +467,9 @@ export function canonicalizeStateReferences(state: AppState): AppState {
     }),
     intakes: state.intakes.map((intake) => {
       if (intake.item_type === 'note') return intake;
-      const kind: CatalogKind = intake.item_type === 'recipe' ? 'recipe' : 'food';
+      const kind: CatalogKind = intake.item_type === 'recipe' ? 'recipe' : intake.item_type === 'ingredient' ? 'ingredient' : 'food';
       const canonical = resolveCatalogId(state, kind, intake.food_id);
-      const normalized = kind === 'recipe' ? `recipe:${canonical}` : canonical;
+      const normalized = kind === 'recipe' ? `recipe:${canonical}` : kind === 'ingredient' ? `ingredient:${canonical}` : canonical;
       return normalized === intake.food_id ? intake : { ...intake, food_id: normalized, pending_sync: true, updated_at: Date.now() };
     }),
     activityLogs: state.activityLogs.map((log) => {
@@ -405,17 +484,19 @@ export function catalogItems(state: AppState): Array<Food | RecipeFood> {
     recipe,
     state.recipeItems.filter((item) => item.recipe_id === recipe.id && !item.deleted_at),
     state.foods,
+    state.ingredients,
     state.recipes,
     state.recipeItems,
   ));
-  return [...state.foods.map(normalizeFood), ...recipeFoods].sort((a, b) => a.name.localeCompare(b.name));
+  return [...state.ingredients.map(ingredientAsFood), ...state.foods.map(normalizeFood), ...recipeFoods].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function findCatalogItem(state: AppState, id: string): Food | RecipeFood | undefined {
   const rawRecipeId = id.startsWith('recipe:') ? id.slice('recipe:'.length) : id;
   const recipeId = resolveCatalogId(state, 'recipe', rawRecipeId);
+  const ingredientId = resolveCatalogId(state, 'ingredient', id.startsWith('ingredient:') ? id.slice('ingredient:'.length) : id);
   const foodId = resolveCatalogId(state, 'food', id);
-  return catalogItems(state).find((item) => item.id === id || item.id === foodId || item.id === `recipe:${recipeId}` || item.id === `recipe:${rawRecipeId}`);
+  return catalogItems(state).find((item) => item.id === id || item.id === foodId || item.id === `ingredient:${ingredientId}` || item.id === `recipe:${recipeId}` || item.id === `recipe:${rawRecipeId}`);
 }
 
 export function calculateKcal(food: Food, amountG: number): number {

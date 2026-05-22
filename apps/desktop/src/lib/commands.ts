@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   Food,
   FoodInput,
+  Ingredient,
+  IngredientInput,
   ImportCommitResult,
   ImportPreview,
   RecipeDetail,
@@ -23,6 +25,13 @@ export const commands = {
   listFoods: () => invoke<Food[]>('list_foods'),
   saveFood: (input: FoodInput) => invoke<Food>('save_food', { input }),
   deleteFood: (foodId: string) => invoke<void>('delete_food', { foodId }),
+
+  listIngredients: () => invoke<Ingredient[]>('list_ingredients'),
+  saveIngredient: (input: IngredientInput) => invoke<Ingredient>('save_ingredient', { input }),
+  deleteIngredient: (ingredientId: string) => invoke<void>('delete_ingredient', { ingredientId }),
+  exportIngredientsCsv: () => invoke<string>('export_ingredients_csv'),
+  importIngredientsCsv: (csvText: string, skipDuplicates = true) => invoke<ImportCommitResult>('import_ingredients_csv', { csvText, skipDuplicates }),
+
   exportFoodsCsv: () => invoke<string>('export_foods_csv'),
   previewCsv: (csvText: string) => invoke<ImportPreview>('import_foods_preview', { csvText }),
   commitCsv: (csvText: string, skipDuplicates = true) => invoke<ImportCommitResult>('import_foods_commit', { csvText, skipDuplicates }),

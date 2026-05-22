@@ -15,7 +15,7 @@ const androidAppGradlePaths = [
   path.join(androidDir, 'app', 'build.gradle.kts'),
   path.join(androidDir, 'app', 'build.gradle'),
 ];
-const NATIVE_STATE_VERSION = 5;
+const NATIVE_STATE_VERSION = 6;
 const forceNativeClean = process.argv.includes('--force-native-clean')
   || process.env.NUTRINO_FORCE_ANDROID_NATIVE_CLEAN === '1';
 
@@ -357,9 +357,6 @@ function cleanStaleAndroidNativeState(config) {
     nativeStateVersion: NATIVE_STATE_VERSION,
     applicationId: config.applicationId,
     channel: config.channel,
-    label: config.label,
-    productName: config.productName,
-    nativeIdentityHash: currentNativeIdentityHash(config),
   };
 
   let previous = null;
@@ -371,25 +368,23 @@ function cleanStaleAndroidNativeState(config) {
     }
   }
 
+  const packageChanged = Boolean(previous)
+    && (previous.applicationId !== nextState.applicationId || previous.channel !== nextState.channel);
   const needsClean = forceNativeClean
     || !previous
     || previous.nativeStateVersion !== nextState.nativeStateVersion
-    || previous.applicationId !== nextState.applicationId
-    || previous.channel !== nextState.channel
-    || previous.label !== nextState.label
-    || previous.productName !== nextState.productName
-    || previous.nativeIdentityHash !== nextState.nativeIdentityHash;
+    || packageChanged;
 
   if (!needsClean) return false;
 
-  const tauriTargetDir = path.join(projectRoot, 'src-tauri', 'target');
-
-  // JNI entrypoint symbols are generated from the active Android package. A
-  // stale cross-compiled Rust target can still contain old Java_* exports even
-  // when Gradle/Kotlin has already moved to the new package. Removing the whole
-  // mobile target directory is slower on the next build, but it is safer than
-  // leaving a dev APK that starts and immediately crashes with UnsatisfiedLinkError.
-  removePathIfExists(tauriTargetDir);
+  // Keep Cargo's Rust target cache during normal app-version updates. Cargo can
+  // incrementally rebuild when Rust sources or dependencies change, and deleting
+  // src-tauri/target is what made every copied update recompile the whole Rust
+  // dependency graph. Only force-remove it when explicitly requested or when the
+  // Android package/channel really changes and JNI symbols may be stale.
+  if (forceNativeClean || packageChanged) {
+    removePathIfExists(path.join(projectRoot, 'src-tauri', 'target'));
+  }
 
   removePathIfExists(path.join(androidDir, 'app', 'src', 'main', 'jniLibs'));
   removePathIfExists(path.join(androidDir, 'app', 'build'));
@@ -495,6 +490,88 @@ function patchMainActivityPackage(config) {
   return changed || !sourcePath;
 }
 
+
+function parseRustPluginImplementationClass(source) {
+  if (!/class\s+RustPlugin\b/.test(source)) return null;
+  const packageMatch = source.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*$/m);
+  return packageMatch ? `${packageMatch[1]}.RustPlugin` : 'RustPlugin';
+}
+
+function findRustPluginSourceFiles(buildSrcDir) {
+  return walk(buildSrcDir).filter((file) => /(^|[\\/])RustPlugin\.(kt|java)$/.test(file));
+}
+
+function implementationClassForRustPlugin(buildSrcDir) {
+  const pluginFiles = findRustPluginSourceFiles(buildSrcDir);
+  for (const file of pluginFiles) {
+    const implementationClass = parseRustPluginImplementationClass(fs.readFileSync(file, 'utf8'));
+    if (implementationClass) return implementationClass;
+  }
+  return null;
+}
+
+function patchBuildSrcResourceDuplicateStrategy(buildSrcDir) {
+  const candidates = [
+    path.join(buildSrcDir, 'build.gradle.kts'),
+    path.join(buildSrcDir, 'build.gradle'),
+  ];
+  const gradlePath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!gradlePath) return false;
+
+  const markerStart = '// BEGIN NUTRINO BUILDSRC RESOURCE DUPLICATE GUARD';
+  const markerEnd = '// END NUTRINO BUILDSRC RESOURCE DUPLICATE GUARD';
+  const source = fs.readFileSync(gradlePath, 'utf8');
+  if (source.includes(markerStart)) return false;
+
+  const guard = gradlePath.endsWith('.kts')
+    ? `${markerStart}\ntasks.withType<org.gradle.language.jvm.tasks.ProcessResources>().configureEach {\n    duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.EXCLUDE\n}\n${markerEnd}`
+    : `${markerStart}\ntasks.withType(org.gradle.language.jvm.tasks.ProcessResources).configureEach {\n    duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.EXCLUDE\n}\n${markerEnd}`;
+
+  fs.writeFileSync(gradlePath, `${source.trimEnd()}\n\n${guard}\n`);
+  return true;
+}
+
+function normalizeBuildSrcRustPluginResources() {
+  const buildSrcDir = path.join(androidDir, 'buildSrc');
+  if (!fs.existsSync(buildSrcDir)) return false;
+
+  const descriptorSuffix = ['META-INF', 'gradle-plugins', 'rust.properties'].join(path.sep);
+  const descriptorPaths = walk(buildSrcDir).filter((file) => file.endsWith(descriptorSuffix));
+  const implementationClass = implementationClassForRustPlugin(buildSrcDir);
+  const currentDescriptor = descriptorPaths
+    .map((file) => fs.readFileSync(file, 'utf8'))
+    .find((content) => /implementation-class\s*=/.test(content));
+  const descriptorContent = implementationClass
+    ? `implementation-class=${implementationClass}\n`
+    : currentDescriptor;
+
+  let changed = patchBuildSrcResourceDuplicateStrategy(buildSrcDir);
+
+  if (descriptorContent) {
+    const canonicalPath = path.join(buildSrcDir, 'src', 'main', 'resources', 'META-INF', 'gradle-plugins', 'rust.properties');
+    fs.mkdirSync(path.dirname(canonicalPath), { recursive: true });
+    if (!fs.existsSync(canonicalPath) || fs.readFileSync(canonicalPath, 'utf8') !== descriptorContent) {
+      fs.writeFileSync(canonicalPath, descriptorContent);
+      changed = true;
+    }
+
+    for (const descriptorPath of descriptorPaths) {
+      if (path.resolve(descriptorPath) === path.resolve(canonicalPath)) continue;
+      fs.rmSync(descriptorPath, { force: true });
+      removeEmptyDirectories(path.dirname(descriptorPath), buildSrcDir);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    removePathIfExists(path.join(buildSrcDir, 'build'));
+    removePathIfExists(path.join(buildSrcDir, '.gradle'));
+    removePathIfExists(path.join(androidDir, '.gradle'));
+  }
+
+  return changed;
+}
+
 const channel = parseChannel();
 const config = channelConfig(channel);
 const tauriConfigPatched = patchTauriConfig(projectRoot, config.channel).changed;
@@ -512,7 +589,8 @@ const iconsPatched = patchAndroidIcons();
 const launcherColorPatched = ensureLauncherBackgroundColor();
 const labelResourcesPatched = patchAndroidLabelResources(config);
 const manifestPatched = patchManifest(config);
+const buildSrcRustPluginPatched = normalizeBuildSrcRustPluginResources();
 const nativeStateCleaned = cleanStaleAndroidNativeState(config);
 const generatedKotlinCleaned = cleanGeneratedKotlinPackages();
 const activityPackagePatched = patchMainActivityPackage(config);
-console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);
+console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);

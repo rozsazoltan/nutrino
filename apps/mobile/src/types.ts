@@ -4,8 +4,27 @@ export type ActivityLevel = 'sedentary' | 'low_active' | 'active' | 'very_active
 export type AppLanguage = 'system' | 'en' | 'hu';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type AppChannel = 'dev' | 'stable';
-export type CatalogKind = 'food' | 'recipe' | 'activity';
+export type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 export type FoodCatalogKind = 'food' | 'ingredient';
+
+export interface Ingredient {
+  id: string;
+  source_id: string;
+  name: string;
+  note?: string | null;
+  default_unit: string;
+  serving_size_g?: number | null;
+  kcal_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+  protein_per_100g: number;
+  sugars_per_100g?: number | null;
+  fiber_per_100g?: number | null;
+  salt_per_100g?: number | null;
+  updated_at: number;
+  deleted_at?: number | null;
+  pending_sync?: boolean;
+}
 
 export interface CatalogAlias {
   kind: CatalogKind;
@@ -113,7 +132,7 @@ export interface ActivityDefinition {
 export interface Intake {
   id: string;
   source_id: string;
-  item_type: 'food' | 'recipe' | 'note';
+  item_type: 'ingredient' | 'food' | 'recipe' | 'note';
   food_id: string;
   consumed_at: number;
   meal_type: MealType;
@@ -166,6 +185,7 @@ export interface SyncPullResponse {
   server_time: number;
   source_id: string;
   foods: Food[];
+  ingredients?: Ingredient[];
   recipes?: Recipe[];
   recipe_items?: RecipeItem[];
   activities?: ActivityDefinition[];
@@ -177,6 +197,7 @@ export interface SyncPushRequest {
   device_name?: string;
   sent_at?: number;
   foods?: Food[];
+  ingredients?: Ingredient[];
   recipes?: Recipe[];
   recipe_items?: RecipeItem[];
   activities?: ActivityDefinition[];
@@ -235,6 +256,7 @@ export interface AppState {
   pairing: PairingConfig;
   profile: UserProfile;
   foods: Food[];
+  ingredients: Ingredient[];
   recipes: Recipe[];
   recipeItems: RecipeItem[];
   activities: ActivityDefinition[];

@@ -16,6 +16,27 @@ function androidGeneratedKotlinDir(applicationId) {
   return path.join(projectRoot, 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'java', ...applicationId.split('.'), 'generated');
 }
 
+function runAndroidInit(channel) {
+  const script = path.join(projectRoot, 'scripts', 'android-init.mjs');
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [script, '--channel', channel], {
+      stdio: 'inherit',
+      env: { ...process.env, NUTRINO_ANDROID_CHANNEL: channel },
+    });
+    child.on('exit', (code) => resolve(code ?? 0));
+    child.on('error', () => resolve(1));
+  });
+}
+
+async function ensureAndroidProjectExists(channel) {
+  if (fs.existsSync(androidDir)) return;
+
+  const config = channelConfig(channel);
+  console.log(`\nAndroid project is missing, generating ${config.channel} project first: ${androidDir}`);
+  const initCode = await runAndroidInit(channel);
+  if (initCode !== 0) process.exit(initCode);
+}
+
 function cleanEnv(channel) {
   const env = {};
   const config = channelConfig(channel);
@@ -61,17 +82,9 @@ function patchGeneratedAndroidProject(channel) {
   });
 }
 
-if (!fs.existsSync(androidDir)) {
-  console.error(`\nAndroid project is missing: ${androidDir}`);
-  console.error('Run this once first:');
-  console.error('  pnpm init:android');
-    console.error('or from apps/mobile:');
-    console.error('  pnpm android:init\n');
-  process.exit(1);
-}
-
 const originalArgs = process.argv.slice(2);
 const channel = parseChannel(originalArgs);
+await ensureAndroidProjectExists(channel);
 const config = channelConfig(channel);
 const args = stripChannelArgs(originalArgs);
 if (!args.length) {
