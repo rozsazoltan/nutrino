@@ -25,6 +25,8 @@ const paths = [
   path.join(androidDir, '.gradle'),
   path.join(androidDir, 'app', '.gradle'),
   path.join(androidDir, 'kotlin'),
+  path.join(androidDir, 'app', 'src', 'main', 'jniLibs'),
+  path.join(androidDir, '.nutrino-android-native-state.json'),
 ];
 
 for (const target of paths) {

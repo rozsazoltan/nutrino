@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readFile, writeFile } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
-import type { ActivityDefinition, ActivityLog, AppState, Food, Intake, MealType, WeightLog } from './types';
+import type { ActivityDefinition, ActivityLog, AppState, Food, Intake, MealType, Recipe, RecipeItem, WeightLog } from './types';
 import {
   ageFromBirthday,
   bmi,
@@ -18,17 +18,20 @@ import {
   foodSnapshot,
   generateId,
   isDevMode,
+  runtimeAppName,
+  runtimeChannel,
   latestWeightForDay,
   loadState,
   defaultState,
   needsWeightPrompt,
   saveState,
 } from './lib/storage';
-import { checkServerHealth, pingServer, syncWithServer } from './lib/api';
+import { checkServerHealth, pingServer, pullFromServer, pushToServer } from './lib/api';
 import { lucideSvg, type IconName } from './icons';
 
 type Tab = 'home' | 'diary' | 'recipes' | 'profile';
 type AddMode = 'food' | 'activity' | null;
+type MealEntryMode = 'catalog' | 'note';
 type CatalogSearchScope = 'title' | 'all' | 'brand' | 'category' | 'description';
 
 type MealSection = {
@@ -66,6 +69,10 @@ const activityKcal = ref<number | null>(null);
 const activitySource = ref<ActivityLog['source']>('activity_catalog');
 const weightInput = ref<number | null>(null);
 const search = ref('');
+const mealEntryMode = ref<MealEntryMode>('catalog');
+const noteTitle = ref('');
+const noteDescription = ref('');
+const noteKcal = ref<number | null>(null);
 const catalogSearchScope = ref<CatalogSearchScope>('title');
 const contentScrolled = ref(false);
 const syncBusy = ref(false);
@@ -73,6 +80,7 @@ const serverOnline = ref(false);
 const serverChecking = ref(false);
 let healthTimer: number | undefined;
 let todayRolloverTimer: number | undefined;
+const offlineToastShown = ref(false);
 const toast = ref('');
 const settingsOpen = ref(false);
 const settingsDialog = ref<'units' | 'calculations' | 'language' | 'privacy' | 'about' | 'licenses' | null>(null);
@@ -86,7 +94,7 @@ let lastNumericTapTarget: HTMLInputElement | null = null;
 let lastNumericTapAt = 0;
 
 
-type BackupProfileKind = 'factory_reset' | 'export' | 'manual';
+type BackupProfileKind = 'factory_reset' | 'export' | 'manual' | 'daily';
 
 type BackupProfileSummary = {
   id: string;
@@ -126,10 +134,12 @@ const mobileStateKey = 'nutrino.mobile.v3.state';
 const mobileOnboardingKey = 'nutrino.mobile.onboarded.v1';
 const mobileBackupDbName = 'nutrino-mobile-backups';
 const mobileBackupStoreName = 'profiles';
+const mobileDailyBackupDateKey = 'nutrino.mobile.dailyBackupProfileDate.v1';
 const mobileBackupProfileLimits: Record<BackupProfileKind, number> = {
   factory_reset: 1,
   export: 1,
   manual: 3,
+  daily: 7,
 };
 const mobileFactoryResetConfirm = 'This deletes all local mobile diary, profile, cached catalog and settings data. Continue?';
 
@@ -212,7 +222,10 @@ function clearNumberInputOnDoubleTap(event: PointerEvent) {
   lastNumericTapAt = now;
 }
 
+const appChannel = runtimeChannel();
 const devMode = isDevMode();
+const appName = runtimeAppName('Nutrino');
+document.title = appName;
 const ringCircumference = 2 * Math.PI * 90;
 const kcalArcLength = ringCircumference * 0.78;
 const macroRing = 2 * Math.PI * 20;
@@ -434,6 +447,7 @@ function updateContentScrolled() {
 onMounted(() => {
   void navigator.storage?.persist?.();
   void refreshBackupProfiles();
+  void ensureDailyBackupProfile();
   maybeOpenOnboarding();
   refreshTodayKey();
   scheduleTodayRollover();
@@ -678,8 +692,8 @@ const selectedRecipeComponents = computed(() => recipeComponentRows(selectedCata
 const selectedCatalogIsRecipe = computed(() => Boolean(selectedCatalog.value?.id.startsWith('recipe:')));
 const recipeIsCustomized = computed(() => selectedRecipeComponents.value.some((row) => Math.abs(Number(recipeIngredientAmounts.value[row.key] ?? row.baseAmount) - Number(row.baseAmount)) > 0.05));
 const selectedActivity = computed(() => state.activities.find((item) => item.id === activityId.value));
-const foodSelectionInProgress = computed(() => addMode.value === 'food' && (!selectedCatalog.value || catalogPickerOpen.value));
-const foodFormVisible = computed(() => Boolean(selectedCatalog.value) && !catalogPickerOpen.value && !recipeCustomizeOpen.value);
+const foodSelectionInProgress = computed(() => addMode.value === 'food' && mealEntryMode.value === 'catalog' && (!selectedCatalog.value || catalogPickerOpen.value));
+const foodFormVisible = computed(() => mealEntryMode.value === 'catalog' && Boolean(selectedCatalog.value) && !catalogPickerOpen.value && !recipeCustomizeOpen.value);
 const activitySelectionInProgress = computed(() => addMode.value === 'activity' && activitySource.value === 'activity_catalog' && (!selectedActivity.value || activityPickerOpen.value));
 const activityFormVisible = computed(() => activitySource.value !== 'activity_catalog' || (Boolean(selectedActivity.value) && !activityPickerOpen.value));
 const calendarCells = computed(() => buildCalendar(calendarMonth.value));
@@ -690,7 +704,7 @@ const activeLanguage = computed(() => {
   if (state.settings.language === 'en') return 'en';
   return navigator.language.toLowerCase().startsWith('hu') ? 'hu' : 'en';
 });
-const appVersion = '0.5.24';
+const appVersion = '0.6.17';
 const repositoryUrl = 'https://github.com/rozsazoltan/nutrino';
 const issueUrl = 'https://github.com/rozsazoltan/nutrino/issues/new/choose';
 const starUrl = 'https://github.com/rozsazoltan/nutrino/stargazers';
@@ -711,7 +725,7 @@ const translations: Record<string, Record<string, string>> = {
     units: 'Units', calculations: 'Calculations', language: 'Language', privacy: 'Privacy Settings', about: 'About', licenses: 'Licenses', thirdPartyNotices: 'Third-party notices', acknowledgements: 'Acknowledgements', exportImport: 'Export / Import App Data', clearCache: 'Clear cached items',
     dailyReminder: 'Daily Reminder', theme: 'Theme', showActivity: 'Show Activity Tracking', showMacros: 'Show Meal Macros', showMicros: 'Show Micronutrients',
     metric: 'Metric (kg, cm, ml)', imperial: 'Imperial (lbs, ft, oz)', systemDefault: 'System default', english: 'English', hungarian: 'Hungarian', cancel: 'Cancel', ok: 'OK', reset: 'Reset',
-    unlockDay: 'Unlock day editing', lockedNote: 'Unlock editing before changing entries on this day.', editingEnabled: 'Editing enabled', selectedDayEntriesNote: 'Food and activity entries for the selected calendar day are shown below.', target: 'target', weight: 'weight', saveWeight: 'Save weight', weightForThisDay: 'Weight for this day in kg', editWeight: 'Edit weight', futureDateWarning: 'This date is in the future. Logging future diary data can make your diary inaccurate. Continue anyway?', weeklyWeightCheck: 'Weekly weight check', weeklyWeightCheckBody: 'Update your weight once a week. If it does not change, nutrino keeps using the latest known value.', save: 'Save', addTo: 'Add to', add: 'Add', update: 'Update', addActivity: 'Add activity', updateActivity: 'Update activity', customRecipe: 'Customize recipe', customRecipeHint: 'Changes are saved only for this diary entry.', customizedRecipe: 'custom recipe', editRecipeLocally: 'Edit recipe for this entry', changeSelection: 'Change food/recipe', selected: 'Selected', baseAmount: 'base', onePiece: '1 pc', selectFoodFirst: 'Select a food or recipe first.', amountGreaterThanZero: 'Amount must be greater than zero.', enterValidWeight: 'Enter a valid weight in kg.', weightSaved: 'Weight saved.', activityUpdated: 'Activity updated.', activityAdded: 'Activity added.', activities: 'activities', entries: 'entries', foodAndRecipeSearch: 'Search foods and recipes', searchIn: 'Search in', searchScopeTitle: 'Title', searchScopeAll: 'All', searchScopeBrand: 'Brand', searchScopeCategory: 'Category', searchScopeDescription: 'Description', exactMatches: 'Exact matches', maybeYouMean: 'Maybe you meant', activitySearch: 'Search activities', recipe: 'Recipe', food: 'Food', grams: 'grams', pieces: 'pieces', catalog: 'Catalog', watch: 'Watch', manual: 'Manual', minutes: 'minutes', kcalFromWatchManual: 'kcal from watch/manual', exportAppData: 'Export app data', exportAppDataBody: 'Save a full local ZIP backup.', importAppData: 'Import app data', importAppDataBody: 'Select a nutrino mobile app ZIP backup.', activityLevel: 'Activity', activityLevelHint: 'Used for daily kcal target', weeklyGoal: 'Weekly goal', perWeek: 'kg / week', height: 'Height', age: 'Age', years: 'years', gender: 'Gender', apiSettings: 'API settings', devApiHint: 'Development mode uses the desktop LAN URL automatically and does not require a pairing token.', apiUrl: 'API URL', pairingToken: 'Pairing token', genderHint: 'Used for kcal estimate', male: 'Male', female: 'Female', nonBinary: 'Non-binary', test: 'Test', syncNow: 'Sync now', online: 'Online', offline: 'Offline', serverOffline: 'Desktop server is offline.', serverOfflineUsingCache: 'Desktop server is offline. Using local cached catalog.', deleteEntryConfirm: 'Delete this entry?', deleteActivityConfirm: 'Delete this activity?', exportCanceled: 'Export canceled.', importCanceled: 'Import canceled.', foods: 'Foods', noSyncedItems: 'No synced foods or recipes yet. Start the desktop server and sync.', appDataExportCreated: 'App data export created.', appDataImported: 'App data imported.', importFailed: 'Import failed', confirmImportOverwrite: 'This backup will overwrite all current local app data. Continue?', invalidBackupFile: 'This is not a valid nutrino mobile app backup.', clearCachedConfirm: 'Clear synced foods, recipes and activities from the mobile cache? Diary logs remain on the device.', cachedCatalogCleared: 'Cached catalog cleared.', privacyBody: 'nutrino stores your profile, diary, food cache and activity data locally on your device. The app only talks to your paired desktop server on your network. We do not collect, sell or upload your data to third-party services.', reportIssue: 'Report an issue', reportIssueBody: 'Open GitHub Issues to report bugs or request features.', openRepository: 'Open GitHub repository', openRepositoryBody: 'View the source code, README and releases.', starProject: 'Star nutrino on GitHub', starProjectBody: 'If nutrino is useful, a star helps the project.', license: 'License', sourceCode: 'Source code', factoryReset: 'Factory reset', factoryResetBody: 'Delete all local app data and restart onboarding.', factoryResetConfirm: 'This deletes all local mobile diary, profile, cached catalog and settings data. Continue?', onboardingTitle: 'Set up nutrino', onboardingIntro: 'Add your basic profile so kcal, BMI and goals can be calculated.', onboardingProfile: 'Profile basics', onboardingTour: 'Quick tour', onboardingTourBody: 'Home shows calories and macros. Diary shows your calendar. Recipes lists synced catalog items. Profile stores your body and goal settings.', finishSetup: 'Finish setup', next: 'Next', back: 'Back', startUsingNutrino: 'Start using nutrino', restoreBackup: 'Restore backup', restore: 'Restore', backupProfiles: 'Backup profiles', backupProfilesBody: 'Local restore points are stored separately from your normal profile and survive in-app factory reset.', noBackupProfiles: 'No local backup profiles yet.', createBackupProfile: 'Create backup profile', manualBackupProfile: 'Manual backup profile', exportBackupProfile: 'Export restore point', beforeFactoryResetBackupProfile: 'Before factory reset', beforeImportBackupProfile: 'Before import', importBackupProfile: 'Imported backup', beforeBackupProfileRestore: 'Before backup profile restore', restoreBackupProfile: 'Restore local profile', backupProfileCreated: 'Backup profile saved.', backupProfileDeleted: 'Backup profile deleted.', backupProfileRestored: 'Backup profile restored.', backupProfileMissing: 'Backup profile is no longer available.', confirmRestoreBackupProfile: 'Restore this local backup profile? Current app data will be saved as a safety restore point first.', backupProfileSaveFailed: 'Could not save a local backup profile', backupProfilesUnavailable: 'Backup profile storage is unavailable on this device.', continueFactoryResetWithoutBackup: 'Continue factory reset without a safety restore point?', continueExternalExport: 'Continue external ZIP export anyway?', emptyBackupFile: 'The selected backup file is empty (0 B).', backupVerifySizeMismatch: 'Export verification size mismatch:', backupVerifyFailed: 'External ZIP export could not be verified; a browser download fallback was attempted.', backupProfileStillAvailable: 'A local backup profile is still available in the app.', exportFailed: 'Export failed', backupWriteFailed: 'Backup file write failed', mobileShareUnavailable: 'This device does not support safe mobile ZIP sharing. The unstable mobile save/download export was not used, so no 0 B ZIP was created.', mobileShareSheetHint: 'Choose Files, Drive or another storage app in the system share sheet.',
+    unlockDay: 'Unlock day editing', lockedNote: 'Unlock editing before changing entries on this day.', editingEnabled: 'Editing enabled', selectedDayEntriesNote: 'Food and activity entries for the selected calendar day are shown below.', target: 'target', weight: 'weight', saveWeight: 'Save weight', weightForThisDay: 'Weight for this day in kg', editWeight: 'Edit weight', futureDateWarning: 'This date is in the future. Logging future diary data can make your diary inaccurate. Continue anyway?', weeklyWeightCheck: 'Weekly weight check', weeklyWeightCheckBody: 'Update your weight once a week. If it does not change, nutrino keeps using the latest known value.', save: 'Save', addTo: 'Add to', add: 'Add', update: 'Update', addActivity: 'Add activity', updateActivity: 'Update activity', customRecipe: 'Customize recipe', customRecipeHint: 'Changes are saved only for this diary entry.', customizedRecipe: 'custom recipe', editRecipeLocally: 'Edit recipe for this entry', changeSelection: 'Change food/recipe', selected: 'Selected', baseAmount: 'base', onePiece: '1 pc', selectFoodFirst: 'Select a food or recipe first.', amountGreaterThanZero: 'Amount must be greater than zero.', enterValidWeight: 'Enter a valid weight in kg.', weightSaved: 'Weight saved.', activityUpdated: 'Activity updated.', activityAdded: 'Activity added.', activities: 'activities', entries: 'entries', foodAndRecipeSearch: 'Search foods and recipes', searchIn: 'Search in', searchScopeTitle: 'Title', searchScopeAll: 'All', searchScopeBrand: 'Brand', searchScopeCategory: 'Category', searchScopeDescription: 'Description', exactMatches: 'Exact matches', maybeYouMean: 'Maybe you meant', activitySearch: 'Search activities', recipe: 'Recipe', food: 'Food', grams: 'grams', pieces: 'pieces', catalog: 'Catalog', watch: 'Watch', manual: 'Manual', minutes: 'minutes', kcalFromWatchManual: 'kcal from watch/manual', exportAppData: 'Export app data', exportAppDataBody: 'Save a full local ZIP backup.', importAppData: 'Import app data', importAppDataBody: 'Select a nutrino mobile app ZIP backup.', activityLevel: 'Activity', activityLevelHint: 'Used for daily kcal target', weeklyGoal: 'Weekly goal', perWeek: 'kg / week', height: 'Height', age: 'Age', years: 'years', gender: 'Gender', apiSettings: 'API settings', appChannel: 'Channel', devApiHint: 'Development mode uses the desktop LAN URL automatically. Password is only needed if the desktop server requires one.', apiUrl: 'API URL', pairingPassword: 'Server password', pairingToken: 'Pairing token', addKcalNote: 'Note', existingItem: 'Existing', noteEntry: 'Note', kcalNoteTitle: 'Note title', kcalNoteDescription: 'Description', kcalNoteValue: 'kcal', localCatalogActions: 'Local catalog actions', addLocalFood: 'Add local food', addLocalRecipe: 'Add local recipe', addLocalActivity: 'Add local activity', localItemCreated: 'Local item saved. Sync when the desktop server is reachable.', genderHint: 'Used for kcal estimate', male: 'Male', female: 'Female', nonBinary: 'Non-binary', test: 'Test', syncNow: 'Load data from server', pushNow: 'Send data to server', pullFailedOffline: 'Download failed. Local data remains available.', pushFailedOffline: 'Upload failed. Local data stays pending until the server is reachable.', dailyBackupProfile: 'Daily automatic backup profile', online: 'Online', offline: 'Offline', serverOffline: 'Desktop server is offline.', serverOfflineUsingCache: 'Desktop server is offline. Using local cached catalog.', deleteEntryConfirm: 'Delete this entry?', deleteActivityConfirm: 'Delete this activity?', exportCanceled: 'Export canceled.', importCanceled: 'Import canceled.', foods: 'Foods', noSyncedItems: 'No synced foods or recipes yet. Start the desktop server and sync.', appDataExportCreated: 'App data export created.', appDataImported: 'App data imported.', importFailed: 'Import failed', confirmImportOverwrite: 'This backup will overwrite all current local app data. Continue?', invalidBackupFile: 'This is not a valid nutrino mobile app backup.', clearCachedConfirm: 'Clear synced foods, recipes, activities and merge aliases from the mobile cache? Diary logs remain on the device. The next server download will reload a full catalog snapshot.', cachedCatalogCleared: 'Cached catalog cleared. The next server download will fully reload the catalog.', privacyBody: 'nutrino stores your profile, diary, food cache and activity data locally on your device. The app only talks to your paired desktop server on your network. We do not collect, sell or upload your data to third-party services.', reportIssue: 'Report an issue', reportIssueBody: 'Open GitHub Issues to report bugs or request features.', openRepository: 'Open GitHub repository', openRepositoryBody: 'View the source code, README and releases.', starProject: 'Star nutrino on GitHub', starProjectBody: 'If nutrino is useful, a star helps the project.', license: 'License', sourceCode: 'Source code', factoryReset: 'Factory reset', factoryResetBody: 'Delete all local app data and restart onboarding.', factoryResetConfirm: 'This deletes all local mobile diary, profile, cached catalog and settings data. Continue?', onboardingTitle: 'Set up nutrino', onboardingIntro: 'Add your basic profile so kcal, BMI and goals can be calculated.', onboardingProfile: 'Profile basics', onboardingTour: 'Quick tour', onboardingTourBody: 'Home shows calories and macros. Diary shows your calendar. Recipes lists synced catalog items. Profile stores your body and goal settings.', finishSetup: 'Finish setup', next: 'Next', back: 'Back', startUsingNutrino: 'Start using nutrino', restoreBackup: 'Restore backup', restore: 'Restore', backupProfiles: 'Backup profiles', backupProfilesBody: 'Local restore points are stored separately from your normal profile and survive in-app factory reset.', noBackupProfiles: 'No local backup profiles yet.', createBackupProfile: 'Create backup profile', manualBackupProfile: 'Manual backup profile', exportBackupProfile: 'Export restore point', beforeFactoryResetBackupProfile: 'Before factory reset', beforeImportBackupProfile: 'Before import', importBackupProfile: 'Imported backup', beforeBackupProfileRestore: 'Before backup profile restore', restoreBackupProfile: 'Restore local profile', backupProfileCreated: 'Backup profile saved.', backupProfileDeleted: 'Backup profile deleted.', backupProfileRestored: 'Backup profile restored.', backupProfileMissing: 'Backup profile is no longer available.', confirmRestoreBackupProfile: 'Restore this local backup profile? Current app data will be saved as a safety restore point first.', backupProfileSaveFailed: 'Could not save a local backup profile', backupProfilesUnavailable: 'Backup profile storage is unavailable on this device.', continueFactoryResetWithoutBackup: 'Continue factory reset without a safety restore point?', continueExternalExport: 'Continue external ZIP export anyway?', emptyBackupFile: 'The selected backup file is empty (0 B).', backupVerifySizeMismatch: 'Export verification size mismatch:', backupVerifyFailed: 'External ZIP export could not be verified; a browser download fallback was attempted.', backupProfileStillAvailable: 'A local backup profile is still available in the app.', exportFailed: 'Export failed', backupWriteFailed: 'Backup file write failed', mobileShareUnavailable: 'This device does not support safe mobile ZIP sharing. The unstable mobile save/download export was not used, so no 0 B ZIP was created.', mobileShareSheetHint: 'Choose Files, Drive or another storage app in the system share sheet.',
   },
   hu: {
     home: 'Kezdőlap', diary: 'Napló', recipes: 'Receptek', profile: 'Profil', settings: 'Beállítások', synced: 'Szinkronban', syncing: 'Szinkronizálás', pending: 'függő',
@@ -721,7 +735,7 @@ const translations: Record<string, Record<string, string>> = {
     units: 'Mértékegységek', calculations: 'Számítások', language: 'Nyelv', privacy: 'Adatvédelem', about: 'Névjegy', licenses: 'Licencek', thirdPartyNotices: 'Third-party notices', acknowledgements: 'Köszönetnyilvánítás', exportImport: 'Appadat export / import', clearCache: 'Gyorsítótár törlése',
     dailyReminder: 'Napi emlékeztető', theme: 'Téma', showActivity: 'Aktivitás követése', showMacros: 'Makrók megjelenítése', showMicros: 'Mikrotápanyagok megjelenítése',
     metric: 'Metrikus (kg, cm, ml)', imperial: 'Angolszász (lbs, ft, oz)', systemDefault: 'Rendszer alapértelmezett', english: 'Angol', hungarian: 'Magyar', cancel: 'Mégse', ok: 'OK', reset: 'Visszaállítás',
-    unlockDay: 'Nap szerkesztésének feloldása', lockedNote: 'A nap módosításához előbb oldd fel a szerkesztést.', editingEnabled: 'Szerkesztés engedélyezve', selectedDayEntriesNote: 'A kiválasztott nap étkezései és aktivitásai lent láthatók.', target: 'cél', weight: 'súly', saveWeight: 'Súly mentése', weightForThisDay: 'Súly erre a napra kg-ban', editWeight: 'Súly szerkesztése', futureDateWarning: 'Ez a nap még a jövőben van. A jövőbeli naplózás pontatlanná teheti a naplódat. Biztosan folytatod?', weeklyWeightCheck: 'Heti súlyellenőrzés', weeklyWeightCheckBody: 'Hetente egyszer frissítsd a súlyod. Ha nem változik, a nutrino az utolsó ismert értékkel számol.', save: 'Mentés', addTo: 'Hozzáadás ehhez:', add: 'Hozzáadás', update: 'Frissítés', addActivity: 'Aktivitás hozzáadása', updateActivity: 'Aktivitás frissítése', customRecipe: 'Recept testreszabása', customRecipeHint: 'A módosítás csak ehhez a naplóbejegyzéshez mentődik.', customizedRecipe: 'egyedi recept', editRecipeLocally: 'Recept módosítása ehhez a bejegyzéshez', changeSelection: 'Étel/recept módosítása', selected: 'Kiválasztva', baseAmount: 'alap', onePiece: '1 db', selectFoodFirst: 'Előbb válassz ételt vagy receptet.', amountGreaterThanZero: 'A mennyiségnek nullánál nagyobbnak kell lennie.', enterValidWeight: 'Adj meg érvényes súlyt kg-ban.', weightSaved: 'Súly mentve.', activityUpdated: 'Aktivitás frissítve.', activityAdded: 'Aktivitás hozzáadva.', activities: 'aktivitás', entries: 'bejegyzés', foodAndRecipeSearch: 'Ételek és receptek keresése', searchIn: 'Keresés helye', searchScopeTitle: 'Cím', searchScopeAll: 'Minden', searchScopeBrand: 'Márka', searchScopeCategory: 'Típus', searchScopeDescription: 'Leírás', exactMatches: 'Pontos találatok', maybeYouMean: 'Talán erre gondoltál', activitySearch: 'Aktivitások keresése', recipe: 'Recept', food: 'Étel', grams: 'gramm', pieces: 'db', catalog: 'Katalógus', watch: 'Okosóra', manual: 'Kézi', minutes: 'perc', kcalFromWatchManual: 'kcal okosórából/kézzel', exportAppData: 'Appadatok exportálása', exportAppDataBody: 'Teljes helyi ZIP mentés készítése.', importAppData: 'Appadatok importálása', importAppDataBody: 'Válassz nutrino mobilapp ZIP mentést.', activityLevel: 'Aktivitás', activityLevelHint: 'A napi kcal cél számításához', weeklyGoal: 'Heti cél', perWeek: 'kg / hét', height: 'Magasság', age: 'Életkor', years: 'év', gender: 'Nem', apiSettings: 'API beállítások', devApiHint: 'Fejlesztői módban az asztali LAN URL automatikus, párosítási token nem kell.', apiUrl: 'API URL', pairingToken: 'Párosítási token', genderHint: 'A kcal becsléshez', male: 'Férfi', female: 'Nő', nonBinary: 'Nem bináris', test: 'Teszt', syncNow: 'Szinkronizálás', online: 'Online', offline: 'Offline', serverOffline: 'Az asztali szerver offline.', serverOfflineUsingCache: 'Az asztali szerver offline. A helyi gyorsítótárat használom.', deleteEntryConfirm: 'Törlöd ezt a bejegyzést?', deleteActivityConfirm: 'Törlöd ezt az aktivitást?', exportCanceled: 'Export megszakítva.', importCanceled: 'Import megszakítva.', foods: 'Ételek', noSyncedItems: 'Még nincs szinkronizált étel vagy recept. Indítsd el az asztali szervert és szinkronizálj.', appDataExportCreated: 'Appadat export elkészült.', appDataImported: 'Appadatok importálva.', importFailed: 'Import sikertelen', confirmImportOverwrite: 'Ez a mentés felülír minden jelenlegi helyi appadatot. Folytatod?', invalidBackupFile: 'Ez nem érvényes nutrino mobilapp mentés.', clearCachedConfirm: 'Törlöd a szinkronizált ételeket, recepteket és aktivitásokat a mobil cache-ből? A naplóbejegyzések az eszközön maradnak.', cachedCatalogCleared: 'Gyorsítótárban lévő katalógus törölve.', privacyBody: 'A nutrino a profilodat, naplódat, étel cache-edet és aktivitásadataidat helyben tárolja az eszközödön. Az app csak a párosított asztali szervereddel kommunikál a saját hálózatodon. Nem gyűjtünk, nem adunk el és nem töltünk fel adatot külső szolgáltatásba.', reportIssue: 'Hiba jelentése', reportIssueBody: 'GitHub Issues megnyitása hibákhoz és ötletekhez.', openRepository: 'GitHub repository megnyitása', openRepositoryBody: 'Forráskód, README és release-ek megtekintése.', starProject: 'Csillagozd meg GitHubon', starProjectBody: 'Ha hasznos a nutrino, egy csillag segíti a projektet.', license: 'Licenc', sourceCode: 'Forráskód', factoryReset: 'Gyári visszaállítás', factoryResetBody: 'Minden helyi appadat törlése és újrakezdés.', factoryResetConfirm: 'Ez törli az összes helyi mobil naplót, profilt, gyorsítótárat és beállítást. Folytatod?', onboardingTitle: 'nutrino beállítása', onboardingIntro: 'Add meg az alap profiladatokat, hogy a kcal, BMI és cél számítható legyen.', onboardingProfile: 'Profil alapadatok', onboardingTour: 'Gyors bemutató', onboardingTourBody: 'A Home mutatja a kalóriát és makrókat. A Napló a naptárad. A Receptek a szinkronizált katalógus. A Profilban vannak a testadatok és célok.', finishSetup: 'Beállítás mentése', next: 'Tovább', back: 'Vissza', startUsingNutrino: 'nutrino indítása', restoreBackup: 'Biztonsági mentés visszaállítása', restore: 'Visszaállítás', backupProfiles: 'Backup profilok', backupProfilesBody: 'A helyi visszaállítási pontok külön vannak a normál profiltól, és túlélik az appon belüli gyári visszaállítást.', noBackupProfiles: 'Még nincs helyi backup profil.', createBackupProfile: 'Backup profil létrehozása', manualBackupProfile: 'Kézi backup profil', exportBackupProfile: 'Export visszaállítási pont', beforeFactoryResetBackupProfile: 'Gyári visszaállítás előtt', beforeImportBackupProfile: 'Import előtt', importBackupProfile: 'Importált mentés', beforeBackupProfileRestore: 'Backup profil visszaállítása előtt', restoreBackupProfile: 'Helyi profil visszaállítása', backupProfileCreated: 'Backup profil mentve.', backupProfileDeleted: 'Backup profil törölve.', backupProfileRestored: 'Backup profil visszaállítva.', backupProfileMissing: 'A backup profil már nem érhető el.', confirmRestoreBackupProfile: 'Visszaállítod ezt a helyi backup profilt? A jelenlegi appadat előtte biztonsági visszaállítási pontként mentésre kerül.', backupProfileSaveFailed: 'Nem sikerült helyi backup profilt menteni', backupProfilesUnavailable: 'A backup profil tárhely nem érhető el ezen az eszközön.', continueFactoryResetWithoutBackup: 'Folytatod a gyári visszaállítást biztonsági visszaállítási pont nélkül?', continueExternalExport: 'Folytatod a külső ZIP exportot így is?', emptyBackupFile: 'A kiválasztott mentés üres (0 B).', backupVerifySizeMismatch: 'Az export ellenőrzött mérete eltér:', backupVerifyFailed: 'A külső ZIP export nem ellenőrizhető; böngészős letöltési fallback indult.', backupProfileStillAvailable: 'A helyi backup profil továbbra is elérhető az appban.', exportFailed: 'Export sikertelen', backupWriteFailed: 'A mentés fájlba írása sikertelen', mobileShareUnavailable: 'Ez a készülék nem támogatja a biztonságos mobil ZIP megosztást. Az instabil mobil mentés/letöltés exportot nem használjuk, így nem készül 0 B ZIP.', mobileShareSheetHint: 'A rendszer megosztási ablakában válaszd a Fájlok, Drive vagy más tárhely appot.',
+    unlockDay: 'Nap szerkesztésének feloldása', lockedNote: 'A nap módosításához előbb oldd fel a szerkesztést.', editingEnabled: 'Szerkesztés engedélyezve', selectedDayEntriesNote: 'A kiválasztott nap étkezései és aktivitásai lent láthatók.', target: 'cél', weight: 'súly', saveWeight: 'Súly mentése', weightForThisDay: 'Súly erre a napra kg-ban', editWeight: 'Súly szerkesztése', futureDateWarning: 'Ez a nap még a jövőben van. A jövőbeli naplózás pontatlanná teheti a naplódat. Biztosan folytatod?', weeklyWeightCheck: 'Heti súlyellenőrzés', weeklyWeightCheckBody: 'Hetente egyszer frissítsd a súlyod. Ha nem változik, a nutrino az utolsó ismert értékkel számol.', save: 'Mentés', addTo: 'Hozzáadás ehhez:', add: 'Hozzáadás', update: 'Frissítés', addActivity: 'Aktivitás hozzáadása', updateActivity: 'Aktivitás frissítése', customRecipe: 'Recept testreszabása', customRecipeHint: 'A módosítás csak ehhez a naplóbejegyzéshez mentődik.', customizedRecipe: 'egyedi recept', editRecipeLocally: 'Recept módosítása ehhez a bejegyzéshez', changeSelection: 'Étel/recept módosítása', selected: 'Kiválasztva', baseAmount: 'alap', onePiece: '1 db', selectFoodFirst: 'Előbb válassz ételt vagy receptet.', amountGreaterThanZero: 'A mennyiségnek nullánál nagyobbnak kell lennie.', enterValidWeight: 'Adj meg érvényes súlyt kg-ban.', weightSaved: 'Súly mentve.', activityUpdated: 'Aktivitás frissítve.', activityAdded: 'Aktivitás hozzáadva.', activities: 'aktivitás', entries: 'bejegyzés', foodAndRecipeSearch: 'Ételek és receptek keresése', searchIn: 'Keresés helye', searchScopeTitle: 'Cím', searchScopeAll: 'Minden', searchScopeBrand: 'Márka', searchScopeCategory: 'Típus', searchScopeDescription: 'Leírás', exactMatches: 'Pontos találatok', maybeYouMean: 'Talán erre gondoltál', activitySearch: 'Aktivitások keresése', recipe: 'Recept', food: 'Étel', grams: 'gramm', pieces: 'db', catalog: 'Katalógus', watch: 'Okosóra', manual: 'Kézi', minutes: 'perc', kcalFromWatchManual: 'kcal okosórából/kézzel', exportAppData: 'Appadatok exportálása', exportAppDataBody: 'Teljes helyi ZIP mentés készítése.', importAppData: 'Appadatok importálása', importAppDataBody: 'Válassz nutrino mobilapp ZIP mentést.', activityLevel: 'Aktivitás', activityLevelHint: 'A napi kcal cél számításához', weeklyGoal: 'Heti cél', perWeek: 'kg / hét', height: 'Magasság', age: 'Életkor', years: 'év', gender: 'Nem', apiSettings: 'API beállítások', appChannel: 'Csatorna', devApiHint: 'Fejlesztői módban az asztali LAN URL automatikus. Jelszó csak akkor kell, ha a desktop szerver kér.', apiUrl: 'API URL', pairingPassword: 'Szerver jelszó', pairingToken: 'Párosítási token', addKcalNote: 'Jegyzet', existingItem: 'Meglévő', noteEntry: 'Jegyzet', kcalNoteTitle: 'Jegyzet címe', kcalNoteDescription: 'Leírás', kcalNoteValue: 'kcal', localCatalogActions: 'Helyi katalógus műveletek', addLocalFood: 'Helyi étel', addLocalRecipe: 'Helyi recept', addLocalActivity: 'Helyi aktivitás', localItemCreated: 'Helyi tétel mentve. Szinkronizáld, ha elérhető a desktop szerver.', genderHint: 'A kcal becsléshez', male: 'Férfi', female: 'Nő', nonBinary: 'Nem bináris', test: 'Teszt', syncNow: 'Adatok betöltése a szerverről', pushNow: 'Adatok küldése a szervernek', pullFailedOffline: 'Letöltés sikertelen. A helyi adatok továbbra is elérhetők.', pushFailedOffline: 'Küldés sikertelen. A helyi adatok függőben maradnak, amíg elérhető lesz a szerver.', dailyBackupProfile: 'Napi automatikus backup profil', online: 'Online', offline: 'Offline', serverOffline: 'Az asztali szerver offline.', serverOfflineUsingCache: 'Az asztali szerver offline. A helyi gyorsítótárat használom.', deleteEntryConfirm: 'Törlöd ezt a bejegyzést?', deleteActivityConfirm: 'Törlöd ezt az aktivitást?', exportCanceled: 'Export megszakítva.', importCanceled: 'Import megszakítva.', foods: 'Ételek', noSyncedItems: 'Még nincs szinkronizált étel vagy recept. Indítsd el az asztali szervert és szinkronizálj.', appDataExportCreated: 'Appadat export elkészült.', appDataImported: 'Appadatok importálva.', importFailed: 'Import sikertelen', confirmImportOverwrite: 'Ez a mentés felülír minden jelenlegi helyi appadatot. Folytatod?', invalidBackupFile: 'Ez nem érvényes nutrino mobilapp mentés.', clearCachedConfirm: 'Törlöd a szinkronizált ételeket, recepteket, aktivitásokat és merge aliasokat a mobil cache-ből? A naplóbejegyzések az eszközön maradnak. A következő szerveres letöltés teljes katalógus snapshotot kér.', cachedCatalogCleared: 'Gyorsítótárban lévő katalógus törölve. A következő szerveres letöltés teljes újratöltés lesz.', privacyBody: 'A nutrino a profilodat, naplódat, étel cache-edet és aktivitásadataidat helyben tárolja az eszközödön. Az app csak a párosított asztali szervereddel kommunikál a saját hálózatodon. Nem gyűjtünk, nem adunk el és nem töltünk fel adatot külső szolgáltatásba.', reportIssue: 'Hiba jelentése', reportIssueBody: 'GitHub Issues megnyitása hibákhoz és ötletekhez.', openRepository: 'GitHub repository megnyitása', openRepositoryBody: 'Forráskód, README és release-ek megtekintése.', starProject: 'Csillagozd meg GitHubon', starProjectBody: 'Ha hasznos a nutrino, egy csillag segíti a projektet.', license: 'Licenc', sourceCode: 'Forráskód', factoryReset: 'Gyári visszaállítás', factoryResetBody: 'Minden helyi appadat törlése és újrakezdés.', factoryResetConfirm: 'Ez törli az összes helyi mobil naplót, profilt, gyorsítótárat és beállítást. Folytatod?', onboardingTitle: 'nutrino beállítása', onboardingIntro: 'Add meg az alap profiladatokat, hogy a kcal, BMI és cél számítható legyen.', onboardingProfile: 'Profil alapadatok', onboardingTour: 'Gyors bemutató', onboardingTourBody: 'A Home mutatja a kalóriát és makrókat. A Napló a naptárad. A Receptek a szinkronizált katalógus. A Profilban vannak a testadatok és célok.', finishSetup: 'Beállítás mentése', next: 'Tovább', back: 'Vissza', startUsingNutrino: 'nutrino indítása', restoreBackup: 'Biztonsági mentés visszaállítása', restore: 'Visszaállítás', backupProfiles: 'Backup profilok', backupProfilesBody: 'A helyi visszaállítási pontok külön vannak a normál profiltól, és túlélik az appon belüli gyári visszaállítást.', noBackupProfiles: 'Még nincs helyi backup profil.', createBackupProfile: 'Backup profil létrehozása', manualBackupProfile: 'Kézi backup profil', exportBackupProfile: 'Export visszaállítási pont', beforeFactoryResetBackupProfile: 'Gyári visszaállítás előtt', beforeImportBackupProfile: 'Import előtt', importBackupProfile: 'Importált mentés', beforeBackupProfileRestore: 'Backup profil visszaállítása előtt', restoreBackupProfile: 'Helyi profil visszaállítása', backupProfileCreated: 'Backup profil mentve.', backupProfileDeleted: 'Backup profil törölve.', backupProfileRestored: 'Backup profil visszaállítva.', backupProfileMissing: 'A backup profil már nem érhető el.', confirmRestoreBackupProfile: 'Visszaállítod ezt a helyi backup profilt? A jelenlegi appadat előtte biztonsági visszaállítási pontként mentésre kerül.', backupProfileSaveFailed: 'Nem sikerült helyi backup profilt menteni', backupProfilesUnavailable: 'A backup profil tárhely nem érhető el ezen az eszközön.', continueFactoryResetWithoutBackup: 'Folytatod a gyári visszaállítást biztonsági visszaállítási pont nélkül?', continueExternalExport: 'Folytatod a külső ZIP exportot így is?', emptyBackupFile: 'A kiválasztott mentés üres (0 B).', backupVerifySizeMismatch: 'Az export ellenőrzött mérete eltér:', backupVerifyFailed: 'A külső ZIP export nem ellenőrizhető; böngészős letöltési fallback indult.', backupProfileStillAvailable: 'A helyi backup profil továbbra is elérhető az appban.', exportFailed: 'Export sikertelen', backupWriteFailed: 'A mentés fájlba írása sikertelen', mobileShareUnavailable: 'Ez a készülék nem támogatja a biztonságos mobil ZIP megosztást. Az instabil mobil mentés/letöltés exportot nem használjuk, így nem készül 0 B ZIP.', mobileShareSheetHint: 'A rendszer megosztási ablakában válaszd a Fájlok, Drive vagy más tárhely appot.',
   },
 };
 
@@ -797,6 +811,189 @@ function ensureSelectedDayEditing(): boolean {
 
 function unlockSelectedDay() {
   ensureSelectedDayEditing();
+}
+
+
+function authPassword(): string {
+  const password = String(state.pairing.password ?? state.pairing.token ?? '').trim();
+  state.pairing.token = password;
+  state.pairing.password = password;
+  state.pairing.channel = appChannel;
+  return password;
+}
+
+function showOfflineToastOnce(message = t('serverOfflineUsingCache')) {
+  if (offlineToastShown.value) return;
+  offlineToastShown.value = true;
+  showToast(message);
+}
+
+function clearOfflineToastMemory() {
+  offlineToastShown.value = false;
+}
+
+function promptNumber(label: string, fallback = ''): number | null {
+  const raw = window.prompt(label, fallback);
+  if (raw === null) return null;
+  const value = Number(String(raw).replace(',', '.'));
+  return Number.isFinite(value) ? value : null;
+}
+
+function createLocalFoodFromPrompt() {
+  const name = window.prompt(t('addLocalFood'))?.trim();
+  if (!name) return;
+  const kcal = promptNumber('kcal / 100g', '100');
+  if (kcal === null || kcal < 0) return showToast(t('amountGreaterThanZero'));
+  const serving = promptNumber('1 db gramm, ha van', '');
+  const now = Date.now();
+  const food: Food = {
+    id: generateId('food-local'),
+    source_id: state.pairing.sourceId,
+    name,
+    brand: 'Mobile local',
+    note: window.prompt('Megjegyzés / note', '') || null,
+    default_unit: serving && serving > 0 ? 'serving' : 'g',
+    serving_size_g: serving && serving > 0 ? serving : null,
+    kcal_per_100g: kcal,
+    carbs_per_100g: promptNumber('carbs / 100g', '0') ?? 0,
+    fat_per_100g: promptNumber('fat / 100g', '0') ?? 0,
+    protein_per_100g: promptNumber('protein / 100g', '0') ?? 0,
+    sugars_per_100g: 0,
+    fiber_per_100g: 0,
+    salt_per_100g: 0,
+    updated_at: now,
+    pending_sync: true,
+  };
+  state.foods.push(food);
+  showToast(t('localItemCreated'));
+}
+
+function createLocalRecipeFromPrompt() {
+  const catalog = allCatalogItems.value.filter((item) => !item.id.startsWith('recipe:'));
+  if (!catalog.length) return showToast(t('selectFoodFirst'));
+  const name = window.prompt(t('addLocalRecipe'))?.trim();
+  if (!name) return;
+  const servings = promptNumber('Adagszám / servings', '1') ?? 1;
+  const food = catalog[0];
+  const amount = promptNumber(`${food.name} gramm`, String(food.serving_size_g || 100)) ?? Number(food.serving_size_g || 100);
+  const now = Date.now();
+  const recipeId = generateId('recipe-local');
+  const recipe: Recipe = {
+    id: recipeId,
+    source_id: state.pairing.sourceId,
+    name,
+    description: window.prompt('Leírás / description', '') || null,
+    note: 'Mobile local recipe. Edit ingredients on desktop after sync if needed.',
+    total_weight_g: amount,
+    servings_count: servings > 0 ? servings : 1,
+    updated_at: now,
+    pending_sync: true,
+  };
+  const item: RecipeItem = {
+    id: generateId('recipe-item-local'),
+    recipe_id: recipeId,
+    food_id: food.id,
+    amount_g: Math.max(0.1, amount),
+    updated_at: now,
+    pending_sync: true,
+  };
+  state.recipes.push(recipe);
+  state.recipeItems.push(item);
+  showToast(t('localItemCreated'));
+}
+
+function createLocalActivityFromPrompt() {
+  const name = window.prompt(t('addLocalActivity'))?.trim();
+  if (!name) return;
+  const kcalPerMin = promptNumber('kcal / min', '4') ?? 4;
+  const now = Date.now();
+  state.activities.push({
+    id: generateId('activity-local'),
+    source_id: state.pairing.sourceId,
+    code: 'mobile-local',
+    name,
+    description: window.prompt('Leírás / description', '') || null,
+    type: 'custom',
+    activity_type: 'custom',
+    met: 0,
+    kcal_per_min: Math.max(0, kcalPerMin),
+    updated_at: now,
+    pending_sync: true,
+  });
+  showToast(t('localItemCreated'));
+}
+
+function resetMealNoteForm() {
+  noteTitle.value = '';
+  noteDescription.value = '';
+  noteKcal.value = null;
+}
+
+function startCatalogMealEntry() {
+  mealEntryMode.value = 'catalog';
+  resetMealNoteForm();
+  if (!selectedCatalog.value) catalogPickerOpen.value = true;
+}
+
+function startNoteMealEntry() {
+  mealEntryMode.value = 'note';
+  catalogPickerOpen.value = false;
+  recipeCustomizeOpen.value = false;
+  selectedCatalogId.value = '';
+  recipeIngredientAmounts.value = {};
+  foodAmount.value = null;
+  search.value = '';
+  nextTick(() => scrollFocusedInputIntoView());
+}
+
+function addMealNoteFromForm() {
+  const title = noteTitle.value.trim();
+  if (!title) return showToast(t('kcalNoteTitle'));
+  const kcal = Number(noteKcal.value || 0);
+  if (!kcal || kcal <= 0) return showToast(t('amountGreaterThanZero'));
+  const description = noteDescription.value.trim();
+  const now = Date.now();
+  const existingNote = editingIntakeId.value ? state.intakes.find((entry) => entry.id === editingIntakeId.value) : null;
+  const noteId = existingNote?.food_id || editingIntakeId.value || generateId('note');
+  const snapshot: Food = {
+    id: noteId,
+    source_id: state.pairing.sourceId,
+    name: title,
+    brand: t('addKcalNote'),
+    note: description || null,
+    default_unit: 'g',
+    serving_size_g: null,
+    kcal_per_100g: kcal,
+    carbs_per_100g: 0,
+    fat_per_100g: 0,
+    protein_per_100g: 0,
+    sugars_per_100g: 0,
+    fiber_per_100g: 0,
+    salt_per_100g: 0,
+    updated_at: now,
+  };
+  const payload = {
+    source_id: state.pairing.sourceId,
+    item_type: 'note' as const,
+    food_id: noteId,
+    consumed_at: timestampForActiveLogDay(now),
+    meal_type: addMealType.value,
+    amount_g: 100,
+    unit: 'g' as const,
+    serving_qty: null,
+    food_snapshot_json: foodSnapshot(snapshot),
+    note_title: title,
+    note_description: description || null,
+    pending_sync: true,
+    updated_at: now,
+  };
+  if (editingIntakeId.value) {
+    state.intakes = state.intakes.map((entry) => entry.id === editingIntakeId.value ? { ...entry, ...payload } : entry);
+  } else {
+    state.intakes.push({ id: noteId, created_at: now, ...payload });
+  }
+  closeSheet();
+  showToast(t('localItemCreated'));
 }
 
 function editSelectedDayWeight() {
@@ -879,11 +1076,18 @@ function amountLabel(amountG: number, food?: Food) {
   return qty ? `${rounded} g (${qty} db)` : `${rounded} g`;
 }
 
-const selectedCatalogGramEquivalent = computed(() => {
+const selectedCatalogAmountHint = computed(() => {
   const item = selectedCatalog.value;
-  if (!item || foodUnit.value !== 'g') return '';
-  const qty = servingQtyForAmount(Number(foodAmount.value || 0), item);
-  return qty ? `(${qty} db)` : '';
+  const amount = Number(foodAmount.value || 0);
+  if (!item || !amount || amount <= 0) return '';
+  const serving = Number(item.serving_size_g || 0);
+  if (!serving) return '';
+  if (foodUnit.value === 'serving') {
+    const grams = Math.round(amount * serving * 10) / 10;
+    return `kb. ${grams} g`;
+  }
+  const qty = servingQtyForAmount(amount, item);
+  return qty ? `kb. ${qty} db` : '';
 });
 
 function totalMacro(key: 'carbs_per_100g' | 'fat_per_100g' | 'protein_per_100g') {
@@ -1027,6 +1231,7 @@ function chooseCatalogItem(item: Food) {
     return;
   }
 
+  mealEntryMode.value = 'catalog';
   selectedCatalogId.value = item.id;
   initializeRecipeIngredientAmounts(item.id);
   recipeCustomizeOpen.value = false;
@@ -1168,14 +1373,14 @@ async function refreshServerIfCatalogStale() {
   const recentlyChecked = Date.now() - lastCheck < SERVER_STALE_MS;
 
   if (!serverOnline.value && recentlyChecked) {
-    showToast(t('serverOfflineUsingCache'));
+    showOfflineToastOnce(t('serverOfflineUsingCache'));
     return;
   }
 
   if (serverOnline.value && recentlyChecked) return;
 
   await pollServerHealth({ syncOnChange: true, quiet: true });
-  if (!serverOnline.value) showToast(t('serverOfflineUsingCache'));
+  if (!serverOnline.value) showOfflineToastOnce(t('serverOfflineUsingCache'));
 }
 
 async function openFoodAdd(mealType: MealType) {
@@ -1183,6 +1388,8 @@ async function openFoodAdd(mealType: MealType) {
   await refreshServerIfCatalogStale();
   addMode.value = 'food';
   addMealType.value = mealType;
+  mealEntryMode.value = 'catalog';
+  resetMealNoteForm();
   search.value = '';
   selectedCatalogId.value = '';
   catalogPickerOpen.value = true;
@@ -1231,6 +1438,8 @@ function closeSheet() {
   activityKcal.value = null;
   recipeCustomizeOpen.value = false;
   recipeIngredientAmounts.value = {};
+  mealEntryMode.value = 'catalog';
+  resetMealNoteForm();
 }
 
 function addFoodLog() {
@@ -1255,7 +1464,7 @@ function addFoodLog() {
     unit: foodUnit.value,
     serving_qty: foodUnit.value === 'serving' ? rawAmount : null,
     food_snapshot_json: foodSnapshot(item),
-    pending_sync: false,
+    pending_sync: true,
     updated_at: now,
   };
   if (editingIntakeId.value) {
@@ -1283,7 +1492,7 @@ function addActivityLog() {
     duration_min: duration,
     kcal,
     source: activitySource.value,
-    pending_sync: false,
+    pending_sync: true,
     updated_at: now,
   };
   if (editingActivityLogId.value) {
@@ -1321,7 +1530,7 @@ function upsertWeightForDay(value: number, source: WeightLog['source'], key = ac
     existing.bmi = bmi(value, state.profile.height_cm);
     existing.source = source;
     existing.updated_at = now;
-    existing.pending_sync = false;
+    existing.pending_sync = true;
   } else {
     state.weightLogs.push({
       id: generateId('weight'),
@@ -1329,7 +1538,7 @@ function upsertWeightForDay(value: number, source: WeightLog['source'], key = ac
       weight_kg: value,
       bmi: bmi(value, state.profile.height_cm),
       source,
-      pending_sync: false,
+      pending_sync: true,
       created_at: now,
       updated_at: now,
     });
@@ -1368,10 +1577,11 @@ async function pollServerHealth(options: { syncOnChange?: boolean; quiet?: boole
   if (serverChecking.value || !state.pairing.baseUrl.trim()) return;
   serverChecking.value = true;
   try {
-    const health = await checkServerHealth(state.pairing.baseUrl, devMode ? '' : state.pairing.token);
+    const health = await checkServerHealth(state.pairing.baseUrl, authPassword());
     serverOnline.value = true;
     state.pairing.lastHealthCheckAt = Date.now();
     state.pairing.lastSyncError = undefined;
+    clearOfflineToastMemory();
     const remoteRevision = Number(health.catalog_revision || 0);
     if (remoteRevision && remoteRevision !== Number(state.pairing.catalogRevision || 0) && options.syncOnChange !== false) {
       await syncNow({ quiet: true });
@@ -1379,7 +1589,7 @@ async function pollServerHealth(options: { syncOnChange?: boolean; quiet?: boole
   } catch (error) {
     serverOnline.value = false;
     state.pairing.lastSyncError = String(error);
-    if (!options.quiet) showToast(t('serverOffline'));
+    if (!options.quiet) showOfflineToastOnce(t('serverOffline'));
   } finally {
     serverChecking.value = false;
   }
@@ -1387,7 +1597,7 @@ async function pollServerHealth(options: { syncOnChange?: boolean; quiet?: boole
 
 async function testConnection() {
   try {
-    const message = await pingServer(state.pairing.baseUrl, devMode ? '' : state.pairing.token);
+    const message = await pingServer(state.pairing.baseUrl, authPassword());
     state.pairing.lastSyncError = undefined;
     showToast(message);
   } catch (error) {
@@ -1396,20 +1606,36 @@ async function testConnection() {
   }
 }
 
-async function syncNow(options: { quiet?: boolean } = {}) {
+async function runServerTransfer(mode: 'pull' | 'push', options: { quiet?: boolean } = {}) {
   syncBusy.value = true;
   try {
-    const { state: nextState, result } = await syncWithServer({ ...JSON.parse(JSON.stringify(state)), pairing: { ...state.pairing, token: devMode ? '' : state.pairing.token } });
+    const snapshot = { ...JSON.parse(JSON.stringify(state)), pairing: { ...state.pairing, token: authPassword(), password: authPassword(), channel: appChannel } } as AppState;
+    const { state: nextState, result } = mode === 'push' ? await pushToServer(snapshot) : await pullFromServer(snapshot);
     Object.assign(state, nextState);
     serverOnline.value = true;
-    if (!options.quiet) showToast(`${result.message} Pulled ${result.pulledFoods} foods, ${result.pulledRecipes} recipes, ${result.pulledActivities} activities.`);
+    clearOfflineToastMemory();
+    if (!options.quiet) {
+      if (mode === 'push') {
+        showToast(`${result.message} Sent ${result.pushedIntakes} meals, ${result.pushedWeightLogs} weights, ${result.pushedActivityLogs} activities.`);
+      } else {
+        showToast(`${result.message} Added ${result.pulledFoods} foods, ${result.pulledRecipes} recipes, ${result.pulledActivities} activities.`);
+      }
+    }
   } catch (error) {
     serverOnline.value = false;
     state.pairing.lastSyncError = String(error);
-    if (!options.quiet) showToast(`Sync failed. Offline cache remains available.`);
+    if (!options.quiet) showOfflineToastOnce(mode === 'push' ? t('pushFailedOffline') : t('pullFailedOffline'));
   } finally {
     syncBusy.value = false;
   }
+}
+
+async function syncNow(options: { quiet?: boolean } = {}) {
+  await runServerTransfer('pull', options);
+}
+
+async function pushNow(options: { quiet?: boolean } = {}) {
+  await runServerTransfer('push', options);
 }
 
 
@@ -1498,13 +1724,15 @@ async function withBackupStore<T>(mode: IDBTransactionMode, callback: (store: ID
 function backupProfileKindFromReason(reason: string): BackupProfileKind {
   if (reason === t('beforeFactoryResetBackupProfile')) return 'factory_reset';
   if (reason === t('exportBackupProfile')) return 'export';
+  if (reason === t('dailyBackupProfile')) return 'daily';
   return 'manual';
 }
 
 function backupProfileKindPriority(kind: BackupProfileKind) {
-  if (kind === 'factory_reset') return 0;
-  if (kind === 'export') return 1;
-  return 2;
+  if (kind === 'daily') return 0;
+  if (kind === 'factory_reset') return 1;
+  if (kind === 'export') return 2;
+  return 3;
 }
 
 async function loadBackupProfileRecords(): Promise<StoredBackupProfile[]> {
@@ -1537,7 +1765,7 @@ async function pruneBackupProfiles() {
   const grouped = records.reduce<Record<BackupProfileKind, StoredBackupProfile[]>>((acc, record) => {
     acc[record.kind].push(record);
     return acc;
-  }, { factory_reset: [], export: [], manual: [] });
+  }, { factory_reset: [], export: [], manual: [], daily: [] });
 
   for (const kind of Object.keys(grouped) as BackupProfileKind[]) {
     const extra = grouped[kind].sort((a, b) => b.createdAt - a.createdAt).slice(mobileBackupProfileLimits[kind]);
@@ -1547,11 +1775,11 @@ async function pruneBackupProfiles() {
   }
 }
 
-async function createBackupProfile(reason = t('manualBackupProfile')): Promise<BackupProfileSummary> {
+async function createBackupProfile(reason = t('manualBackupProfile'), forcedKind?: BackupProfileKind): Promise<BackupProfileSummary> {
   const snapshot = normalizeImportedState(JSON.parse(JSON.stringify(state)) as Partial<AppState>);
   const serialized = JSON.stringify(snapshot);
   const createdAt = Date.now();
-  const kind = backupProfileKindFromReason(reason);
+  const kind = forcedKind ?? backupProfileKindFromReason(reason);
   const record: StoredBackupProfile = {
     id: generateId(`backup-profile-${kind}`),
     kind,
@@ -1566,6 +1794,19 @@ async function createBackupProfile(reason = t('manualBackupProfile')): Promise<B
   await pruneBackupProfiles();
   await refreshBackupProfiles();
   return record;
+}
+
+async function ensureDailyBackupProfile() {
+  const today = dateKey();
+  if (localStorage.getItem(mobileDailyBackupDateKey) === today) return;
+  try {
+    const records = await loadBackupProfileRecords();
+    const alreadySavedToday = records.some((record) => record.kind === 'daily' && dateKey(new Date(record.createdAt)) === today);
+    if (!alreadySavedToday) await createBackupProfile(t('dailyBackupProfile'), 'daily');
+    localStorage.setItem(mobileDailyBackupDateKey, today);
+  } catch {
+    // Daily safety backups must never block app startup.
+  }
 }
 
 async function createManualBackupProfile() {
@@ -1958,6 +2199,11 @@ function clearCachedItems() {
   state.foods = [];
   state.recipes = [];
   state.recipeItems = [];
+  state.activities = [];
+  state.catalogAliases = [];
+  state.pairing.lastSyncAt = 0;
+  state.pairing.catalogRevision = 0;
+  state.pairing.lastSyncError = undefined;
   showToast(t('cachedCatalogCleared'));
 }
 
@@ -1966,13 +2212,25 @@ function editIntake(entry: Intake) {
   editingIntakeId.value = entry.id;
   addMode.value = 'food';
   addMealType.value = entry.meal_type;
+  search.value = '';
+  recipeCustomizeOpen.value = false;
+  if (entry.item_type === 'note') {
+    mealEntryMode.value = 'note';
+    selectedCatalogId.value = '';
+    catalogPickerOpen.value = false;
+    noteTitle.value = entry.note_title || itemTitle(foodFromIntake(entry)) || '';
+    noteDescription.value = entry.note_description || foodFromIntake(entry)?.note || '';
+    noteKcal.value = Math.round(intakeKcal(entry));
+    foodAmount.value = null;
+    return;
+  }
+  mealEntryMode.value = 'catalog';
+  resetMealNoteForm();
   selectedCatalogId.value = entry.food_id;
   catalogPickerOpen.value = false;
   try { initializeRecipeIngredientAmounts(entry.food_id, JSON.parse(entry.food_snapshot_json)); } catch { initializeRecipeIngredientAmounts(entry.food_id); }
-  recipeCustomizeOpen.value = false;
   foodUnit.value = entry.unit;
   foodAmount.value = entry.unit === 'serving' && entry.serving_qty ? entry.serving_qty : entry.amount_g;
-  search.value = '';
 }
 
 function editActivityLog(entry: ActivityLog) {
@@ -2177,18 +2435,19 @@ function setTab(tab: Tab) {
     <section v-if="activeTab === 'recipes'" class="page-stack">
       <article class="card catalog-search-card">
         <h2>Synced foods and recipes</h2>
-        <p class="helper">Food editing lives on the desktop server. Mobile uses this offline catalog for logging.</p>
-        <input v-model="search" class="input search-input" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Search synced catalog" @keydown.enter.prevent="hideKeyboard" />
-        <div class="search-scope-row" :aria-label="t('searchIn')">
-          <span>{{ t('searchIn') }}</span>
-          <button
-            v-for="scope in catalogSearchScopeOptions"
-            :key="`catalog-scope-${scope}`"
-            type="button"
-            :class="catalogSearchScope === scope ? 'active' : ''"
-            @click="catalogSearchScope = scope"
-          >{{ t(`searchScope${scope.charAt(0).toUpperCase()}${scope.slice(1)}`) }}</button>
+        <p class="helper">Food editing lives primarily on the desktop server, but mobile can create local foods, recipes and activities offline and push them on the next sync.</p>
+        <div class="local-catalog-actions" :aria-label="t('localCatalogActions')">
+          <button class="outlined-button" @click="createLocalFoodFromPrompt">{{ t('addLocalFood') }}</button>
+          <button class="outlined-button" @click="createLocalRecipeFromPrompt">{{ t('addLocalRecipe') }}</button>
+          <button class="outlined-button" @click="createLocalActivityFromPrompt">{{ t('addLocalActivity') }}</button>
         </div>
+        <input v-model="search" class="input search-input" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Search synced catalog" @keydown.enter.prevent="hideKeyboard" />
+        <label class="search-scope-control">
+          <span>{{ t('searchIn') }}</span>
+          <select v-model="catalogSearchScope" class="search-scope-select">
+            <option v-for="scope in catalogSearchScopeOptions" :key="`catalog-scope-${scope}`" :value="scope">{{ t(`searchScope${scope.charAt(0).toUpperCase()}${scope.slice(1)}`) }}</option>
+          </select>
+        </label>
       </article>
       <template v-if="catalogSearchActive">
         <div v-if="catalogExactItems.length" class="search-result-heading">{{ t('exactMatches') }}</div>
@@ -2267,13 +2526,15 @@ function setTab(tab: Tab) {
       <article class="card pairing-card">
         <h2>{{ t('apiSettings') }}</h2>
         <p class="helper" v-if="devMode">{{ t('devApiHint') }}</p>
+        <p class="channel-chip">{{ t('appChannel') }}: {{ appChannel }}</p>
         <label class="field-label">{{ t('apiUrl') }}</label>
         <input v-model="state.pairing.baseUrl" class="input" placeholder="http://192.168.1.202:8090/api/v1" />
-        <label v-if="!devMode" class="field-label">{{ t('pairingToken') }}</label>
-        <input v-if="!devMode" v-model="state.pairing.token" class="input" type="password" />
+        <label class="field-label">{{ t('pairingPassword') }}</label>
+        <input v-model="state.pairing.password" class="input" type="password" autocomplete="current-password" />
         <div class="button-row">
           <button class="outlined-button" @click="testConnection">{{ t('test') }}</button>
           <button class="filled-button" :disabled="syncBusy" @click="syncNow()">{{ t('syncNow') }}</button>
+          <button class="outlined-button" :disabled="syncBusy" @click="pushNow()">{{ t('pushNow') }}</button>
         </div>
         <p v-if="state.pairing.lastSyncError" class="error-text">{{ state.pairing.lastSyncError }}</p>
       </article>
@@ -2299,6 +2560,17 @@ function setTab(tab: Tab) {
         <div class="sheet-handle"></div>
         <template v-if="addMode === 'food'">
           <h2>{{ editingIntakeId ? t('edit') : t('addTo') }} {{ t(addMealType) }}</h2>
+          <div v-if="!editingIntakeId || mealEntryMode === 'note'" class="unit-toggle meal-entry-toggle">
+            <button type="button" :class="mealEntryMode === 'catalog' ? 'active' : ''" @click="startCatalogMealEntry">{{ t('existingItem') }}</button>
+            <button type="button" class="note-toggle-button" :class="mealEntryMode === 'note' ? 'active' : ''" @click="startNoteMealEntry">{{ t('addKcalNote') }}</button>
+          </div>
+          <div v-if="mealEntryMode === 'note'" class="note-entry-fields">
+            <input v-model="noteTitle" class="input" type="text" autocomplete="off" :placeholder="t('kcalNoteTitle')" />
+            <textarea v-model="noteDescription" class="input note-textarea" rows="3" :placeholder="t('kcalNoteDescription')"></textarea>
+            <input v-model.number="noteKcal" class="input" type="number" min="1" step="1" :placeholder="t('kcalNoteValue')" @focus="selectNumberInput" @pointerdown="clearNumberInputOnDoubleTap" inputmode="decimal" />
+            <button class="filled-button wide" type="button" @click="addMealNoteFromForm">{{ editingIntakeId ? t('update') : t('add') }}</button>
+          </div>
+          <template v-else>
           <article v-if="selectedCatalog" class="selected-item-card">
             <div class="selected-item-main">
               <b>{{ itemTitle(selectedCatalog) }}</b>
@@ -2312,16 +2584,12 @@ function setTab(tab: Tab) {
           </article>
           <div v-if="foodSelectionInProgress" class="catalog-picker-zone">
             <input v-model="search" class="input" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" spellcheck="false" :placeholder="t('foodAndRecipeSearch')" @keydown.enter.prevent="hideKeyboard" />
-            <div class="search-scope-row compact" :aria-label="t('searchIn')">
+            <label class="search-scope-control compact">
               <span>{{ t('searchIn') }}</span>
-              <button
-                v-for="scope in catalogSearchScopeOptions"
-                :key="`picker-catalog-scope-${scope}`"
-                type="button"
-                :class="catalogSearchScope === scope ? 'active' : ''"
-                @click="catalogSearchScope = scope"
-              >{{ t(`searchScope${scope.charAt(0).toUpperCase()}${scope.slice(1)}`) }}</button>
-            </div>
+              <select v-model="catalogSearchScope" class="search-scope-select">
+                <option v-for="scope in catalogSearchScopeOptions" :key="`picker-catalog-scope-${scope}`" :value="scope">{{ t(`searchScope${scope.charAt(0).toUpperCase()}${scope.slice(1)}`) }}</option>
+              </select>
+            </label>
             <div class="picker-list grouped-picker">
               <div v-if="selectedCatalog" class="picker-group selected-picker-group">
                 <div class="picker-group-title">{{ t('selected') }}</div>
@@ -2379,13 +2647,14 @@ function setTab(tab: Tab) {
           </div>
           <div v-if="foodFormVisible" class="selected-entry-fields">
             <div class="unit-toggle" :class="{ disabled: !selectedCatalog?.serving_size_g }">
-              <button :class="foodUnit === 'g' ? 'active' : ''" @click="foodUnit = 'g'">g</button>
-              <button :disabled="!selectedCatalog?.serving_size_g" :class="foodUnit === 'serving' ? 'active' : ''" @click="foodUnit = 'serving'">db</button>
+              <button type="button" :class="foodUnit === 'g' ? 'active' : ''" @click="foodUnit = 'g'">g</button>
+              <button type="button" :disabled="!selectedCatalog?.serving_size_g" :class="foodUnit === 'serving' ? 'active' : ''" @click="foodUnit = 'serving'">db</button>
             </div>
             <input v-model.number="foodAmount" class="input" type="number" min="0" step="0.1" :placeholder="foodUnit === 'g' ? t('grams') : t('pieces')"  @focus="selectNumberInput"  @pointerdown="clearNumberInputOnDoubleTap"  inputmode="decimal" />
-            <small v-if="selectedCatalogGramEquivalent" class="input-help">{{ selectedCatalogGramEquivalent }}</small>
+            <small v-if="selectedCatalogAmountHint" class="input-help">{{ selectedCatalogAmountHint }}</small>
             <button class="filled-button wide" @click="addFoodLog">{{ editingIntakeId ? t('update') : t('add') }}</button>
           </div>
+          </template>
         </template>
         <template v-else>
           <h2>{{ editingActivityLogId ? t('edit') : t('addActivity') }}</h2>
@@ -2474,7 +2743,7 @@ function setTab(tab: Tab) {
             <ul class="acknowledgement-list"><li v-for="item in acknowledgements" :key="item">{{ item }}</li></ul>
             <button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button>
           </template>
-          <template v-else><h2>{{ t('about') }}</h2><div class="about-logo" v-html="nutrinoLogoSvg"></div><h3>nutrino</h3><p class="helper">Version {{ appVersion }} · AGPL-3.0-only</p><p class="helper big">Offline-first nutrition diary for your own desktop-hosted food database.</p><p class="helper big">Thank you to OpenNutriTracker for the privacy-first open-source nutrition inspiration, and to Tauri, Rust, Vue, Vite, TypeScript, JSZip and Lucide for the foundation Nutrino is built on.</p><div class="about-links"><a :href="repositoryUrl" target="_blank" rel="noreferrer">{{ t('sourceCode') }}</a><a :href="issueUrl" target="_blank" rel="noreferrer">{{ t('reportIssue') }}</a><a :href="starUrl" target="_blank" rel="noreferrer">{{ t('starProject') }}</a></div><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></template>
+          <template v-else><h2>{{ t('about') }}</h2><div class="about-logo" v-html="nutrinoLogoSvg"></div><h3>{{ appName }}</h3><p class="helper">Version {{ appVersion }} · {{ appChannel }} · AGPL-3.0-only</p><p class="helper big">Offline-first nutrition diary for your own desktop-hosted food database.</p><p class="helper big">Thank you to OpenNutriTracker for the privacy-first open-source nutrition inspiration, and to Tauri, Rust, Vue, Vite, TypeScript, JSZip and Lucide for the foundation Nutrino is built on.</p><div class="about-links"><a :href="repositoryUrl" target="_blank" rel="noreferrer">{{ t('sourceCode') }}</a><a :href="issueUrl" target="_blank" rel="noreferrer">{{ t('reportIssue') }}</a><a :href="starUrl" target="_blank" rel="noreferrer">{{ t('starProject') }}</a></div><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></template>
         </article>
       </div>
       </section>
@@ -2531,7 +2800,7 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
-      <p v-if="toast" class="toast app-overlay">{{ toast }}</p>
+      <p v-if="toast" class="toast">{{ toast }}</p>
     </Teleport>
 
     <nav class="bottom-nav">

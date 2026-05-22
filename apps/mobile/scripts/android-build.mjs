@@ -12,14 +12,25 @@ function cpuCount() {
   return Math.max(2, Math.min(os.cpus()?.length || 4, 8));
 }
 
+function androidGeneratedKotlinDir(applicationId) {
+  return path.join(projectRoot, 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'java', ...applicationId.split('.'), 'generated');
+}
+
 function cleanEnv(channel) {
   const env = {};
+  const config = channelConfig(channel);
   for (const [key, value] of Object.entries(process.env)) {
     if (!key || key.includes('=') || value === undefined || String(value).includes('\u0000')) continue;
     env[key] = String(value);
   }
 
-  env.NUTRINO_ANDROID_CHANNEL = channel;
+  env.NUTRINO_ANDROID_CHANNEL = config.channel;
+  env.VITE_NUTRINO_CHANNEL = config.channel;
+  env.VITE_NUTRINO_APP_NAME = config.label;
+  env.TAURI_ANDROID_PACKAGE_UNESCAPED = config.applicationId;
+  env.WRY_ANDROID_PACKAGE = config.applicationId;
+  env.WRY_ANDROID_LIBRARY = 'nutrino_mobile_lib';
+  env.WRY_ANDROID_KOTLIN_FILES_OUT_DIR = androidGeneratedKotlinDir(config.applicationId);
   env.CARGO_BUILD_JOBS = env.CARGO_BUILD_JOBS || String(cpuCount());
   env.CARGO_INCREMENTAL = env.CARGO_INCREMENTAL || '1';
   env.GRADLE_OPTS = [
@@ -53,7 +64,9 @@ function patchGeneratedAndroidProject(channel) {
 if (!fs.existsSync(androidDir)) {
   console.error(`\nAndroid project is missing: ${androidDir}`);
   console.error('Run this once first:');
-  console.error('  pnpm android:init\n');
+  console.error('  pnpm init:android');
+    console.error('or from apps/mobile:');
+    console.error('  pnpm android:init\n');
   process.exit(1);
 }
 
@@ -81,7 +94,7 @@ console.log(isDebugBuild
   ? 'Debug APK build: fast and installable for development, but larger than release.'
   : 'Release build: optimized for size. A real keystore is recommended for distribution.');
 console.log(targetValues.length ? `Native targets: ${targetValues.join(', ')}` : 'Native targets: all supported ABIs (larger and slower).');
-console.log('Use pnpm android:dev for live Vite development, pnpm android:apk for a packaged offline Nutrino Dev APK, pnpm android:apk:stable for the stable aarch64 release APK, or pnpm android:aab for the Play Store oriented stable AAB.');
+console.log('Use root commands: pnpm dev:android for live Vite development or pnpm build:android for a stable aarch64 APK.');
 if (isApkBuild && !isDebugBuild && !fs.existsSync(keystorePropertiesPath)) {
   console.warn('\nWarning: no src-tauri/gen/android/keystore.properties file found.');
   console.warn('Nutrino will sign the local release APK with Android debug signing as a sideload fallback.');

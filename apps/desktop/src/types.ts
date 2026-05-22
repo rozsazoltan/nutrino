@@ -4,6 +4,8 @@ export interface ServerStatus {
   port: number | null;
   base_url: string | null;
   token: string;
+  password_set: boolean;
+  app_channel: 'dev' | 'stable';
   source_id: string;
   auth_required: boolean;
   dev_mode: boolean;
@@ -137,6 +139,78 @@ export interface ActivityInput {
   activity_type?: string | null;
   met: number;
   kcal_per_min: number;
+}
+
+
+export interface SyncInboxSummary {
+  foods: number;
+  recipes: number;
+  recipe_items: number;
+  activities: number;
+  intakes: number;
+  weight_logs: number;
+  activity_logs: number;
+}
+
+export interface MergeCandidate {
+  kind: 'food' | 'recipe' | 'activity' | string;
+  incoming_id: string;
+  incoming_name: string;
+  canonical_id: string;
+  canonical_name: string;
+}
+
+export interface CatalogDuplicateItem {
+  id: string;
+  name: string;
+  subtitle: string;
+  updated_at: number;
+}
+
+export interface CatalogDuplicateSuggestion {
+  kind: 'food' | 'recipe' | 'activity' | string;
+  reason: string;
+  confidence: string;
+  score: number;
+  key: string;
+  items: CatalogDuplicateItem[];
+}
+
+export interface SyncPushPayload {
+  source_id?: string | null;
+  device_name?: string | null;
+  sent_at?: number | null;
+  foods?: Food[] | null;
+  recipes?: Recipe[] | null;
+  recipe_items?: Array<{ id: string; recipe_id: string; food_id: string; amount_g: number; updated_at?: number; deleted_at?: number | null }> | null;
+  activities?: ActivityDefinition[] | null;
+  intakes: Array<{ id: string; item_type?: string | null; food_id: string; source_id: string; consumed_at: number; meal_type: string; amount_g: number; food_snapshot_json: string; note_title?: string | null; note_description?: string | null }>;
+  weight_logs: Array<{ id: string; measured_at: number; weight_kg: number; bmi?: number | null; source: string }>;
+  activity_logs: Array<{ id: string; activity_id?: string | null; activity_name: string; performed_at: number; duration_min: number; kcal: number; source: string }>;
+}
+
+export interface SyncInboxEntry {
+  id: string;
+  source_id: string;
+  device_name?: string | null;
+  received_at: number;
+  status: string;
+  summary: SyncInboxSummary;
+  merge_candidates: MergeCandidate[];
+  payload: SyncPushPayload;
+}
+
+export interface SyncInboxCommitResult {
+  accepted: boolean;
+  merged: number;
+  inserted_or_updated: number;
+  intakes: number;
+  weight_logs: number;
+  activity_logs: number;
+}
+
+export interface ServerPasswordUpdate {
+  password: string;
 }
 
 export interface DesktopSettings {

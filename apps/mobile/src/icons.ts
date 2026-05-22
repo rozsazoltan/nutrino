@@ -1,5 +1,5 @@
 // Icon nodes are copied from Lucide v1.16.0 SVG icon data.
-// Lucide is released under the ISC License; see THIRD_PARTY_NOTICES.md.
+// Lucide is released under the ISC License.
 
 type IconAttrs = Record<string, string>;
 type IconNode = ReadonlyArray<readonly [string, IconAttrs]>;

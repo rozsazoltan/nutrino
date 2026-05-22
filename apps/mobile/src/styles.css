@@ -1156,3 +1156,119 @@ body:has(.onboarding-screen) {
   overflow: hidden;
   overscroll-behavior: none;
 }
+
+/* v0.6.0 runtime channel, local catalog and scroll-safe toast */
+.channel-chip {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-container) 48%, var(--surface));
+  color: var(--on-primary-container);
+  padding: 7px 10px;
+  font-size: .78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.local-catalog-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 16px 14px;
+}
+.local-catalog-actions .outlined-button {
+  min-height: 42px;
+  padding-inline: 10px;
+  font-size: .82rem;
+}
+.toast {
+  pointer-events: none !important;
+}
+@media (max-width: 430px) {
+  .local-catalog-actions { grid-template-columns: 1fr; }
+}
+
+/* v0.6.14 compact mobile picker search controls and inline kcal notes */
+.search-scope-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 16px 0;
+  padding: 6px 8px 6px 12px;
+  border-radius: 999px;
+  background: var(--surface-container);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 68%, transparent);
+}
+.search-scope-control.compact {
+  margin: 6px 0 2px;
+  padding: 5px 7px 5px 10px;
+}
+.search-scope-control span {
+  color: var(--on-surface-variant);
+  font-size: .72rem;
+  font-weight: 950;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.search-scope-select {
+  min-height: 32px;
+  max-width: 46%;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 26px 0 12px;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  font-size: .8rem;
+  font-weight: 950;
+  outline: none;
+}
+.search-scope-control.compact .search-scope-select {
+  max-width: 54%;
+  min-height: 30px;
+  font-size: .78rem;
+}
+.meal-entry-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.meal-entry-toggle .note-toggle-button {
+  min-width: 102px;
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface-container));
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 26%, transparent);
+}
+.meal-entry-toggle .note-toggle-button.active {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.note-entry-fields {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--primary-container) 34%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent);
+}
+.note-textarea {
+  min-height: 92px;
+  resize: vertical;
+  line-height: 1.35;
+}
+.input-help {
+  margin-top: -6px;
+  padding-left: 4px;
+  color: var(--on-surface-variant);
+  font-size: .78rem;
+  font-weight: 800;
+}
+@media (max-width: 390px) {
+  .search-scope-control span { font-size: .66rem; }
+  .search-scope-select { max-width: 56%; }
+  .meal-entry-toggle .note-toggle-button { min-width: 88px; }
+}
