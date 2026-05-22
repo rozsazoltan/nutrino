@@ -2,9 +2,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { DEV_APPLICATION_ID, channelConfig } from './android-channel.mjs';
+
+const projectRoot = process.cwd();
+const androidDir = path.join(projectRoot, 'src-tauri', 'gen', 'android');
 
 function parseExplicitHost(argv) {
   const args = argv.slice(2).filter(Boolean);
@@ -68,116 +70,31 @@ function candidates() {
     });
 }
 
-function ensureAndroidProjectExists() {
-  const androidDir = path.join(process.cwd(), 'src-tauri', 'gen', 'android');
-  if (!fs.existsSync(androidDir)) {
-    console.error(`\nAndroid project is missing: ${androidDir}`);
-    console.error('Run this once first:');
-    console.error('  pnpm init:android');
-    console.error('or from apps/mobile:');
-    console.error('  pnpm android:init\n');
-    process.exit(1);
-  }
+
+
+function runAndroidInit(channel) {
+  const script = path.join(projectRoot, 'scripts', 'android-init.mjs');
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [script, '--channel', channel], {
+      stdio: 'inherit',
+      env: { ...process.env, NUTRINO_ANDROID_CHANNEL: channel },
+    });
+    child.on('exit', (code) => resolve(code ?? 0));
+    child.on('error', () => resolve(1));
+  });
+}
+
+async function ensureAndroidProjectExists(channel) {
+  if (fs.existsSync(androidDir)) return;
+
+  const config = channelConfig(channel);
+  console.log(`\nAndroid project is missing, generating ${config.channel} project first: ${androidDir}`);
+  const initCode = await runAndroidInit(channel);
+  if (initCode !== 0) process.exit(initCode);
 }
 
 function androidGeneratedKotlinDir(applicationId) {
   return path.join(process.cwd(), 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'java', ...applicationId.split('.'), 'generated');
-}
-
-
-function readJsonIfExists(filePath) {
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function hashFileIfExists(hash, relativePath) {
-  const filePath = path.join(process.cwd(), relativePath);
-  hash.update(`file=${relativePath}\n`);
-  if (fs.existsSync(filePath)) hash.update(fs.readFileSync(filePath));
-  hash.update('\n');
-}
-
-function currentDevIdentityHash(config) {
-  const hash = crypto.createHash('sha256');
-  hash.update('devStateVersion=2\n');
-  hash.update(`applicationId=${config.applicationId}\n`);
-  hash.update(`channel=${config.channel}\n`);
-  hash.update(`label=${config.label}\n`);
-  for (const relative of [
-    'package.json',
-    'src-tauri/Cargo.toml',
-    'src-tauri/build.rs',
-    'src-tauri/tauri.conf.json',
-    'scripts/android-channel.mjs',
-    'scripts/patch-android-generated.mjs',
-  ]) {
-    hashFileIfExists(hash, relative);
-  }
-  return hash.digest('hex');
-}
-
-function removePathIfExists(targetPath) {
-  if (!fs.existsSync(targetPath)) return false;
-  console.log(`Removing stale Android dev artifact: ${targetPath}`);
-  fs.rmSync(targetPath, { recursive: true, force: true });
-  return true;
-}
-
-function stopGradleDaemon(androidDir) {
-  const gradlew = process.platform === 'win32'
-    ? path.join(androidDir, 'gradlew.bat')
-    : path.join(androidDir, 'gradlew');
-  if (!fs.existsSync(gradlew)) return;
-  console.log('Stopping generated Android Gradle daemon before version-sensitive dev rebuild');
-  spawnSync(gradlew, ['--stop'], {
-    cwd: androidDir,
-    stdio: 'inherit',
-    shell: process.platform === 'win32',
-  });
-}
-
-function prepareVersionSensitiveDevState(config) {
-  const androidDir = path.join(process.cwd(), 'src-tauri', 'gen', 'android');
-  if (!fs.existsSync(androidDir)) return false;
-
-  const statePath = path.join(androidDir, '.nutrino-android-dev-state.json');
-  const packageJson = readJsonIfExists(path.join(process.cwd(), 'package.json'));
-  const nextState = {
-    devStateVersion: 2,
-    channel: config.channel,
-    applicationId: config.applicationId,
-    label: config.label,
-    appVersion: packageJson?.version ?? null,
-    devIdentityHash: currentDevIdentityHash(config),
-  };
-  const previous = readJsonIfExists(statePath);
-  const needsClean = !previous
-    || previous.devStateVersion !== nextState.devStateVersion
-    || previous.channel !== nextState.channel
-    || previous.applicationId !== nextState.applicationId
-    || previous.label !== nextState.label
-    || previous.appVersion !== nextState.appVersion
-    || previous.devIdentityHash !== nextState.devIdentityHash;
-
-  if (!needsClean) return false;
-
-  console.log('Android dev identity/version changed; cleaning stale native/Gradle state before starting dev.');
-  stopGradleDaemon(androidDir);
-  removePathIfExists(path.join(process.cwd(), 'src-tauri', 'target'));
-  removePathIfExists(path.join(androidDir, 'app', 'build'));
-  removePathIfExists(path.join(androidDir, 'build'));
-  removePathIfExists(path.join(androidDir, '.gradle'));
-  removePathIfExists(path.join(androidDir, 'app', '.gradle'));
-  removePathIfExists(path.join(androidDir, 'kotlin'));
-  removePathIfExists(path.join(androidDir, 'app', 'src', 'main', 'jniLibs'));
-  removePathIfExists(path.join(androidDir, '.nutrino-android-native-state.json'));
-  fs.writeFileSync(statePath, `${JSON.stringify(nextState, null, 2)}
-`);
-  return true;
 }
 
 function cleanEnv(host) {
@@ -250,10 +167,9 @@ if (!host) {
   process.exit(1);
 }
 
-ensureAndroidProjectExists();
+await ensureAndroidProjectExists('dev');
 const patchCode = await patchGeneratedAndroidProject();
 if (patchCode !== 0) process.exit(patchCode);
-prepareVersionSensitiveDevState(channelConfig('dev'));
 
 console.log(`\nStarting Tauri Android dev with host ${host}`);
 console.log(`Dev package: ${DEV_APPLICATION_ID}`);

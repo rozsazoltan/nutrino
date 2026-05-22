@@ -12,16 +12,31 @@ export interface ServerStatus {
   catalog_revision: number;
 }
 
-export type FoodCatalogKind = 'food' | 'ingredient';
-
 export interface Food {
   id: string;
   source_id: string;
   name: string;
   brand?: string | null;
-  catalog_kind?: FoodCatalogKind;
   note?: string | null;
   barcode?: string | null;
+  default_unit: string;
+  serving_size_g?: number | null;
+  kcal_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+  protein_per_100g: number;
+  sugars_per_100g: number;
+  fiber_per_100g: number;
+  salt_per_100g: number;
+  updated_at: number;
+  deleted_at?: number | null;
+}
+
+export interface Ingredient {
+  id: string;
+  source_id: string;
+  name: string;
+  note?: string | null;
   default_unit: string;
   serving_size_g?: number | null;
   kcal_per_100g: number;
@@ -39,9 +54,23 @@ export interface FoodInput {
   id?: string | null;
   name: string;
   brand?: string | null;
-  catalog_kind?: FoodCatalogKind;
   note?: string | null;
   barcode?: string | null;
+  default_unit?: string | null;
+  serving_size_g?: number | null;
+  kcal_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+  protein_per_100g: number;
+  sugars_per_100g?: number | null;
+  fiber_per_100g?: number | null;
+  salt_per_100g?: number | null;
+}
+
+export interface IngredientInput {
+  id?: string | null;
+  name: string;
+  note?: string | null;
   default_unit?: string | null;
   serving_size_g?: number | null;
   kcal_per_100g: number;
@@ -56,6 +85,7 @@ export interface FoodInput {
 export interface ImportPreviewRow {
   row_number: number;
   food: Food | null;
+  ingredient?: Ingredient | null;
   errors: string[];
 }
 
@@ -151,6 +181,7 @@ export interface ActivityInput {
 
 export interface SyncInboxSummary {
   foods: number;
+  ingredients: number;
   recipes: number;
   recipe_items: number;
   activities: number;
@@ -160,11 +191,20 @@ export interface SyncInboxSummary {
 }
 
 export interface MergeCandidate {
-  kind: 'food' | 'recipe' | 'activity' | string;
+  kind: 'ingredient' | 'food' | 'recipe' | 'activity' | string;
   incoming_id: string;
   incoming_name: string;
   canonical_id: string;
   canonical_name: string;
+}
+
+export interface ReplacementCandidate {
+  kind: 'ingredient' | 'food' | 'recipe' | 'activity' | string;
+  id: string;
+  incoming_name: string;
+  existing_name: string;
+  incoming_updated_at: number;
+  existing_updated_at: number;
 }
 
 export interface CatalogDuplicateItem {
@@ -175,7 +215,7 @@ export interface CatalogDuplicateItem {
 }
 
 export interface CatalogDuplicateSuggestion {
-  kind: 'food' | 'recipe' | 'activity' | string;
+  kind: 'ingredient' | 'food' | 'recipe' | 'activity' | string;
   reason: string;
   confidence: string;
   score: number;
@@ -188,6 +228,7 @@ export interface SyncPushPayload {
   device_name?: string | null;
   sent_at?: number | null;
   foods?: Food[] | null;
+  ingredients?: Ingredient[] | null;
   recipes?: Recipe[] | null;
   recipe_items?: Array<{ id: string; recipe_id: string; food_id: string; amount_g: number; updated_at?: number; deleted_at?: number | null }> | null;
   activities?: ActivityDefinition[] | null;
@@ -204,6 +245,7 @@ export interface SyncInboxEntry {
   status: string;
   summary: SyncInboxSummary;
   merge_candidates: MergeCandidate[];
+  replacement_candidates: ReplacementCandidate[];
   payload: SyncPushPayload;
 }
 

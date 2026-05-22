@@ -1,5 +1,5 @@
-import type { AppState, Food, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult } from '../types';
-import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeFood, resolveCatalogId } from './storage';
+import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult } from '../types';
+import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeFood, normalizeIngredient, resolveCatalogId } from './storage';
 
 function apiUrl(baseUrl: string, path: string): string {
   let base = baseUrl.trim().replace(/\/+$/, '');
@@ -43,8 +43,9 @@ function stripRecipeRef(id: string): string {
   return String(id || '').replace(/^recipe:/, '');
 }
 
-function pendingCatalogPayload(state: AppState): Pick<SyncPushRequest, 'foods' | 'recipes' | 'recipe_items' | 'activities'> {
+function pendingCatalogPayload(state: AppState): Pick<SyncPushRequest, 'ingredients' | 'foods' | 'recipes' | 'recipe_items' | 'activities'> {
   const sourceId = state.pairing.sourceId;
+  const ingredientIds = new Set<string>();
   const foodIds = new Set<string>();
   const recipeIds = new Set<string>();
   const activityIds = new Set<string>();
@@ -52,6 +53,7 @@ function pendingCatalogPayload(state: AppState): Pick<SyncPushRequest, 'foods' |
   for (const intake of state.intakes) {
     if (!intake.pending_sync) continue;
     if (intake.item_type === 'recipe') recipeIds.add(stripRecipeRef(intake.food_id));
+    else if (intake.item_type === 'ingredient') ingredientIds.add(resolveCatalogId(state, 'ingredient', intake.food_id));
     else if (intake.item_type === 'food' || !intake.item_type) foodIds.add(resolveCatalogId(state, 'food', intake.food_id));
   }
 
@@ -62,11 +64,13 @@ function pendingCatalogPayload(state: AppState): Pick<SyncPushRequest, 'foods' |
   for (const item of state.recipeItems) {
     if (item.pending_sync || recipeIds.has(stripRecipeRef(item.recipe_id))) {
       recipeIds.add(stripRecipeRef(item.recipe_id));
-      foodIds.add(resolveCatalogId(state, 'food', item.food_id));
+      if (item.food_id.startsWith('ingredient:')) ingredientIds.add(resolveCatalogId(state, 'ingredient', item.food_id));
+      else if (!item.food_id.startsWith('recipe:')) foodIds.add(resolveCatalogId(state, 'food', item.food_id));
     }
   }
 
   return {
+    ingredients: state.ingredients.filter((item) => item.pending_sync || item.source_id === sourceId || ingredientIds.has(item.id)),
     foods: state.foods.filter((item) => item.pending_sync || item.source_id === sourceId || foodIds.has(item.id)),
     recipes: state.recipes.filter((item) => item.pending_sync || item.source_id === sourceId || recipeIds.has(item.id)),
     recipe_items: state.recipeItems.filter((item) => item.pending_sync || recipeIds.has(stripRecipeRef(item.recipe_id))),
@@ -85,7 +89,11 @@ function pendingPushPayload(state: AppState): SyncPushRequest {
       .map((intake) => ({
         id: intake.id,
         item_type: intake.item_type,
-        food_id: intake.item_type === 'recipe' ? `recipe:${resolveCatalogId(state, 'recipe', intake.food_id)}` : intake.item_type === 'food' ? resolveCatalogId(state, 'food', intake.food_id) : intake.food_id,
+        food_id: intake.item_type === 'recipe'
+          ? `recipe:${resolveCatalogId(state, 'recipe', intake.food_id)}`
+          : intake.item_type === 'ingredient'
+            ? `ingredient:${resolveCatalogId(state, 'ingredient', intake.food_id)}`
+            : intake.item_type === 'food' ? resolveCatalogId(state, 'food', intake.food_id) : intake.food_id,
         source_id: intake.source_id,
         consumed_at: intake.consumed_at,
         meal_type: intake.meal_type,
@@ -122,6 +130,7 @@ function payloadHasAnything(payload: SyncPushRequest): boolean {
     payload.intakes.length ||
     payload.weight_logs.length ||
     payload.activity_logs.length ||
+    payload.ingredients?.length ||
     payload.foods?.length ||
     payload.recipes?.length ||
     payload.recipe_items?.length ||
@@ -132,6 +141,7 @@ function payloadHasAnything(payload: SyncPushRequest): boolean {
 function mergePulledCatalog(state: AppState, pulled: SyncPullResponse, serverTime: number): AppState {
   const catalogRevision = Math.max(
     state.pairing.catalogRevision || 0,
+    ...((pulled.ingredients ?? []).map((item) => item.updated_at || 0)),
     ...((pulled.foods ?? []).map((item) => item.updated_at || 0)),
     ...((pulled.recipes ?? []).map((item) => item.updated_at || 0)),
     ...((pulled.recipe_items ?? []).map((item) => item.updated_at || 0)),
@@ -155,6 +165,7 @@ function mergePulledCatalog(state: AppState, pulled: SyncPullResponse, serverTim
       lastSyncError: undefined,
     },
     catalogAliases: aliases,
+    ingredients: keepPending(state.ingredients, mergeById(state.ingredients, (pulled.ingredients ?? []).map(normalizeIngredient))),
     foods: keepPending(state.foods, mergeById(state.foods, (pulled.foods ?? []).map(normalizeFood))),
     recipes: keepPending(state.recipes, mergeById(state.recipes, pulled.recipes ?? [])),
     recipeItems: keepPending(state.recipeItems, mergeById(state.recipeItems, pulled.recipe_items ?? [])),
@@ -169,7 +180,7 @@ export async function pullFromServer(state: AppState): Promise<{ state: AppState
   const password = state.pairing.password ?? state.pairing.token ?? '';
   if (!baseUrl.trim()) throw new Error('Missing API base URL.');
 
-  const catalogCacheIsEmpty = !state.foods.length && !state.recipes.length && !state.recipeItems.length && !state.activities.length;
+  const catalogCacheIsEmpty = !state.ingredients.length && !state.foods.length && !state.recipes.length && !state.recipeItems.length && !state.activities.length;
   const since = catalogCacheIsEmpty ? 0 : Number(lastSyncAt || 0);
   const pulled = await requestJson<SyncPullResponse>(baseUrl, password, `/sync/pull?since=${encodeURIComponent(String(since))}`);
   const serverTime = pulled.server_time || Date.now();
@@ -231,6 +242,7 @@ export async function pushToServer(state: AppState): Promise<{ state: AppState; 
       lastHealthCheckAt: pushed.server_time || Date.now(),
       lastSyncError: undefined,
     },
+    ingredients: state.ingredients.map((item) => item.source_id === sourceId ? { ...item, pending_sync: false } : item),
     foods: state.foods.map((item) => item.source_id === sourceId ? { ...item, pending_sync: false } : item),
     recipes: state.recipes.map((item) => item.source_id === sourceId ? { ...item, pending_sync: false } : item),
     recipeItems: state.recipeItems.map((item) => ({ ...item, pending_sync: false })),
@@ -325,9 +337,10 @@ async function fetchGitHubCsvFiles(source: GitHubCsvSource): Promise<Array<{ pat
   return files;
 }
 
-function classifyCsv(path: string, rows: Record<string, string>[]): 'foods' | 'recipes' | 'activities' | null {
+function classifyCsv(path: string, rows: Record<string, string>[]): 'ingredients' | 'foods' | 'recipes' | 'activities' | null {
   const headers = Object.keys(rows[0] || {});
   const name = path.toLowerCase();
+  if (name.includes('ingredient') || name.includes('alapanyag')) return 'ingredients';
   if (headers.includes('kcal_per_100g') || name.includes('food')) return 'foods';
   if (headers.includes('ingredients_json') || headers.includes('recipe_id') || name.includes('recipe')) return 'recipes';
   if (headers.includes('kcal_per_min') || headers.includes('met') || name.includes('activity')) return 'activities';
@@ -338,6 +351,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
   const now = Date.now();
   let imported = 0;
   let next = JSON.parse(JSON.stringify(state)) as AppState;
+  const ingredientMap = new Map(next.ingredients.map((ingredient) => [ingredient.id, ingredient]));
   const foodMap = new Map(next.foods.map((food) => [food.id, food]));
   const recipeMap = new Map(next.recipes.map((recipe) => [recipe.id, recipe]));
   const activityMap = new Map(next.activities.map((activity) => [activity.id, activity]));
@@ -352,20 +366,45 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
         const kind = classifyCsv(file.path, rows);
         if (!kind) continue;
         for (const row of rows) {
-          if (kind === 'foods') {
+          if (kind === 'ingredients') {
             const name = row.name || row.title;
             if (!name) continue;
-            const id = row.id || `github-food-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-            foodMap.set(id, normalizeFood({
+            const id = row.id || `github-ingredient-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            ingredientMap.set(id, normalizeIngredient({
               id, source_id: `github:${source.owner}/${source.repo}`, name,
-              brand: row.catalog_kind === 'ingredient' ? null : row.brand || null,
-              catalog_kind: row.catalog_kind === 'ingredient' ? 'ingredient' : 'food',
               note: row.note || row.description || null,
               default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
               kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
-              sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g), barcode: row.barcode || row.ean || row.upc || null,
+              sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g),
               updated_at: now, deleted_at: null,
-            }));
+            } as Ingredient));
+            imported++;
+          } else if (kind === 'foods') {
+            const name = row.name || row.title;
+            if (!name) continue;
+            if (row.catalog_kind === 'ingredient') {
+              const id = row.id || `github-ingredient-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+              ingredientMap.set(id, normalizeIngredient({
+                id, source_id: `github:${source.owner}/${source.repo}`, name,
+                note: row.note || row.description || null,
+                default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
+                kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
+                sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g),
+                updated_at: now, deleted_at: null,
+              } as Ingredient));
+            } else {
+              const id = row.id || `github-food-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+              foodMap.set(id, normalizeFood({
+                id, source_id: `github:${source.owner}/${source.repo}`, name,
+                brand: row.brand || null,
+                catalog_kind: 'food',
+                note: row.note || row.description || null,
+                default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
+                kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
+                sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g), barcode: row.barcode || row.ean || row.upc || null,
+                updated_at: now, deleted_at: null,
+              }));
+            }
             imported++;
           } else if (kind === 'activities') {
             const name = row.name || row.title;
@@ -399,6 +438,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
     }
   }
 
+  next.ingredients = [...ingredientMap.values()].sort((a, b) => a.name.localeCompare(b.name));
   next.foods = [...foodMap.values()].sort((a, b) => a.name.localeCompare(b.name));
   next.recipes = [...recipeMap.values()].sort((a, b) => a.name.localeCompare(b.name));
   next.activities = [...activityMap.values()].sort((a, b) => a.name.localeCompare(b.name));

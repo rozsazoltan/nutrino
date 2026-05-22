@@ -309,6 +309,37 @@ tbody tr:hover { background: var(--soft-hover); color: #0F1F11; }
 @media (min-width: 760px) {
   .section-toolbar { flex-direction: row; align-items: center; justify-content: space-between; }
 }
+
+.dashboard-metrics {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+@media (min-width: 760px) {
+  .dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  .dashboard-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.desktop-dashboard-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .55rem .7rem;
+  align-items: center;
+}
+.desktop-dashboard-summary span {
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-container-highest) 72%, transparent);
+  color: var(--desktop-muted);
+  font-size: .76rem;
+  font-weight: 850;
+  line-height: 1;
+  padding: .42rem .62rem;
+  white-space: nowrap;
+}
+.desktop-dashboard-summary strong { color: var(--desktop-text); }
+
 .metric-card {
   border-radius: 1.5rem;
   border: 1px solid var(--border-subtle);
@@ -319,6 +350,25 @@ tbody tr:hover { background: var(--soft-hover); color: #0F1F11; }
 .metric-card svg { color: var(--primary); width: 1.55rem; height: 1.55rem; }
 .metric-card p { margin-top: 0.72rem; color: var(--on-surface-variant); font-size: 0.9rem; }
 .metric-card strong { display: block; margin-top: 0.25rem; font-size: 2.4rem; line-height: 1; }
+.metric-card-rich { display: grid; gap: .85rem; min-height: 10.25rem; }
+.metric-card-title { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.metric-card-title p { margin: 0; }
+.metric-card-meta { display: grid; gap: .32rem; margin-top: .1rem; }
+.metric-card-meta span {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  color: var(--desktop-muted);
+  font-size: .78rem;
+  font-weight: 820;
+  line-height: 1.25;
+  padding-top: .08rem;
+}
+.metric-card-meta b { color: var(--desktop-text); font-weight: 950; text-align: right; }
+/* v0.9.8: keep dashboard metric cards clean; metadata uses spacing, not divider lines. */
+.metric-card-rich { gap: .72rem; }
+.metric-card-meta span { border: 0 !important; }
+
 .mini-stat {
   border-radius: 1rem;
   background: color-mix(in srgb, var(--secondary-container) 32%, var(--surface));
@@ -1433,4 +1483,12 @@ body:has(.modal-backdrop) {
 .recipe-ingredient-picker {
   display: grid;
   gap: .5rem;
+}
+.replacement-candidate-list {
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.replacement-candidate-list .merge-candidate-row {
+  border-color: rgba(22, 163, 74, 0.25);
 }

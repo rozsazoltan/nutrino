@@ -69,7 +69,7 @@ const lucideNodes = {
 export type IconName = keyof typeof lucideNodes;
 
 export function lucideSvg(name: IconName, options: { filled?: boolean; strokeWidth?: number; className?: string } = {}) {
-  const node = lucideNodes[name];
+  const node = lucideNodes[name] ?? lucideNodes.circleQuestionMark;
   const fill = options.filled ? 'currentColor' : 'none';
   const strokeWidth = String(options.strokeWidth ?? 2);
   const className = ['lucide-svg', options.filled ? 'lucide-svg-filled' : '', options.className ?? ''].filter(Boolean).join(' ');

@@ -54,7 +54,9 @@ console.log(`Kotlin incremental disabled intentionally: ${/kotlin\.incremental\s
 
 console.log('\nExpected first run:');
 console.log('  pnpm install');
-console.log('  pnpm android:init');
 console.log('  cd ../.. && pnpm dev:android -- --host 192.168.1.202');
+console.log('  # pnpm init:android is optional; dev:android now regenerates the dev Android project when needed.');
 console.log('\nStable APK build from repository root:');
 console.log('  cd ../.. && pnpm build:android');
+console.log('\nGenerated Android reset without deleting Rust cache:');
+console.log('  cd ../.. && pnpm reset:android');

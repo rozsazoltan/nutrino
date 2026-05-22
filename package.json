@@ -1,7 +1,7 @@
 {
   "name": "nutrino",
   "private": true,
-  "version": "0.8.0",
+  "version": "0.10.3",
   "packageManager": "pnpm@10.32.1",
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "build:android": "pnpm --filter nutrino-mobile android:build",
     "build:ios": "pnpm --filter nutrino-mobile ios:build",
     "init:android": "pnpm --filter nutrino-mobile android:init",
-    "init:ios": "pnpm --filter nutrino-mobile ios:init"
+    "init:ios": "pnpm --filter nutrino-mobile ios:init",
+    "reset:android": "pnpm --filter nutrino-mobile android:reset"
   },
   "devDependencies": {
     "typescript": "^5.9.0"

@@ -1401,3 +1401,107 @@ body:has(.onboarding-screen) {
   letter-spacing: .01em;
   padding: 4px 8px;
 }
+
+/* v0.9.0 ingredient-aware catalog menu and editor */
+.catalog-header-actions { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.catalog-menu-wrap { position: relative; }
+.catalog-menu-popover { position: absolute; right: 0; top: calc(100% + 8px); z-index: 32; display: grid; min-width: min(76vw, 250px); padding: 8px; border-radius: 20px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent); box-shadow: 0 18px 44px color-mix(in srgb, #000 24%, transparent); }
+.catalog-menu-popover button { min-height: 42px; border: 0; border-radius: 14px; background: transparent; color: var(--on-surface); text-align: left; font-weight: 850; padding: 0 12px; }
+.catalog-menu-popover button:active { background: var(--surface-container-high); }
+.catalog-freshness-row { margin: 10px 16px 2px; padding: 0; align-items: center; }
+.catalog-freshness-row span { padding: 6px 10px; line-height: 1.2; }
+.catalog-card-actions { display: grid; gap: 4px; justify-items: end; align-items: center; color: var(--primary); font-size: .82rem; font-weight: 900; white-space: nowrap; }
+.catalog-card-actions .text-button { min-height: 28px; padding: 0 6px; font-size: .78rem; }
+.local-editor-dialog { max-height: min(86vh, 760px); overflow: auto; display: grid; gap: 10px; }
+.form-grid-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.form-grid-two .field-label { display: grid; gap: 5px; }
+.inline-field-action { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+@media (max-width: 430px) {
+  .catalog-search-header { align-items: center; }
+  .catalog-search-header h2 { font-size: .98rem; }
+  .form-grid-two { grid-template-columns: 1fr; }
+}
+.local-recipe-items {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.compact-title {
+  margin-bottom: 0;
+}
+
+.local-recipe-item-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 480px) {
+  .local-recipe-item-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* v0.9.8 Android status bar guard and keyboard-safe catalog search */
+:root {
+  --statusbar-guard: max(env(safe-area-inset-top), 40px);
+  --statusbar-gap: 12px;
+  --statusbar-solid: color-mix(in srgb, var(--surface-dim) 78%, #061a0d);
+  --statusbar-glass: color-mix(in srgb, var(--surface-dim) 82%, transparent);
+}
+html {
+  scroll-padding-top: calc(var(--statusbar-guard) + var(--statusbar-gap) + 18px);
+}
+.app-shell {
+  padding-top: calc(var(--statusbar-guard) + var(--statusbar-gap)) !important;
+}
+.app-shell::before {
+  height: calc(var(--statusbar-guard) + 10px) !important;
+  z-index: 40 !important;
+  background: linear-gradient(180deg, var(--statusbar-solid), var(--statusbar-glass) 72%, transparent) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(1.12);
+  backdrop-filter: blur(14px) saturate(1.12);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--outline-variant) 28%, transparent);
+}
+.app-shell.page-scrolled::before,
+.keyboard-open .app-shell::before {
+  background: linear-gradient(180deg, var(--statusbar-solid), color-mix(in srgb, var(--statusbar-solid) 84%, transparent)) !important;
+}
+.catalog-search-card {
+  top: calc(var(--statusbar-guard) + var(--statusbar-gap)) !important;
+  scroll-margin-top: calc(var(--statusbar-guard) + var(--statusbar-gap) + 10px);
+}
+.catalog-search-card .search-input,
+.sticky-picker-search,
+.input:focus,
+textarea:focus,
+select:focus {
+  scroll-margin-top: calc(var(--statusbar-guard) + var(--statusbar-gap) + 18px);
+}
+.catalog-freshness-row {
+  margin: 10px 16px 4px !important;
+  gap: 8px !important;
+}
+.catalog-freshness-row span {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 12px !important;
+}
+.keyboard-open .catalog-search-card {
+  top: calc(var(--statusbar-guard) + var(--statusbar-gap)) !important;
+}
+@media (max-width: 430px) {
+  .catalog-search-card {
+    border-radius: 22px !important;
+  }
+  .catalog-freshness-row span {
+    font-size: .66rem;
+    padding-inline: 10px !important;
+  }
+}
