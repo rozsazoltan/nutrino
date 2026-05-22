@@ -15,6 +15,7 @@ import type {
   RecipeItem,
   UserProfile,
   WeightLog,
+  GitHubCsvSource,
 } from '../types';
 
 const STORAGE_KEY = 'nutrino.mobile.v3.state';
@@ -118,6 +119,7 @@ export function defaultState(): AppState {
     activityLogs: [],
     weightLogs: [],
     catalogAliases: [],
+    githubSources: [],
   };
 }
 
@@ -158,6 +160,7 @@ export function loadState(): AppState {
       activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
       weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
       catalogAliases: Array.isArray(parsed.catalogAliases) ? parsed.catalogAliases : [],
+      githubSources: Array.isArray(parsed.githubSources) ? parsed.githubSources.map(normalizeGitHubSource).filter(Boolean) as GitHubCsvSource[] : [],
     };
   } catch {
     return defaults;
@@ -208,16 +211,36 @@ export function mergeById<T extends { id: string; deleted_at?: number | null }>(
   });
 }
 
+export function normalizeGitHubSource(source: Partial<GitHubCsvSource> | null | undefined): GitHubCsvSource | null {
+  if (!source) return null;
+  const owner = String(source.owner || '').trim();
+  const repo = String(source.repo || '').trim();
+  if (!owner || !repo) return null;
+  return {
+    id: source.id || generateId('github-source'),
+    owner,
+    repo,
+    branch: String(source.branch || 'main').trim() || 'main',
+    path: String(source.path || '').trim(),
+    token: String(source.token || '').trim(),
+    enabled: source.enabled !== false,
+    lastSyncAt: Number(source.lastSyncAt || 0),
+    lastStatus: source.lastStatus,
+  };
+}
+
 export function normalizeFood(food: Food): Food {
   return {
     ...food,
-    brand: food.brand ?? null,
+    brand: food.catalog_kind === 'ingredient' ? null : food.brand ?? null,
+    catalog_kind: food.catalog_kind === 'ingredient' ? 'ingredient' : 'food',
     note: food.note ?? null,
     default_unit: food.default_unit || 'g',
     serving_size_g: food.serving_size_g ?? null,
     sugars_per_100g: food.sugars_per_100g ?? 0,
     fiber_per_100g: food.fiber_per_100g ?? 0,
     salt_per_100g: food.salt_per_100g ?? 0,
+    barcode: food.barcode ?? null,
   };
 }
 
@@ -229,15 +252,54 @@ export interface RecipeFood extends Food {
   recipe_id: string;
 }
 
-export function recipeAsFood(recipe: Recipe, items: RecipeItem[], foods: Food[]): RecipeFood {
-  const totalWeight = items.reduce((sum, item) => sum + Math.max(0, item.amount_g), 0);
+function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[], recipes: Recipe[], allItems: RecipeItem[], visited: Set<string>): RecipeFood {
+  if (visited.has(recipe.id)) {
+    return {
+      id: `recipe:${recipe.id}`,
+      recipe_id: recipe.id,
+      source_id: recipe.source_id,
+      name: recipe.name,
+      brand: 'Recipe',
+      catalog_kind: 'food',
+      note: recipe.note ?? recipe.description ?? null,
+      default_unit: 'g',
+      serving_size_g: null,
+      kcal_per_100g: 0,
+      carbs_per_100g: 0,
+      fat_per_100g: 0,
+      protein_per_100g: 0,
+      sugars_per_100g: 0,
+      fiber_per_100g: 0,
+      salt_per_100g: 0,
+      updated_at: recipe.updated_at,
+      deleted_at: recipe.deleted_at,
+    };
+  }
+
+  visited.add(recipe.id);
+  const ingredientWeight = items.reduce((sum, item) => sum + Math.max(0, item.amount_g), 0);
+  const totalWeight = Number(recipe.total_weight_g || 0) > 0 ? Number(recipe.total_weight_g) : ingredientWeight;
   let kcal = 0;
   let carbs = 0;
   let fat = 0;
   let protein = 0;
 
   for (const item of items) {
-    const food = foods.find((entry) => entry.id === item.food_id);
+    const recipeRef = item.food_id.startsWith('recipe:') ? item.food_id.slice('recipe:'.length) : '';
+    const food = recipeRef
+      ? (() => {
+          const referenced = recipes.find((entry) => entry.id === recipeRef && !entry.deleted_at);
+          if (!referenced) return undefined;
+          return recipeAsFoodInternal(
+            referenced,
+            allItems.filter((entry) => entry.recipe_id === referenced.id && !entry.deleted_at),
+            foods,
+            recipes,
+            allItems,
+            visited,
+          );
+        })()
+      : foods.find((entry) => entry.id === item.food_id && !entry.deleted_at);
     if (!food) continue;
     kcal += food.kcal_per_100g * item.amount_g / 100;
     carbs += food.carbs_per_100g * item.amount_g / 100;
@@ -245,6 +307,7 @@ export function recipeAsFood(recipe: Recipe, items: RecipeItem[], foods: Food[])
     protein += food.protein_per_100g * item.amount_g / 100;
   }
 
+  visited.delete(recipe.id);
   const ratio = totalWeight > 0 ? 100 / totalWeight : 0;
   const serving = recipe.servings_count && recipe.servings_count > 0 && totalWeight > 0
     ? totalWeight / recipe.servings_count
@@ -256,6 +319,7 @@ export function recipeAsFood(recipe: Recipe, items: RecipeItem[], foods: Food[])
     source_id: recipe.source_id,
     name: recipe.name,
     brand: 'Recipe',
+    catalog_kind: 'food',
     note: recipe.note ?? recipe.description ?? null,
     default_unit: serving ? 'serving' : 'g',
     serving_size_g: serving,
@@ -269,6 +333,10 @@ export function recipeAsFood(recipe: Recipe, items: RecipeItem[], foods: Food[])
     updated_at: recipe.updated_at,
     deleted_at: recipe.deleted_at,
   };
+}
+
+export function recipeAsFood(recipe: Recipe, items: RecipeItem[], foods: Food[], recipes: Recipe[] = [], allItems: RecipeItem[] = items): RecipeFood {
+  return recipeAsFoodInternal(recipe, items, foods.map(normalizeFood), recipes, allItems, new Set<string>());
 }
 
 
@@ -308,11 +376,16 @@ export function canonicalizeStateReferences(state: AppState): AppState {
 
   return {
     ...state,
-    recipeItems: state.recipeItems.map((item) => ({
-      ...item,
-      recipe_id: canonicalRecipe(item.recipe_id),
-      food_id: canonicalFood(item.food_id),
-    })),
+    recipeItems: state.recipeItems.map((item) => {
+      const foodId = item.food_id.startsWith('recipe:')
+        ? `recipe:${canonicalRecipe(item.food_id.slice('recipe:'.length))}`
+        : canonicalFood(item.food_id);
+      return {
+        ...item,
+        recipe_id: canonicalRecipe(item.recipe_id),
+        food_id: foodId,
+      };
+    }),
     intakes: state.intakes.map((intake) => {
       if (intake.item_type === 'note') return intake;
       const kind: CatalogKind = intake.item_type === 'recipe' ? 'recipe' : 'food';
@@ -332,6 +405,8 @@ export function catalogItems(state: AppState): Array<Food | RecipeFood> {
     recipe,
     state.recipeItems.filter((item) => item.recipe_id === recipe.id && !item.deleted_at),
     state.foods,
+    state.recipes,
+    state.recipeItems,
   ));
   return [...state.foods.map(normalizeFood), ...recipeFoods].sort((a, b) => a.name.localeCompare(b.name));
 }

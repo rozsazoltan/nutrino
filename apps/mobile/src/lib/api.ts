@@ -1,8 +1,10 @@
-import type { AppState, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult } from '../types';
+import type { AppState, Food, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult } from '../types';
 import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeFood, resolveCatalogId } from './storage';
 
 function apiUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}${path}`;
+  let base = baseUrl.trim().replace(/\/+$/, '');
+  if (base && !/\/api\/v1$/i.test(base)) base = `${base}/api/v1`;
+  return `${base}${path}`;
 }
 
 function authSecret(tokenOrPassword: string): string {
@@ -255,4 +257,151 @@ export async function pushToServer(state: AppState): Promise<{ state: AppState; 
 
 export async function syncWithServer(state: AppState): Promise<{ state: AppState; result: SyncResult }> {
   return pullFromServer(state);
+}
+
+
+function splitCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (quoted && line[i + 1] === '"') { current += '"'; i++; }
+      else quoted = !quoted;
+    } else if (char === ',' && !quoted) {
+      cells.push(current.trim());
+      current = '';
+    } else current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseCsv(text: string): Record<string, string>[] {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (!lines.length) return [];
+  const headers = splitCsvLine(lines[0]).map((header) => header.trim().toLowerCase());
+  return lines.slice(1).map((line) => {
+    const cells = splitCsvLine(line);
+    const row: Record<string, string> = {};
+    headers.forEach((header, index) => { row[header] = cells[index] ?? ''; });
+    return row;
+  });
+}
+
+function num(value: string | undefined, fallback = 0): number {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function githubHeaders(token?: string): Record<string, string> {
+  const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
+  const secret = String(token || '').trim();
+  if (secret) headers.Authorization = `Bearer ${secret}`;
+  return headers;
+}
+
+async function fetchGitHubCsvFiles(source: GitHubCsvSource): Promise<Array<{ path: string; text: string }>> {
+  const branch = source.branch || 'main';
+  const base = `https://api.github.com/repos/${encodeURIComponent(source.owner)}/${encodeURIComponent(source.repo)}/contents`;
+  const startPath = source.path ? `/${source.path.replace(/^\/+|\/+$/g, '').split('/').map(encodeURIComponent).join('/')}` : '';
+  const queue = [`${base}${startPath}?ref=${encodeURIComponent(branch)}`];
+  const files: Array<{ path: string; text: string }> = [];
+  while (queue.length) {
+    const url = queue.shift()!;
+    const response = await fetch(url, { headers: githubHeaders(source.token) });
+    if (!response.ok) throw new Error(`GitHub ${response.status}: ${response.statusText}`);
+    const payload = await response.json();
+    const entries = Array.isArray(payload) ? payload : [payload];
+    for (const item of entries) {
+      if (item.type === 'dir' && item.url) queue.push(`${item.url}?ref=${encodeURIComponent(branch)}`);
+      if (item.type === 'file' && String(item.name || '').toLowerCase().endsWith('.csv') && item.download_url) {
+        const csvResponse = await fetch(item.download_url, { headers: githubHeaders(source.token) });
+        if (csvResponse.ok) files.push({ path: item.path || item.name, text: await csvResponse.text() });
+      }
+    }
+  }
+  return files;
+}
+
+function classifyCsv(path: string, rows: Record<string, string>[]): 'foods' | 'recipes' | 'activities' | null {
+  const headers = Object.keys(rows[0] || {});
+  const name = path.toLowerCase();
+  if (headers.includes('kcal_per_100g') || name.includes('food')) return 'foods';
+  if (headers.includes('ingredients_json') || headers.includes('recipe_id') || name.includes('recipe')) return 'recipes';
+  if (headers.includes('kcal_per_min') || headers.includes('met') || name.includes('activity')) return 'activities';
+  return null;
+}
+
+export async function syncGitHubCsvSources(state: AppState, force = false): Promise<{ state: AppState; imported: number; message: string }> {
+  const now = Date.now();
+  let imported = 0;
+  let next = JSON.parse(JSON.stringify(state)) as AppState;
+  const foodMap = new Map(next.foods.map((food) => [food.id, food]));
+  const recipeMap = new Map(next.recipes.map((recipe) => [recipe.id, recipe]));
+  const activityMap = new Map(next.activities.map((activity) => [activity.id, activity]));
+  const itemMap = new Map(next.recipeItems.map((item) => [item.id, item]));
+
+  for (const source of next.githubSources.filter((entry) => entry.enabled)) {
+    if (!force && source.lastSyncAt && now - source.lastSyncAt < 23 * 60 * 60 * 1000) continue;
+    try {
+      const files = await fetchGitHubCsvFiles(source);
+      for (const file of files) {
+        const rows = parseCsv(file.text);
+        const kind = classifyCsv(file.path, rows);
+        if (!kind) continue;
+        for (const row of rows) {
+          if (kind === 'foods') {
+            const name = row.name || row.title;
+            if (!name) continue;
+            const id = row.id || `github-food-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            foodMap.set(id, normalizeFood({
+              id, source_id: `github:${source.owner}/${source.repo}`, name,
+              brand: row.catalog_kind === 'ingredient' ? null : row.brand || null,
+              catalog_kind: row.catalog_kind === 'ingredient' ? 'ingredient' : 'food',
+              note: row.note || row.description || null,
+              default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
+              kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
+              sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g), barcode: row.barcode || row.ean || row.upc || null,
+              updated_at: now, deleted_at: null,
+            }));
+            imported++;
+          } else if (kind === 'activities') {
+            const name = row.name || row.title;
+            if (!name) continue;
+            const id = row.id || `github-activity-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            activityMap.set(id, { id, source_id: `github:${source.owner}/${source.repo}`, code: row.code || id, name, description: row.description || null, activity_type: row.activity_type || row.type || 'custom', met: num(row.met, 1), kcal_per_min: num(row.kcal_per_min, 0), updated_at: now, deleted_at: null });
+            imported++;
+          } else if (kind === 'recipes') {
+            const name = row.name || row.title;
+            if (!name) continue;
+            const id = row.recipe_id || row.id || `github-recipe-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            recipeMap.set(id, { id, source_id: `github:${source.owner}/${source.repo}`, name, description: row.description || null, note: row.note || null, servings_count: row.servings_count ? num(row.servings_count, 1) : null, total_weight_g: row.total_weight_g ? num(row.total_weight_g, 0) : null, updated_at: now, deleted_at: null });
+            if (row.ingredients_json) {
+              try {
+                const ingredients = JSON.parse(row.ingredients_json) as Array<{ food_id: string; amount_g: number }>;
+                for (const ingredient of ingredients) {
+                  if (!ingredient.food_id || !ingredient.amount_g) continue;
+                  const itemId = `github-recipe-item-${id}-${ingredient.food_id}`;
+                  itemMap.set(itemId, { id: itemId, recipe_id: id, food_id: ingredient.food_id, amount_g: Number(ingredient.amount_g), updated_at: now, deleted_at: null });
+                }
+              } catch { /* ignore invalid recipe row */ }
+            }
+            imported++;
+          }
+        }
+      }
+      source.lastSyncAt = now;
+      source.lastStatus = `Imported ${imported} item(s) from ${files.length} CSV file(s).`;
+    } catch (error) {
+      source.lastStatus = String(error);
+    }
+  }
+
+  next.foods = [...foodMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+  next.recipes = [...recipeMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+  next.activities = [...activityMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+  next.recipeItems = [...itemMap.values()];
+  return { state: next, imported, message: imported ? `GitHub CSV sync imported ${imported} item(s).` : 'No GitHub CSV changes to import.' };
 }

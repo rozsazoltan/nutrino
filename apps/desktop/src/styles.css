@@ -1407,3 +1407,30 @@ body:has(.modal-backdrop) {
     flex-direction: column;
   }
 }
+
+/* v0.7.0 duplicate import/merge and catalog QR sharing */
+.csv-skip-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; border-radius: 999px; padding: 0 12px; background: var(--surface-muted, rgba(255,255,255,.06)); color: inherit; font-weight: 800; font-size: .82rem; }
+.csv-skip-toggle input { width: 18px; height: 18px; accent-color: #21c45d; }
+.qr-modal { max-width: 420px; }
+.qr-preview { display: grid; place-items: center; padding: 18px; border-radius: 24px; background: #fff; }
+.qr-preview svg { width: min(100%, 260px); height: auto; }
+
+/* v0.8.0 catalog freshness and recipe ingredient search */
+.catalog-freshness-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+.catalog-freshness-row span {
+  border: 1px solid color-mix(in srgb, var(--border, #d4d4d4) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--secondary-container, #dcfce7) 24%, var(--surface, #fff));
+  color: var(--muted, #64748b);
+  font-size: .75rem;
+  font-weight: 800;
+  padding: .28rem .6rem;
+}
+.recipe-ingredient-picker {
+  display: grid;
+  gap: .5rem;
+}

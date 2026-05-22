@@ -25,21 +25,21 @@ export const commands = {
   deleteFood: (foodId: string) => invoke<void>('delete_food', { foodId }),
   exportFoodsCsv: () => invoke<string>('export_foods_csv'),
   previewCsv: (csvText: string) => invoke<ImportPreview>('import_foods_preview', { csvText }),
-  commitCsv: (csvText: string) => invoke<ImportCommitResult>('import_foods_commit', { csvText }),
+  commitCsv: (csvText: string, skipDuplicates = true) => invoke<ImportCommitResult>('import_foods_commit', { csvText, skipDuplicates }),
 
   listRecipes: () => invoke<RecipeDetail[]>('list_recipes'),
   saveRecipe: (input: RecipeInput) => invoke<RecipeDetail>('save_recipe', { input }),
   deleteRecipe: (recipeId: string) => invoke<void>('delete_recipe', { recipeId }),
 
   exportRecipesCsv: () => invoke<string>('export_recipes_csv'),
-  importRecipesCsv: (csvText: string) => invoke<ImportCommitResult>('import_recipes_csv', { csvText }),
+  importRecipesCsv: (csvText: string, skipDuplicates = true) => invoke<ImportCommitResult>('import_recipes_csv', { csvText, skipDuplicates }),
 
   listActivities: () => invoke<ActivityDefinition[]>('list_activities'),
   saveActivity: (input: ActivityInput) => invoke<ActivityDefinition>('save_activity', { input }),
   deleteActivity: (activityId: string) => invoke<void>('delete_activity', { activityId }),
 
   exportActivitiesCsv: () => invoke<string>('export_activities_csv'),
-  importActivitiesCsv: (csvText: string) => invoke<ImportCommitResult>('import_activities_csv', { csvText }),
+  importActivitiesCsv: (csvText: string, skipDuplicates = true) => invoke<ImportCommitResult>('import_activities_csv', { csvText, skipDuplicates }),
 
   getDesktopSettings: () => invoke<DesktopSettings>('get_desktop_settings'),
   saveDesktopSettings: (settings: DesktopSettings) => invoke<DesktopSettings>('save_desktop_settings', { settings }),

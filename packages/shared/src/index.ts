@@ -9,6 +9,7 @@ export type NutrinoFood = {
   source_id?: string;
   name: string;
   brand?: string;
+  catalog_kind?: 'food' | 'ingredient';
   note?: string | null;
   serving_size_g?: number;
   kcal_per_100g: number;
@@ -28,7 +29,8 @@ export type NutrinoRecipe = {
   name: string;
   description?: string;
   note?: string | null;
-  servings_count: number;
+  total_weight_g?: number | null;
+  servings_count?: number | null;
   ingredients: NutrinoRecipeIngredient[];
 };
 

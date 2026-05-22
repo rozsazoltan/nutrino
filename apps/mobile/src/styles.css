@@ -1272,3 +1272,132 @@ body:has(.onboarding-screen) {
   .search-scope-select { max-width: 56%; }
   .meal-entry-toggle .note-toggle-button { min-width: 88px; }
 }
+
+/* v0.7.0 GitHub CSV sources, scanner, sticky picker search and restored exact-match emphasis */
+.github-sync-card { display: grid; gap: 12px; }
+.github-source-form { display: grid; gap: 9px; padding: 0 16px; }
+.github-source-list { display: grid; gap: 10px; padding: 0 16px 4px; }
+.github-source-row { display: grid; gap: 5px; border-radius: 18px; background: var(--surface-container); border: 1px solid color-mix(in srgb, var(--outline-variant) 70%, transparent); padding: 12px; }
+.github-source-row label { display: flex; align-items: center; gap: 8px; }
+.github-source-row small { color: var(--on-surface-variant); line-height: 1.35; }
+.sticky-picker-search { position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding-top: 2px; background: linear-gradient(180deg, var(--surface) 0 78%, color-mix(in srgb, var(--surface) 0%, transparent)); }
+.sticky-picker-search .input { margin: 0; }
+.scan-button { width: 44px; height: 44px; border-radius: 16px; display: grid; place-items: center; background: var(--primary-container); color: var(--on-primary-container); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 20%, transparent); }
+.scan-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; }
+.scanner-dialog { display: grid; gap: 12px; }
+.scanner-video { width: 100%; min-height: 220px; border-radius: 20px; background: #050805; object-fit: cover; }
+.segmented-pill-toggle { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; padding: 4px; border-radius: 24px; background: var(--surface-container); border: 1px solid color-mix(in srgb, var(--outline-variant) 68%, transparent); }
+.segmented-pill-toggle button { border: 0 !important; min-height: 42px; background: transparent !important; }
+.segmented-pill-toggle button.active { background: var(--primary) !important; color: var(--on-primary) !important; box-shadow: 0 8px 18px color-mix(in srgb, var(--primary) 24%, transparent); }
+.picker-group:not(.suggested-picker-group) .picker-group-title,
+.search-result-heading:not(.suggested) { color: var(--primary); }
+.picker-group:not(.suggested-picker-group) .picker-row { border: 1px solid color-mix(in srgb, var(--primary) 12%, transparent); }
+.picker-group:not(.suggested-picker-group) .picker-row:active { background: color-mix(in srgb, var(--primary-container) 58%, var(--surface-container)); }
+.catalog-search-card { position: sticky; top: calc(var(--statusbar-guard) + 6px); z-index: 8; box-shadow: 0 10px 24px color-mix(in srgb, #000 9%, transparent); }
+.catalog-picker-zone { overflow: visible; }
+.sync-dot.available { background: var(--primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 16%, transparent); }
+
+
+/* v0.7.1 compact recipe tab actions, neutral note form and safer sticky search */
+.catalog-search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 4px;
+}
+.catalog-search-header h2 {
+  margin: 0;
+  min-width: 0;
+  font-size: 1.06rem;
+}
+.local-catalog-actions-collapsible {
+  flex: 0 0 auto;
+  position: relative;
+}
+.local-catalog-actions-collapsible summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: var(--surface-container-high);
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
+  font-size: .76rem;
+  font-weight: 950;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.local-catalog-actions-collapsible summary::-webkit-details-marker { display: none; }
+.local-catalog-actions-collapsible[open] summary {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+.local-catalog-actions-collapsible .local-catalog-actions {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 20;
+  display: grid;
+  grid-template-columns: 1fr;
+  min-width: min(78vw, 260px);
+  padding: 8px;
+  border-radius: 18px;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
+  box-shadow: 0 16px 40px color-mix(in srgb, #000 20%, transparent);
+}
+.local-catalog-actions-collapsible .outlined-button {
+  justify-content: flex-start;
+  min-height: 38px;
+  font-size: .82rem;
+}
+.note-entry-fields {
+  background: var(--surface-container) !important;
+  border-color: color-mix(in srgb, var(--outline-variant) 72%, transparent) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface) 42%, transparent);
+}
+.sticky-picker-search {
+  top: 8px;
+  padding-top: 8px;
+  padding-bottom: 6px;
+  border-radius: 18px 18px 0 0;
+  background: linear-gradient(180deg, var(--surface) 0 84%, color-mix(in srgb, var(--surface) 0%, transparent));
+}
+.catalog-search-card {
+  top: calc(var(--statusbar-guard) + 10px) !important;
+}
+.catalog-search-card .helper {
+  display: none;
+}
+@media (max-width: 430px) {
+  .catalog-search-header {
+    align-items: start;
+  }
+  .local-catalog-actions-collapsible summary {
+    max-width: 44vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* v0.8.0 catalog freshness chips */
+.catalog-freshness-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.catalog-freshness-row span {
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 70%, transparent);
+  border-radius: 999px;
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  font-size: .68rem;
+  font-weight: 800;
+  letter-spacing: .01em;
+  padding: 4px 8px;
+}

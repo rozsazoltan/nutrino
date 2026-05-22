@@ -15,7 +15,7 @@ const androidAppGradlePaths = [
   path.join(androidDir, 'app', 'build.gradle.kts'),
   path.join(androidDir, 'app', 'build.gradle'),
 ];
-const NATIVE_STATE_VERSION = 4;
+const NATIVE_STATE_VERSION = 5;
 const forceNativeClean = process.argv.includes('--force-native-clean')
   || process.env.NUTRINO_FORCE_ANDROID_NATIVE_CLEAN === '1';
 
@@ -94,6 +94,9 @@ function patchManifest(config) {
 
   if (!xml.includes('android.permission.INTERNET')) {
     xml = xml.replace(/<manifest([^>]*)>/, '<manifest$1>\n    <uses-permission android:name="android.permission.INTERNET" />');
+  }
+  if (!xml.includes('android.permission.CAMERA')) {
+    xml = xml.replace(/<manifest([^>]*)>/, '<manifest$1>\n    <uses-permission android:name="android.permission.CAMERA" />');
   }
   if (xml.includes('<application') && !xml.includes('android:usesCleartextTraffic=')) {
     xml = xml.replace(/<application\b/, '<application android:usesCleartextTraffic="true"');
