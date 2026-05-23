@@ -2,12 +2,12 @@ use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
-    extract::{Query, State as AxumState},
+    extract::{ConnectInfo, Query, State as AxumState},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -24,16 +24,19 @@ use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 const APP_NAME: &str = "Nutrino Desktop";
-const APP_VERSION: &str = "0.10.3";
+const APP_VERSION: &str = "0.11.9";
 
 struct ServerRuntime {
     port: u16,
     shutdown: Option<oneshot::Sender<()>>,
 }
 
+type ConnectedDeviceRegistry = Arc<Mutex<HashMap<String, ConnectedDevice>>>;
+
 struct AppState {
     db_path: PathBuf,
     server: Mutex<Option<ServerRuntime>>,
+    connected_devices: ConnectedDeviceRegistry,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,7 +66,30 @@ struct ServerStatus {
     auth_required: bool,
     dev_mode: bool,
     catalog_revision: i64,
+    connected_devices: usize,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ConnectedDevice {
+    id: String,
+    display_name: String,
+    device_name: Option<String>,
+    manufacturer: Option<String>,
+    model: Option<String>,
+    platform: Option<String>,
+    os_version: Option<String>,
+    app_channel: Option<String>,
+    app_version: Option<String>,
+    ip_address: String,
+    user_agent: Option<String>,
+    first_seen: i64,
+    last_seen: i64,
+    request_count: u64,
+    last_path: String,
+}
+
+const CONNECTED_DEVICE_ACTIVE_MS: i64 = 5 * 60 * 1000;
+const CONNECTED_DEVICE_KEEP_MS: i64 = 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HealthResponse {
@@ -76,6 +102,7 @@ struct HealthResponse {
     app_channel: String,
     dev_mode: bool,
     catalog_revision: i64,
+    connected_devices: usize,
 }
 
 
@@ -165,6 +192,8 @@ struct Food {
     id: String,
     source_id: String,
     name: String,
+    #[serde(default)]
+    name_i18n: HashMap<String, String>,
     brand: Option<String>,
     note: Option<String>,
     barcode: Option<String>,
@@ -185,6 +214,7 @@ struct Food {
 struct FoodInput {
     id: Option<String>,
     name: String,
+    name_i18n: Option<HashMap<String, String>>,
     brand: Option<String>,
     note: Option<String>,
     barcode: Option<String>,
@@ -205,6 +235,8 @@ struct Ingredient {
     id: String,
     source_id: String,
     name: String,
+    #[serde(default)]
+    name_i18n: HashMap<String, String>,
     note: Option<String>,
     default_unit: String,
     serving_size_g: Option<f64>,
@@ -223,6 +255,7 @@ struct Ingredient {
 struct IngredientInput {
     id: Option<String>,
     name: String,
+    name_i18n: Option<HashMap<String, String>>,
     note: Option<String>,
     default_unit: Option<String>,
     serving_size_g: Option<f64>,
@@ -240,9 +273,14 @@ struct Recipe {
     id: String,
     source_id: String,
     name: String,
+    #[serde(default)]
+    name_i18n: HashMap<String, String>,
     description: Option<String>,
     note: Option<String>,
+    // Legacy DB/export/sync field kept for backward-compatible row mapping.
+    // The UI no longer treats this as fixed finished recipe weight.
     total_weight_g: Option<f64>,
+    extra_kcal: Option<f64>,
     servings_count: Option<f64>,
     updated_at: i64,
     deleted_at: Option<i64>,
@@ -298,9 +336,10 @@ struct RecipeInputItem {
 struct RecipeInput {
     id: Option<String>,
     name: String,
+    name_i18n: Option<HashMap<String, String>>,
     description: Option<String>,
     note: Option<String>,
-    total_weight_g: Option<f64>,
+    extra_kcal: Option<f64>,
     servings_count: Option<f64>,
     items: Vec<RecipeInputItem>,
 }
@@ -333,6 +372,8 @@ struct ActivityDefinition {
     id: String,
     code: String,
     name: String,
+    #[serde(default)]
+    name_i18n: HashMap<String, String>,
     description: Option<String>,
     activity_type: String,
     met: f64,
@@ -346,6 +387,7 @@ struct ActivityInput {
     id: Option<String>,
     code: Option<String>,
     name: String,
+    name_i18n: Option<HashMap<String, String>>,
     description: Option<String>,
     activity_type: Option<String>,
     met: f64,
@@ -381,6 +423,15 @@ struct SyncPullQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkippedSyncItem {
+    kind: String,
+    id: String,
+    label: String,
+    skipped_at: i64,
+    item: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SyncPushRequest {
     source_id: Option<String>,
     device_name: Option<String>,
@@ -393,6 +444,8 @@ struct SyncPushRequest {
     intakes: Vec<IntakePayload>,
     weight_logs: Vec<WeightLogPayload>,
     activity_logs: Vec<ActivityLogPayload>,
+    #[serde(default)]
+    skipped_items: Vec<SkippedSyncItem>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -430,6 +483,7 @@ struct ApiState {
     source_id: String,
     auth_required: bool,
     dev_mode: bool,
+    connected_devices: ConnectedDeviceRegistry,
 }
 
 pub fn run() {
@@ -442,6 +496,7 @@ pub fn run() {
             app.manage(AppState {
                 db_path: db_path.clone(),
                 server: Mutex::new(None),
+                connected_devices: Arc::new(Mutex::new(HashMap::new())),
             });
 
             if let Some(window) = app.get_webview_window("main") {
@@ -531,6 +586,13 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.app_handle().state::<AppState>();
+                if read_bool_setting(&state.db_path, "remember_window_state", false).unwrap_or(false) {
+                    let position = window.outer_position().ok();
+                    let size = window.outer_size().ok();
+                    if let Err(err) = persist_window_geometry(&state.db_path, position, size, false) {
+                        eprintln!("Failed to save nutrino desktop window geometry on close: {err}");
+                    }
+                }
                 let run_in_background = read_bool_setting(&state.db_path, "run_in_background", false).unwrap_or(false);
                 let close_to_tray = read_bool_setting(&state.db_path, "close_to_tray", false).unwrap_or(false);
                 if run_in_background && close_to_tray {
@@ -574,6 +636,7 @@ pub fn run() {
             update_sync_inbox_payload,
             merge_catalog_item,
             list_catalog_duplicate_suggestions,
+            list_connected_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running nutrino Desktop");
@@ -592,6 +655,54 @@ fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
 }
 
+const SUPPORTED_I18N_LANGUAGES: &[&str] = &[
+    "hu", "en", "de", "fr", "ru", "uk", "zh", "sk", "ro", "cs", "sl", "hr", "pl", "es", "pt",
+];
+
+fn clean_name_i18n(input: Option<HashMap<String, String>>) -> HashMap<String, String> {
+    input
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(language, value)| {
+            let code = language.trim().to_lowercase();
+            let name = value.trim().to_string();
+            if code.is_empty() || name.is_empty() {
+                return None;
+            }
+            Some((code, name))
+        })
+        .collect()
+}
+
+fn name_i18n_to_json(map: &HashMap<String, String>) -> String {
+    serde_json::to_string(map).unwrap_or_else(|_| "{}".into())
+}
+
+fn name_i18n_from_json(raw: Option<String>) -> HashMap<String, String> {
+    clean_name_i18n(raw.and_then(|value| serde_json::from_str::<HashMap<String, String>>(&value).ok()))
+}
+
+fn parse_name_i18n_csv(headers: &csv::StringRecord, record: &csv::StringRecord) -> HashMap<String, String> {
+    let mut values = HashMap::new();
+    if let Some(json) = get_csv(headers, record, "name_i18n_json")
+        .or_else(|| get_csv(headers, record, "name_i18n"))
+        .filter(|value| !value.trim().is_empty())
+    {
+        if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&json) {
+            values.extend(parsed);
+        }
+    }
+
+    for language in SUPPORTED_I18N_LANGUAGES {
+        let column = format!("name_{language}");
+        if let Some(value) = get_csv(headers, record, &column).filter(|value| !value.trim().is_empty()) {
+            values.insert((*language).to_string(), value);
+        }
+    }
+
+    clean_name_i18n(Some(values))
+}
+
 fn init_database(path: &Path) -> Result<()> {
     let conn = Connection::open(path)?;
     conn.execute_batch(
@@ -608,6 +719,7 @@ fn init_database(path: &Path) -> Result<()> {
             id TEXT PRIMARY KEY,
             source_id TEXT NOT NULL,
             name TEXT NOT NULL,
+            name_i18n TEXT NOT NULL DEFAULT '{}',
             brand TEXT,
             catalog_kind TEXT NOT NULL DEFAULT 'food',
             note TEXT,
@@ -629,6 +741,7 @@ fn init_database(path: &Path) -> Result<()> {
             id TEXT PRIMARY KEY,
             source_id TEXT NOT NULL,
             name TEXT NOT NULL,
+            name_i18n TEXT NOT NULL DEFAULT '{}',
             note TEXT,
             default_unit TEXT NOT NULL DEFAULT 'g',
             serving_size_g REAL,
@@ -647,9 +760,11 @@ fn init_database(path: &Path) -> Result<()> {
             id TEXT PRIMARY KEY,
             source_id TEXT NOT NULL,
             name TEXT NOT NULL,
+            name_i18n TEXT NOT NULL DEFAULT '{}',
             description TEXT,
             note TEXT,
             total_weight_g REAL,
+            extra_kcal REAL NOT NULL DEFAULT 0,
             servings_count REAL,
             updated_at INTEGER NOT NULL,
             deleted_at INTEGER
@@ -695,6 +810,7 @@ fn init_database(path: &Path) -> Result<()> {
             id TEXT PRIMARY KEY,
             code TEXT NOT NULL,
             name TEXT NOT NULL,
+            name_i18n TEXT NOT NULL DEFAULT '{}',
             description TEXT,
             activity_type TEXT NOT NULL,
             met REAL NOT NULL,
@@ -744,11 +860,16 @@ fn init_database(path: &Path) -> Result<()> {
     let _ = conn.execute("ALTER TABLE foods ADD COLUMN catalog_kind TEXT NOT NULL DEFAULT 'food'", []);
     let _ = conn.execute("ALTER TABLE foods ADD COLUMN note TEXT", []);
     let _ = conn.execute("ALTER TABLE foods ADD COLUMN barcode TEXT", []);
+    let _ = conn.execute("ALTER TABLE foods ADD COLUMN name_i18n TEXT NOT NULL DEFAULT '{}'", []);
+    let _ = conn.execute("ALTER TABLE ingredients ADD COLUMN name_i18n TEXT NOT NULL DEFAULT '{}'", []);
     migrate_catalog_kind_ingredients(&conn)?;
     let _ = conn.execute("ALTER TABLE recipes ADD COLUMN note TEXT", []);
+    let _ = conn.execute("ALTER TABLE recipes ADD COLUMN name_i18n TEXT NOT NULL DEFAULT '{}'", []);
+    let _ = conn.execute("ALTER TABLE recipes ADD COLUMN extra_kcal REAL NOT NULL DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE intakes ADD COLUMN item_type TEXT NOT NULL DEFAULT 'food'", []);
     let _ = conn.execute("ALTER TABLE intakes ADD COLUMN note_title TEXT", []);
     let _ = conn.execute("ALTER TABLE intakes ADD COLUMN note_description TEXT", []);
+    let _ = conn.execute("ALTER TABLE activities ADD COLUMN name_i18n TEXT NOT NULL DEFAULT '{}'", []);
     retire_builtin_sample_catalog(&conn)?;
     seed_default_activities(&conn)?;
 
@@ -769,11 +890,11 @@ fn migrate_catalog_kind_ingredients(conn: &Connection) -> Result<()> {
     conn.execute(
         r#"
         INSERT INTO ingredients (
-            id, source_id, name, note, default_unit, serving_size_g,
+            id, source_id, name, name_i18n, note, default_unit, serving_size_g,
             kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
             sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
         )
-        SELECT id, source_id, name, note, default_unit, serving_size_g,
+        SELECT id, source_id, name, name_i18n, note, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
                sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
         FROM foods
@@ -781,6 +902,7 @@ fn migrate_catalog_kind_ingredients(conn: &Connection) -> Result<()> {
         ON CONFLICT(id) DO UPDATE SET
             source_id = excluded.source_id,
             name = excluded.name,
+            name_i18n = excluded.name_i18n,
             note = excluded.note,
             default_unit = excluded.default_unit,
             serving_size_g = excluded.serving_size_g,
@@ -1003,6 +1125,7 @@ async fn start_api_server_internal(port: u16, state: &AppState) -> Result<Server
         source_id,
         auth_required,
         dev_mode: dev_mode(),
+        connected_devices: state.connected_devices.clone(),
     };
 
     let router = Router::new()
@@ -1022,7 +1145,7 @@ async fn start_api_server_internal(port: u16, state: &AppState) -> Result<Server
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     tauri::async_runtime::spawn(async move {
-        let result = axum::serve(listener, router)
+        let result = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
             .with_graceful_shutdown(async move { let _ = shutdown_rx.await; })
             .await;
         if let Err(err) = result { eprintln!("nutrino API server stopped with error: {err}"); }
@@ -1108,13 +1231,14 @@ fn export_ingredients_csv(state: State<'_, AppState>) -> Result<String, String> 
     let ingredients = db_list_active_ingredients(&state.db_path).map_err(stringify_error)?;
     let mut writer = csv::Writer::from_writer(Vec::new());
     writer.write_record([
-        "id", "name", "note", "default_unit", "serving_size_g", "kcal_per_100g", "carbs_per_100g",
+        "id", "name", "name_i18n_json", "note", "default_unit", "serving_size_g", "kcal_per_100g", "carbs_per_100g",
         "fat_per_100g", "protein_per_100g", "sugars_per_100g", "fiber_per_100g", "salt_per_100g",
     ]).map_err(stringify_error)?;
     for ingredient in ingredients {
         writer.write_record([
             ingredient.id,
             ingredient.name,
+            name_i18n_to_json(&ingredient.name_i18n),
             ingredient.note.unwrap_or_default(),
             ingredient.default_unit,
             ingredient.serving_size_g.map(|v| v.to_string()).unwrap_or_default(),
@@ -1150,6 +1274,7 @@ fn import_ingredients_csv(state: State<'_, AppState>, csv_text: String, skip_dup
             id: get_csv(&headers, &record, "id").filter(|value| !value.trim().is_empty()).unwrap_or_else(|| format!("ingredient-{}", Uuid::new_v4())),
             source_id: source_id.clone(),
             name,
+            name_i18n: parse_name_i18n_csv(&headers, &record),
             note: get_csv(&headers, &record, "note").filter(|value| !value.trim().is_empty()),
             default_unit: get_csv(&headers, &record, "default_unit").unwrap_or_else(|| "g".into()),
             serving_size_g: parse_optional_number(&headers, &record, "serving_size_g", &mut row_errors),
@@ -1178,6 +1303,7 @@ fn export_foods_csv(state: State<'_, AppState>) -> Result<String, String> {
         .write_record([
             "id",
             "name",
+            "name_i18n_json",
             "brand",
             "note",
             "barcode",
@@ -1198,6 +1324,7 @@ fn export_foods_csv(state: State<'_, AppState>) -> Result<String, String> {
             .write_record([
                 food.id,
                 food.name,
+                name_i18n_to_json(&food.name_i18n),
                 food.brand.unwrap_or_default(),
                 food.note.unwrap_or_default(),
                 food.barcode.unwrap_or_default(),
@@ -1277,6 +1404,7 @@ fn save_recipe(state: State<'_, AppState>, input: RecipeInput) -> Result<RecipeD
     if input.items.is_empty() {
         return Err("add at least one ingredient".into());
     }
+    let name_i18n = clean_name_i18n(input.name_i18n);
 
     let mut ingredient_weight = 0.0;
     for item in &input.items {
@@ -1289,19 +1417,21 @@ fn save_recipe(state: State<'_, AppState>, input: RecipeInput) -> Result<RecipeD
         ingredient_weight += item.amount_g;
     }
 
-    let total_weight = input.total_weight_g.filter(|value| value.is_finite() && *value > 0.0).unwrap_or(ingredient_weight);
+    let _ingredient_weight = ingredient_weight;
 
     let tx = conn.transaction().map_err(stringify_error)?;
     tx.execute(
         r#"
-        INSERT INTO recipes (id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)
+        INSERT INTO recipes (id, source_id, name, name_i18n, description, note, total_weight_g, extra_kcal, servings_count, updated_at, deleted_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)
         ON CONFLICT(id) DO UPDATE SET
             source_id = excluded.source_id,
             name = excluded.name,
+            name_i18n = excluded.name_i18n,
             description = excluded.description,
             note = excluded.note,
             total_weight_g = excluded.total_weight_g,
+            extra_kcal = excluded.extra_kcal,
             servings_count = excluded.servings_count,
             updated_at = excluded.updated_at,
             deleted_at = NULL
@@ -1310,10 +1440,12 @@ fn save_recipe(state: State<'_, AppState>, input: RecipeInput) -> Result<RecipeD
             recipe_id,
             source_id,
             name,
+            name_i18n_to_json(&name_i18n),
             input.description.filter(|value| !value.trim().is_empty()),
             input.note.filter(|value| !value.trim().is_empty()),
-            total_weight,
-            input.servings_count,
+            Option::<f64>::None,
+            input.extra_kcal.filter(|value| value.is_finite()).unwrap_or(0.0),
+            input.servings_count.filter(|value| value.is_finite() && *value > 0.0),
             now
         ],
     )
@@ -1393,21 +1525,40 @@ fn save_desktop_settings(state: State<'_, AppState>, settings: DesktopSettings) 
     read_desktop_settings(&state.db_path).map_err(stringify_error)
 }
 
-#[tauri::command]
-fn remember_current_window(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<DesktopSettings, String> {
-    let Some(window) = app.get_webview_window("main") else { return Err("main window not found".into()); };
-    let mut settings = read_desktop_settings(&state.db_path).map_err(stringify_error)?;
-    if let Ok(pos) = window.outer_position() {
+fn persist_window_geometry(
+    path: &Path,
+    position: Option<PhysicalPosition<i32>>,
+    size: Option<PhysicalSize<u32>>,
+    enable_remember_window_state: bool,
+) -> Result<DesktopSettings> {
+    let mut settings = read_desktop_settings(path)?;
+    if enable_remember_window_state {
+        settings.remember_window_state = true;
+    }
+    if !settings.remember_window_state {
+        return Ok(settings);
+    }
+    if let Some(pos) = position {
         settings.window_x = Some(pos.x);
         settings.window_y = Some(pos.y);
     }
-    if let Ok(size) = window.outer_size() {
+    if let Some(size) = size {
         settings.window_width = Some(size.width);
         settings.window_height = Some(size.height);
     }
-    settings.remember_window_state = true;
-    write_desktop_settings(&state.db_path, &settings).map_err(stringify_error)?;
+    let conn = open_conn(path)?;
+    set_setting(&conn, "remember_window_state", &settings.remember_window_state.to_string())?;
+    if let Some(value) = settings.window_x { set_setting(&conn, "window_x", &value.to_string())?; }
+    if let Some(value) = settings.window_y { set_setting(&conn, "window_y", &value.to_string())?; }
+    if let Some(value) = settings.window_width { set_setting(&conn, "window_width", &value.to_string())?; }
+    if let Some(value) = settings.window_height { set_setting(&conn, "window_height", &value.to_string())?; }
     Ok(settings)
+}
+
+#[tauri::command]
+fn remember_current_window(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<DesktopSettings, String> {
+    let Some(window) = app.get_webview_window("main") else { return Err("main window not found".into()); };
+    persist_window_geometry(&state.db_path, window.outer_position().ok(), window.outer_size().ok(), true).map_err(stringify_error)
 }
 
 
@@ -1433,7 +1584,8 @@ fn accept_sync_inbox(state: State<'_, AppState>, entry_id: String) -> Result<Syn
         params![&entry_id],
         |row| row.get(0),
     ).map_err(stringify_error)?;
-    let payload: SyncPushRequest = serde_json::from_str(&payload_json).map_err(stringify_error)?;
+    let mut payload: SyncPushRequest = serde_json::from_str(&payload_json).map_err(stringify_error)?;
+    strip_private_mobile_diary(&mut payload);
     let result = commit_sync_payload(&conn, &payload).map_err(stringify_error)?;
     conn.execute(
         "UPDATE sync_inbox SET status = 'accepted', applied_at = ?1 WHERE id = ?2",
@@ -1455,7 +1607,8 @@ fn reject_sync_inbox(state: State<'_, AppState>, entry_id: String) -> Result<(),
 #[tauri::command]
 fn update_sync_inbox_payload(state: State<'_, AppState>, entry_id: String, payload_json: String) -> Result<SyncInboxEntry, String> {
     let conn = open_conn(&state.db_path).map_err(stringify_error)?;
-    let payload: SyncPushRequest = serde_json::from_str(&payload_json).map_err(stringify_error)?;
+    let mut payload: SyncPushRequest = serde_json::from_str(&payload_json).map_err(stringify_error)?;
+    strip_private_mobile_diary(&mut payload);
     let normalized_payload_json = serde_json::to_string_pretty(&payload).map_err(stringify_error)?;
     let summary = summarize_sync_payload(&payload);
     let summary_json = serde_json::to_string(&summary).map_err(stringify_error)?;
@@ -1486,9 +1639,9 @@ fn list_catalog_duplicate_suggestions(state: State<'_, AppState>) -> Result<Vec<
 fn export_activities_csv(state: State<'_, AppState>) -> Result<String, String> {
     let activities = db_list_active_activities(&state.db_path).map_err(stringify_error)?;
     let mut writer = csv::Writer::from_writer(Vec::new());
-    writer.write_record(["id", "code", "name", "description", "activity_type", "met", "kcal_per_min"]).map_err(stringify_error)?;
+    writer.write_record(["id", "code", "name", "name_i18n_json", "description", "activity_type", "met", "kcal_per_min"]).map_err(stringify_error)?;
     for activity in activities {
-        writer.write_record([activity.id, activity.code, activity.name, activity.description.unwrap_or_default(), activity.activity_type, activity.met.to_string(), activity.kcal_per_min.to_string()]).map_err(stringify_error)?;
+        writer.write_record([activity.id, activity.code, activity.name, name_i18n_to_json(&activity.name_i18n), activity.description.unwrap_or_default(), activity.activity_type, activity.met.to_string(), activity.kcal_per_min.to_string()]).map_err(stringify_error)?;
     }
     let bytes = writer.into_inner().map_err(stringify_error)?;
     String::from_utf8(bytes).map_err(stringify_error)
@@ -1515,6 +1668,7 @@ fn import_activities_csv(state: State<'_, AppState>, csv_text: String, skip_dupl
             id: get_csv(&headers, &record, "id").filter(|v| !v.trim().is_empty()).unwrap_or_else(|| format!("activity-{}", Uuid::new_v4())),
             code: get_csv(&headers, &record, "code").filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "custom".into()),
             name,
+            name_i18n: parse_name_i18n_csv(&headers, &record),
             description: get_csv(&headers, &record, "description").filter(|v| !v.trim().is_empty()),
             activity_type: get_csv(&headers, &record, "activity_type").filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "custom".into()),
             met,
@@ -1532,7 +1686,7 @@ fn import_activities_csv(state: State<'_, AppState>, csv_text: String, skip_dupl
 fn export_recipes_csv(state: State<'_, AppState>) -> Result<String, String> {
     let recipes = db_list_recipe_details(&state.db_path).map_err(stringify_error)?;
     let mut writer = csv::Writer::from_writer(Vec::new());
-    writer.write_record(["recipe_id", "name", "description", "note", "total_weight_g", "servings_count", "ingredients_json"]).map_err(stringify_error)?;
+    writer.write_record(["recipe_id", "name", "name_i18n_json", "description", "note", "extra_kcal", "servings_count", "ingredients_json"]).map_err(stringify_error)?;
     for detail in recipes {
         let ingredients: Vec<RecipeInputItem> = detail.items
             .iter()
@@ -1542,9 +1696,10 @@ fn export_recipes_csv(state: State<'_, AppState>) -> Result<String, String> {
         writer.write_record([
             detail.recipe.id.clone(),
             detail.recipe.name.clone(),
+            name_i18n_to_json(&detail.recipe.name_i18n),
             detail.recipe.description.clone().unwrap_or_default(),
             detail.recipe.note.clone().unwrap_or_default(),
-            detail.recipe.total_weight_g.map(|v| v.to_string()).unwrap_or_default(),
+            detail.recipe.extra_kcal.map(|v| v.to_string()).unwrap_or_default(),
             detail.recipe.servings_count.map(|v| v.to_string()).unwrap_or_default(),
             ingredients_json,
         ]).map_err(stringify_error)?;
@@ -1557,7 +1712,7 @@ fn export_recipes_csv(state: State<'_, AppState>) -> Result<String, String> {
 fn import_recipes_csv(state: State<'_, AppState>, csv_text: String, skip_duplicates: Option<bool>) -> Result<ImportCommitResult, String> {
     use std::collections::BTreeMap;
     #[derive(Default)]
-    struct Group { id: String, name: String, description: Option<String>, note: Option<String>, total_weight_g: Option<f64>, servings_count: Option<f64>, items: Vec<RecipeInputItem> }
+    struct Group { id: String, name: String, name_i18n: HashMap<String, String>, description: Option<String>, note: Option<String>, extra_kcal: Option<f64>, servings_count: Option<f64>, items: Vec<RecipeInputItem> }
 
     let conn = open_conn(&state.db_path).map_err(stringify_error)?;
     let source_id = setting(&conn, "source_id").map_err(stringify_error)?;
@@ -1573,7 +1728,9 @@ fn import_recipes_csv(state: State<'_, AppState>, csv_text: String, skip_duplica
         let mut row_errors = vec![];
         let name = get_csv(&headers, &record, "name").unwrap_or_default();
         if name.trim().is_empty() { row_errors.push("name is required".into()); }
-        let total_weight_g = parse_optional_number(&headers, &record, "total_weight_g", &mut row_errors);
+        let extra_kcal = parse_optional_number(&headers, &record, "extra_kcal", &mut row_errors);
+        let legacy_total_weight_g = parse_optional_number(&headers, &record, "total_weight_g", &mut row_errors);
+        let _ = legacy_total_weight_g;
         let servings_count = parse_optional_number(&headers, &record, "servings_count", &mut row_errors);
         let recipe_id = get_csv(&headers, &record, "recipe_id").filter(|v| !v.trim().is_empty()).unwrap_or_else(|| format!("recipe-import-{}", name.to_lowercase().replace(' ', "-")));
         let mut items: Vec<RecipeInputItem> = vec![];
@@ -1597,9 +1754,10 @@ fn import_recipes_csv(state: State<'_, AppState>, csv_text: String, skip_duplica
         let group = groups.entry(key).or_insert_with(|| Group {
             id: recipe_id,
             name: name.clone(),
+            name_i18n: parse_name_i18n_csv(&headers, &record),
             description: get_csv(&headers, &record, "description").filter(|v| !v.trim().is_empty()),
             note: get_csv(&headers, &record, "note").filter(|v| !v.trim().is_empty()),
-            total_weight_g,
+            extra_kcal,
             servings_count,
             items: vec![],
         });
@@ -1610,19 +1768,19 @@ fn import_recipes_csv(state: State<'_, AppState>, csv_text: String, skip_duplica
     for (_, group) in groups {
         if group.items.is_empty() { skipped += 1; continue; }
         let now = now_ms();
-        let ingredient_weight: f64 = group.items.iter().map(|i| i.amount_g).sum();
-        let total_weight: f64 = group.total_weight_g.filter(|value| value.is_finite() && *value > 0.0).unwrap_or(ingredient_weight);
+        let _ingredient_weight: f64 = group.items.iter().map(|i| i.amount_g).sum();
+        let extra_kcal = group.extra_kcal.filter(|value| value.is_finite()).unwrap_or(0.0);
         if skip_duplicates.unwrap_or(false) {
-            let incoming = Recipe { id: group.id.clone(), source_id: source_id.clone(), name: group.name.clone(), description: group.description.clone(), note: group.note.clone(), total_weight_g: Some(total_weight), servings_count: group.servings_count, updated_at: now, deleted_at: None };
+            let incoming = Recipe { id: group.id.clone(), source_id: source_id.clone(), name: group.name.clone(), name_i18n: group.name_i18n.clone(), description: group.description.clone(), note: group.note.clone(), total_weight_g: None, extra_kcal: Some(extra_kcal), servings_count: group.servings_count, updated_at: now, deleted_at: None };
             if find_existing_recipe_duplicate(&conn, &incoming).map_err(stringify_error)?.is_some() { skipped += 1; continue; }
         }
         let tx = match conn.unchecked_transaction() { Ok(tx) => tx, Err(err) => { errors.push(err.to_string()); skipped += 1; continue; } };
         let result: Result<()> = (|| {
             tx.execute(
-                r#"INSERT INTO recipes (id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)
-                ON CONFLICT(id) DO UPDATE SET source_id = excluded.source_id, name = excluded.name, description = excluded.description, note = excluded.note, total_weight_g = excluded.total_weight_g, servings_count = excluded.servings_count, updated_at = excluded.updated_at, deleted_at = NULL"#,
-                params![group.id, source_id, group.name, group.description, group.note, total_weight, group.servings_count, now],
+                r#"INSERT INTO recipes (id, source_id, name, name_i18n, description, note, total_weight_g, extra_kcal, servings_count, updated_at, deleted_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)
+                ON CONFLICT(id) DO UPDATE SET source_id = excluded.source_id, name = excluded.name, name_i18n = excluded.name_i18n, description = excluded.description, note = excluded.note, total_weight_g = excluded.total_weight_g, extra_kcal = excluded.extra_kcal, servings_count = excluded.servings_count, updated_at = excluded.updated_at, deleted_at = NULL"#,
+                params![group.id, source_id, group.name, name_i18n_to_json(&group.name_i18n), group.description, group.note, Option::<f64>::None, extra_kcal, group.servings_count, now],
             )?;
             tx.execute("UPDATE recipe_items SET deleted_at = ?1, updated_at = ?1 WHERE recipe_id = ?2 AND deleted_at IS NULL", params![now, group.id])?;
             for item in group.items {
@@ -1641,15 +1799,15 @@ fn import_recipes_csv(state: State<'_, AppState>, csv_text: String, skip_duplica
 
 fn query_active_foods(conn: &Connection) -> Result<Vec<Food>> {
     let mut stmt = conn.prepare(
-        r#"SELECT id, source_id, name, brand, note, barcode, default_unit, serving_size_g,
+        r#"SELECT id, source_id, name, name_i18n, brand, note, barcode, default_unit, serving_size_g,
                  kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
                  sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
            FROM foods WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE"#,
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(Food {
-            id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, brand: row.get(3)?, note: row.get(4)?, barcode: row.get(5)?, default_unit: row.get(6)?, serving_size_g: row.get(7)?,
-            kcal_per_100g: row.get(8)?, carbs_per_100g: row.get(9)?, fat_per_100g: row.get(10)?, protein_per_100g: row.get(11)?, sugars_per_100g: row.get(12)?, fiber_per_100g: row.get(13)?, salt_per_100g: row.get(14)?, updated_at: row.get(15)?, deleted_at: row.get(16)?,
+            id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, name_i18n: name_i18n_from_json(row.get(3)?), brand: row.get(4)?, note: row.get(5)?, barcode: row.get(6)?, default_unit: row.get(7)?, serving_size_g: row.get(8)?,
+            kcal_per_100g: row.get(9)?, carbs_per_100g: row.get(10)?, fat_per_100g: row.get(11)?, protein_per_100g: row.get(12)?, sugars_per_100g: row.get(13)?, fiber_per_100g: row.get(14)?, salt_per_100g: row.get(15)?, updated_at: row.get(16)?, deleted_at: row.get(17)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1657,15 +1815,15 @@ fn query_active_foods(conn: &Connection) -> Result<Vec<Food>> {
 
 fn query_active_ingredients(conn: &Connection) -> Result<Vec<Ingredient>> {
     let mut stmt = conn.prepare(
-        r#"SELECT id, source_id, name, note, default_unit, serving_size_g,
+        r#"SELECT id, source_id, name, name_i18n, note, default_unit, serving_size_g,
                  kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
                  sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
            FROM ingredients WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE"#,
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(Ingredient {
-            id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, note: row.get(3)?, default_unit: row.get(4)?, serving_size_g: row.get(5)?,
-            kcal_per_100g: row.get(6)?, carbs_per_100g: row.get(7)?, fat_per_100g: row.get(8)?, protein_per_100g: row.get(9)?, sugars_per_100g: row.get(10)?, fiber_per_100g: row.get(11)?, salt_per_100g: row.get(12)?, updated_at: row.get(13)?, deleted_at: row.get(14)?,
+            id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, name_i18n: name_i18n_from_json(row.get(3)?), note: row.get(4)?, default_unit: row.get(5)?, serving_size_g: row.get(6)?,
+            kcal_per_100g: row.get(7)?, carbs_per_100g: row.get(8)?, fat_per_100g: row.get(9)?, protein_per_100g: row.get(10)?, sugars_per_100g: row.get(11)?, fiber_per_100g: row.get(12)?, salt_per_100g: row.get(13)?, updated_at: row.get(14)?, deleted_at: row.get(15)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1673,22 +1831,22 @@ fn query_active_ingredients(conn: &Connection) -> Result<Vec<Ingredient>> {
 
 fn query_active_recipes(conn: &Connection) -> Result<Vec<Recipe>> {
     let mut stmt = conn.prepare(
-        r#"SELECT id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at
+        r#"SELECT id, source_id, name, name_i18n, description, note, total_weight_g, extra_kcal, servings_count, updated_at, deleted_at
            FROM recipes WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE"#,
     )?;
     let rows = stmt.query_map([], |row| {
-        Ok(Recipe { id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, description: row.get(3)?, note: row.get(4)?, total_weight_g: row.get(5)?, servings_count: row.get(6)?, updated_at: row.get(7)?, deleted_at: row.get(8)? })
+        Ok(Recipe { id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, name_i18n: name_i18n_from_json(row.get(3)?), description: row.get(4)?, note: row.get(5)?, total_weight_g: row.get(6)?, extra_kcal: row.get(7)?, servings_count: row.get(8)?, updated_at: row.get(9)?, deleted_at: row.get(10)? })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn query_active_activities(conn: &Connection) -> Result<Vec<ActivityDefinition>> {
     let mut stmt = conn.prepare(
-        r#"SELECT id, code, name, description, activity_type, met, kcal_per_min, updated_at, deleted_at
+        r#"SELECT id, code, name, name_i18n, description, activity_type, met, kcal_per_min, updated_at, deleted_at
            FROM activities WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE"#,
     )?;
     let rows = stmt.query_map([], |row| {
-        Ok(ActivityDefinition { id: row.get(0)?, code: row.get(1)?, name: row.get(2)?, description: row.get(3)?, activity_type: row.get(4)?, met: row.get(5)?, kcal_per_min: row.get(6)?, updated_at: row.get(7)?, deleted_at: row.get(8)? })
+        Ok(ActivityDefinition { id: row.get(0)?, code: row.get(1)?, name: row.get(2)?, name_i18n: name_i18n_from_json(row.get(3)?), description: row.get(4)?, activity_type: row.get(5)?, met: row.get(6)?, kcal_per_min: row.get(7)?, updated_at: row.get(8)?, deleted_at: row.get(9)? })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
@@ -1704,6 +1862,25 @@ fn summarize_sync_payload(payload: &SyncPushRequest) -> SyncInboxSummary {
         weight_logs: payload.weight_logs.len(),
         activity_logs: payload.activity_logs.len(),
     }
+}
+
+fn strip_private_mobile_diary(payload: &mut SyncPushRequest) {
+    // Mobile diary, activity and weight entries are private local data.
+    // The desktop inbox is only for catalog drafts, so older mobile builds that
+    // still POST private data must not persist it here.
+    payload.intakes.clear();
+    payload.weight_logs.clear();
+    payload.activity_logs.clear();
+    payload.skipped_items.retain(|item| item.kind != "intake" && item.kind != "weight_log" && item.kind != "activity_log");
+}
+
+fn sync_payload_has_recordable_data(payload: &SyncPushRequest) -> bool {
+    payload.foods.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        || payload.ingredients.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        || payload.recipes.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        || payload.recipe_items.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        || payload.activities.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        || !payload.skipped_items.is_empty()
 }
 
 fn normalize_text(value: &str) -> String {
@@ -1760,7 +1937,7 @@ fn recipe_signature(recipe: &Recipe) -> String {
         normalize_text(&recipe.name),
         normalize_text(recipe.description.as_deref().unwrap_or("")),
         normalize_text(recipe.note.as_deref().unwrap_or("")),
-        optional_number_key(recipe.total_weight_g),
+        optional_number_key(recipe.extra_kcal),
         optional_number_key(recipe.servings_count),
     )
 }
@@ -1983,9 +2160,9 @@ fn find_catalog_duplicate_suggestions(conn: &Connection) -> Result<Vec<CatalogDu
             id: recipe.id.clone(),
             name: recipe.name.clone(),
             subtitle: format!(
-                "{} servings · {}g total",
+                "{} servings · {:+} kcal extra",
                 recipe.servings_count.unwrap_or(0.0),
-                recipe.total_weight_g.unwrap_or(0.0)
+                recipe.extra_kcal.unwrap_or(0.0)
             ),
             updated_at: recipe.updated_at,
         };
@@ -2226,10 +2403,10 @@ fn commit_sync_payload(conn: &Connection, payload: &SyncPushRequest) -> Result<S
                 merged += 1;
             } else {
                 conn.execute(
-                    r#"INSERT INTO recipes (id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at)
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                    ON CONFLICT(id) DO UPDATE SET source_id = excluded.source_id, name = excluded.name, description = excluded.description, note = excluded.note, total_weight_g = excluded.total_weight_g, servings_count = excluded.servings_count, updated_at = excluded.updated_at, deleted_at = excluded.deleted_at"#,
-                    params![&recipe.id, &recipe.source_id, &recipe.name, &recipe.description, &recipe.note, &recipe.total_weight_g, &recipe.servings_count, if recipe.updated_at > 0 { recipe.updated_at } else { now }, &recipe.deleted_at],
+                    r#"INSERT INTO recipes (id, source_id, name, name_i18n, description, note, total_weight_g, extra_kcal, servings_count, updated_at, deleted_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    ON CONFLICT(id) DO UPDATE SET source_id = excluded.source_id, name = excluded.name, name_i18n = excluded.name_i18n, description = excluded.description, note = excluded.note, total_weight_g = excluded.total_weight_g, extra_kcal = excluded.extra_kcal, servings_count = excluded.servings_count, updated_at = excluded.updated_at, deleted_at = excluded.deleted_at"#,
+                    params![&recipe.id, &recipe.source_id, &recipe.name, name_i18n_to_json(&recipe.name_i18n), &recipe.description, &recipe.note, Option::<f64>::None, &recipe.extra_kcal, &recipe.servings_count, if recipe.updated_at > 0 { recipe.updated_at } else { now }, &recipe.deleted_at],
                 )?;
                 inserted_or_updated += 1;
             }
@@ -2322,6 +2499,141 @@ fn commit_sync_payload(conn: &Connection, payload: &SyncPushRequest) -> Result<S
     })
 }
 
+
+#[tauri::command]
+fn list_connected_devices(state: State<'_, AppState>) -> Result<Vec<ConnectedDevice>, String> {
+    let now = now_ms();
+    let mut devices = state.connected_devices.lock().map_err(|_| "connected device registry lock poisoned".to_string())?;
+    devices.retain(|_, device| now - device.last_seen <= CONNECTED_DEVICE_KEEP_MS);
+    let mut list = devices
+        .values()
+        .filter(|device| now - device.last_seen <= CONNECTED_DEVICE_ACTIVE_MS)
+        .cloned()
+        .collect::<Vec<_>>();
+    list.sort_by(|left, right| right.last_seen.cmp(&left.last_seen).then_with(|| left.display_name.cmp(&right.display_name)));
+    Ok(list)
+}
+
+fn active_connected_device_count(devices: &ConnectedDeviceRegistry) -> usize {
+    let now = now_ms();
+    devices
+        .lock()
+        .map(|guard| guard.values().filter(|device| now - device.last_seen <= CONNECTED_DEVICE_ACTIVE_MS).count())
+        .unwrap_or(0)
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn title_case_device_part(value: &str) -> String {
+    let lowered = value.trim().to_lowercase();
+    match lowered.as_str() {
+        "samsung" => "Samsung".into(),
+        "xiaomi" => "Xiaomi".into(),
+        "google" => "Google".into(),
+        "motorola" => "Motorola".into(),
+        "huawei" => "Huawei".into(),
+        "honor" => "Honor".into(),
+        "oneplus" => "OnePlus".into(),
+        "oppo" => "OPPO".into(),
+        "vivo" => "vivo".into(),
+        "realme" => "realme".into(),
+        _ => value.trim().to_string(),
+    }
+}
+
+fn parse_android_model_from_user_agent(user_agent: &str) -> Option<String> {
+    let marker = "Android ";
+    let start = user_agent.find(marker)?;
+    let rest = &user_agent[start + marker.len()..];
+    let after_version = rest.split_once(';')?.1.trim();
+    let model = after_version
+        .split(';')
+        .next()
+        .unwrap_or(after_version)
+        .split(" Build/")
+        .next()
+        .unwrap_or(after_version)
+        .trim();
+    if model.is_empty() || model.eq_ignore_ascii_case("wv") || model.eq_ignore_ascii_case("mobile") { None } else { Some(model.to_string()) }
+}
+
+fn friendly_device_display_name(device_name: Option<&String>, manufacturer: Option<&String>, model: Option<&String>, user_agent: Option<&String>) -> String {
+    if let Some(name) = device_name.map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        let lower = name.to_lowercase();
+        if !matches!(lower.as_str(), "android" | "linux" | "mobile" | "unknown") {
+            return name.to_string();
+        }
+    }
+
+    let parsed_model = user_agent.and_then(|ua| parse_android_model_from_user_agent(ua));
+    let model = model.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()).or(parsed_model);
+    let manufacturer = manufacturer.map(|value| title_case_device_part(value)).filter(|value| !value.is_empty());
+
+    match (manufacturer, model) {
+        (Some(make), Some(model)) if model.to_lowercase().starts_with(&make.to_lowercase()) => model,
+        (Some(make), Some(model)) => format!("{make} {model}"),
+        (None, Some(model)) => model,
+        (Some(make), None) => format!("{make} device"),
+        (None, None) => "Mobile device".into(),
+    }
+}
+
+fn record_connected_device(headers: &HeaderMap, peer: SocketAddr, state: &ApiState, path: &str) {
+    let user_agent = header_value(headers, "user-agent");
+    let raw_id = header_value(headers, "x-nutrino-device-id").unwrap_or_else(|| format!("{}:{}", peer.ip(), user_agent.clone().unwrap_or_default()));
+    let manufacturer = header_value(headers, "x-nutrino-device-manufacturer");
+    let model = header_value(headers, "x-nutrino-device-model");
+    let device_name = header_value(headers, "x-nutrino-device-name");
+    let platform = header_value(headers, "x-nutrino-device-platform").or_else(|| {
+        user_agent.as_ref().and_then(|ua| if ua.contains("Android") { Some("Android".into()) } else if ua.contains("iPhone") || ua.contains("iPad") { Some("iOS".into()) } else { None })
+    });
+    let os_version = header_value(headers, "x-nutrino-os-version").or_else(|| header_value(headers, "x-nutrino-device-os-version"));
+    let app_channel = header_value(headers, "x-nutrino-app-channel");
+    let app_version = header_value(headers, "x-nutrino-app-version");
+    let display_name = friendly_device_display_name(device_name.as_ref(), manufacturer.as_ref(), model.as_ref(), user_agent.as_ref());
+    let now = now_ms();
+
+    if let Ok(mut devices) = state.connected_devices.lock() {
+        devices.retain(|_, device| now - device.last_seen <= CONNECTED_DEVICE_KEEP_MS);
+        let entry = devices.entry(raw_id.clone()).or_insert_with(|| ConnectedDevice {
+            id: raw_id.clone(),
+            display_name: display_name.clone(),
+            device_name: device_name.clone(),
+            manufacturer: manufacturer.clone(),
+            model: model.clone(),
+            platform: platform.clone(),
+            os_version: os_version.clone(),
+            app_channel: app_channel.clone(),
+            app_version: app_version.clone(),
+            ip_address: peer.ip().to_string(),
+            user_agent: user_agent.clone(),
+            first_seen: now,
+            last_seen: now,
+            request_count: 0,
+            last_path: path.to_string(),
+        });
+        entry.display_name = display_name;
+        entry.device_name = device_name;
+        entry.manufacturer = manufacturer;
+        entry.model = model;
+        entry.platform = platform;
+        entry.os_version = os_version;
+        entry.app_channel = app_channel;
+        entry.app_version = app_version;
+        entry.ip_address = peer.ip().to_string();
+        entry.user_agent = user_agent;
+        entry.last_seen = now;
+        entry.request_count = entry.request_count.saturating_add(1);
+        entry.last_path = path.to_string();
+    }
+}
+
 fn server_status(state: &AppState) -> Result<ServerStatus> {
     let conn = open_conn(&state.db_path)?;
     let token = setting(&conn, "server_password")?;
@@ -2342,6 +2654,7 @@ fn server_status(state: &AppState) -> Result<ServerStatus> {
         auth_required,
         dev_mode: dev_mode(),
         catalog_revision: db_catalog_revision(&state.db_path).unwrap_or(0),
+        connected_devices: active_connected_device_count(&state.connected_devices),
     })
 }
 
@@ -2362,7 +2675,12 @@ fn auth_required_for_token(token: &str) -> bool {
     !token.trim().is_empty()
 }
 
-async fn health(AxumState(state): AxumState<ApiState>) -> impl IntoResponse {
+async fn health(
+    AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    record_connected_device(&headers, peer, &state, "/api/v1/health");
     Json(HealthResponse {
         ok: true,
         name: APP_NAME.to_string(),
@@ -2373,15 +2691,18 @@ async fn health(AxumState(state): AxumState<ApiState>) -> impl IntoResponse {
         app_channel: if state.dev_mode { "dev".into() } else { "stable".into() },
         dev_mode: state.dev_mode,
         catalog_revision: db_catalog_revision(&state.db_path).unwrap_or(0),
+        connected_devices: active_connected_device_count(&state.connected_devices),
     })
 }
 
 async fn sync_pull(
     AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Query(query): Query<SyncPullQuery>,
 ) -> Result<Json<SyncPullResponse>, StatusCode> {
     authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/sync/pull");
     let since = query.since.unwrap_or(0);
     let foods = db_list_foods_for_sync(&state.db_path, since).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let ingredients = db_list_ingredients_for_sync(&state.db_path, since).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -2403,12 +2724,18 @@ async fn sync_pull(
 
 async fn sync_push(
     AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    Json(payload): Json<SyncPushRequest>,
+    Json(mut payload): Json<SyncPushRequest>,
 ) -> Result<Json<SyncPushResponse>, StatusCode> {
     authorize(&headers, &state.token, state.auth_required)?;
-    let conn = open_conn(&state.db_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/sync/push");
+    strip_private_mobile_diary(&mut payload);
     let now = now_ms();
+    if !sync_payload_has_recordable_data(&payload) {
+        return Ok(Json(SyncPushResponse { accepted: true, server_time: now }));
+    }
+    let conn = open_conn(&state.db_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let source_id = payload.source_id.clone().unwrap_or_else(|| state.source_id.clone());
     let inbox_id = format!("sync-inbox-{}", Uuid::new_v4());
     let summary = summarize_sync_payload(&payload);
@@ -2429,9 +2756,11 @@ async fn sync_push(
 }
 async fn api_list_foods(
     AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<Food>>, StatusCode> {
     authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/foods");
     db_list_active_foods(&state.db_path)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -2452,9 +2781,11 @@ async fn api_create_food(
 
 async fn api_list_ingredients(
     AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<Ingredient>>, StatusCode> {
     authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/ingredients");
     db_list_active_ingredients(&state.db_path)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -2475,9 +2806,11 @@ async fn api_create_ingredient(
 
 async fn api_list_recipes(
     AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<Recipe>>, StatusCode> {
     authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/recipes");
     db_list_active_recipes(&state.db_path)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -2485,9 +2818,11 @@ async fn api_list_recipes(
 
 async fn api_list_activities(
     AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<ActivityDefinition>>, StatusCode> {
     authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/activities");
     db_list_active_activities(&state.db_path)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -2548,6 +2883,7 @@ fn food_from_input(input: FoodInput, source_id: String) -> Result<Food> {
             .unwrap_or_else(|| format!("food-{}", Uuid::new_v4())),
         source_id,
         name,
+        name_i18n: clean_name_i18n(input.name_i18n),
         brand: input.brand.filter(|value| !value.trim().is_empty()),
         note: input.note.filter(|value| !value.trim().is_empty()),
         barcode: input.barcode.filter(|value| !value.trim().is_empty()),
@@ -2591,6 +2927,7 @@ fn ingredient_from_input(input: IngredientInput, source_id: String) -> Result<In
             .unwrap_or_else(|| format!("ingredient-{}", Uuid::new_v4())),
         source_id,
         name,
+        name_i18n: clean_name_i18n(input.name_i18n),
         note: input.note.filter(|value| !value.trim().is_empty()),
         default_unit: input
             .default_unit
@@ -2631,12 +2968,11 @@ fn db_list_aliases_for_sync(path: &Path, since: i64) -> Result<Vec<CatalogAlias>
 }
 
 fn sync_inbox_entry_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncInboxEntry> {
-    let summary_json: String = row.get(5)?;
+    let _summary_json: String = row.get(5)?;
     let merge_json: String = row.get(6)?;
     let payload_json: String = row.get(7)?;
-    let summary = serde_json::from_str(&summary_json).unwrap_or(SyncInboxSummary { foods: 0, ingredients: 0, recipes: 0, recipe_items: 0, activities: 0, intakes: 0, weight_logs: 0, activity_logs: 0 });
     let merge_candidates = serde_json::from_str(&merge_json).unwrap_or_default();
-    let payload = serde_json::from_str(&payload_json).unwrap_or(SyncPushRequest {
+    let mut payload = serde_json::from_str(&payload_json).unwrap_or(SyncPushRequest {
         source_id: None,
         device_name: None,
         sent_at: None,
@@ -2648,7 +2984,10 @@ fn sync_inbox_entry_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncIn
         intakes: vec![],
         weight_logs: vec![],
         activity_logs: vec![],
+        skipped_items: vec![],
     });
+    strip_private_mobile_diary(&mut payload);
+    let summary = summarize_sync_payload(&payload);
     Ok(SyncInboxEntry {
         id: row.get(0)?,
         source_id: row.get(1)?,
@@ -2684,6 +3023,7 @@ fn db_list_sync_inbox(path: &Path) -> Result<Vec<SyncInboxEntry>> {
     )?;
     let rows = stmt.query_map([], sync_inbox_entry_from_row)?;
     let mut entries = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    entries.retain(|entry| sync_payload_has_recordable_data(&entry.payload));
     for entry in &mut entries {
         entry.replacement_candidates = find_replacement_candidates(&conn, &entry.payload).unwrap_or_default();
     }
@@ -2702,7 +3042,7 @@ fn db_query_foods(path: &Path, since: i64, active_only: bool) -> Result<Vec<Food
     let conn = open_conn(path)?;
     let sql = if active_only {
         r#"
-        SELECT id, source_id, name, brand, note, barcode, default_unit, serving_size_g,
+        SELECT id, source_id, name, name_i18n, brand, note, barcode, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
                sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
         FROM foods
@@ -2711,7 +3051,7 @@ fn db_query_foods(path: &Path, since: i64, active_only: bool) -> Result<Vec<Food
         "#
     } else {
         r#"
-        SELECT id, source_id, name, brand, note, barcode, default_unit, serving_size_g,
+        SELECT id, source_id, name, name_i18n, brand, note, barcode, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
                sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
         FROM foods
@@ -2725,20 +3065,21 @@ fn db_query_foods(path: &Path, since: i64, active_only: bool) -> Result<Vec<Food
             id: row.get(0)?,
             source_id: row.get(1)?,
             name: row.get(2)?,
-            brand: row.get(3)?,
-            note: row.get(4)?,
-            barcode: row.get(5)?,
-            default_unit: row.get(6)?,
-            serving_size_g: row.get(7)?,
-            kcal_per_100g: row.get(8)?,
-            carbs_per_100g: row.get(9)?,
-            fat_per_100g: row.get(10)?,
-            protein_per_100g: row.get(11)?,
-            sugars_per_100g: row.get(12)?,
-            fiber_per_100g: row.get(13)?,
-            salt_per_100g: row.get(14)?,
-            updated_at: row.get(15)?,
-            deleted_at: row.get(16)?,
+            name_i18n: name_i18n_from_json(row.get(3)?),
+            brand: row.get(4)?,
+            note: row.get(5)?,
+            barcode: row.get(6)?,
+            default_unit: row.get(7)?,
+            serving_size_g: row.get(8)?,
+            kcal_per_100g: row.get(9)?,
+            carbs_per_100g: row.get(10)?,
+            fat_per_100g: row.get(11)?,
+            protein_per_100g: row.get(12)?,
+            sugars_per_100g: row.get(13)?,
+            fiber_per_100g: row.get(14)?,
+            salt_per_100g: row.get(15)?,
+            updated_at: row.get(16)?,
+            deleted_at: row.get(17)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -2756,7 +3097,7 @@ fn db_query_ingredients(path: &Path, since: i64, active_only: bool) -> Result<Ve
     let conn = open_conn(path)?;
     let sql = if active_only {
         r#"
-        SELECT id, source_id, name, note, default_unit, serving_size_g,
+        SELECT id, source_id, name, name_i18n, note, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
                sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
         FROM ingredients
@@ -2765,7 +3106,7 @@ fn db_query_ingredients(path: &Path, since: i64, active_only: bool) -> Result<Ve
         "#
     } else {
         r#"
-        SELECT id, source_id, name, note, default_unit, serving_size_g,
+        SELECT id, source_id, name, name_i18n, note, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
                sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
         FROM ingredients
@@ -2779,18 +3120,19 @@ fn db_query_ingredients(path: &Path, since: i64, active_only: bool) -> Result<Ve
             id: row.get(0)?,
             source_id: row.get(1)?,
             name: row.get(2)?,
-            note: row.get(3)?,
-            default_unit: row.get(4)?,
-            serving_size_g: row.get(5)?,
-            kcal_per_100g: row.get(6)?,
-            carbs_per_100g: row.get(7)?,
-            fat_per_100g: row.get(8)?,
-            protein_per_100g: row.get(9)?,
-            sugars_per_100g: row.get(10)?,
-            fiber_per_100g: row.get(11)?,
-            salt_per_100g: row.get(12)?,
-            updated_at: row.get(13)?,
-            deleted_at: row.get(14)?,
+            name_i18n: name_i18n_from_json(row.get(3)?),
+            note: row.get(4)?,
+            default_unit: row.get(5)?,
+            serving_size_g: row.get(6)?,
+            kcal_per_100g: row.get(7)?,
+            carbs_per_100g: row.get(8)?,
+            fat_per_100g: row.get(9)?,
+            protein_per_100g: row.get(10)?,
+            sugars_per_100g: row.get(11)?,
+            fiber_per_100g: row.get(12)?,
+            salt_per_100g: row.get(13)?,
+            updated_at: row.get(14)?,
+            deleted_at: row.get(15)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -2808,14 +3150,14 @@ fn db_query_recipes(path: &Path, since: i64, active_only: bool) -> Result<Vec<Re
     let conn = open_conn(path)?;
     let sql = if active_only {
         r#"
-        SELECT id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at
+        SELECT id, source_id, name, name_i18n, description, note, total_weight_g, extra_kcal, servings_count, updated_at, deleted_at
         FROM recipes
         WHERE updated_at > ?1 AND deleted_at IS NULL
         ORDER BY name COLLATE NOCASE
         "#
     } else {
         r#"
-        SELECT id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at
+        SELECT id, source_id, name, name_i18n, description, note, total_weight_g, extra_kcal, servings_count, updated_at, deleted_at
         FROM recipes
         WHERE updated_at > ?1
         ORDER BY name COLLATE NOCASE
@@ -2827,12 +3169,14 @@ fn db_query_recipes(path: &Path, since: i64, active_only: bool) -> Result<Vec<Re
             id: row.get(0)?,
             source_id: row.get(1)?,
             name: row.get(2)?,
-            description: row.get(3)?,
-            note: row.get(4)?,
-            total_weight_g: row.get(5)?,
-            servings_count: row.get(6)?,
-            updated_at: row.get(7)?,
-            deleted_at: row.get(8)?,
+            name_i18n: name_i18n_from_json(row.get(3)?),
+            description: row.get(4)?,
+            note: row.get(5)?,
+            total_weight_g: row.get(6)?,
+            extra_kcal: row.get(7)?,
+            servings_count: row.get(8)?,
+            updated_at: row.get(9)?,
+            deleted_at: row.get(10)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -2872,7 +3216,7 @@ fn db_recipe_detail(path: &Path, recipe_id: &str) -> Result<RecipeDetail> {
     let conn = open_conn(path)?;
     let recipe = conn.query_row(
         r#"
-        SELECT id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at
+        SELECT id, source_id, name, name_i18n, description, note, total_weight_g, extra_kcal, servings_count, updated_at, deleted_at
         FROM recipes
         WHERE id = ?1 AND deleted_at IS NULL
         "#,
@@ -2882,12 +3226,14 @@ fn db_recipe_detail(path: &Path, recipe_id: &str) -> Result<RecipeDetail> {
                 id: row.get(0)?,
                 source_id: row.get(1)?,
                 name: row.get(2)?,
-                description: row.get(3)?,
-                note: row.get(4)?,
-                total_weight_g: row.get(5)?,
-                servings_count: row.get(6)?,
-                updated_at: row.get(7)?,
-                deleted_at: row.get(8)?,
+                name_i18n: name_i18n_from_json(row.get(3)?),
+                description: row.get(4)?,
+                note: row.get(5)?,
+                total_weight_g: row.get(6)?,
+                extra_kcal: row.get(7)?,
+                servings_count: row.get(8)?,
+                updated_at: row.get(9)?,
+                deleted_at: row.get(10)?,
             })
         },
     )?;
@@ -2931,7 +3277,7 @@ fn db_recipe_detail_from_recipe_guarded(path: &Path, recipe: Recipe, visited: &m
         if let Some(recipe_ref) = item.food_id.strip_prefix("recipe:") {
             let referenced = conn.query_row(
                 r#"
-                SELECT id, source_id, name, description, note, total_weight_g, servings_count, updated_at, deleted_at
+                SELECT id, source_id, name, name_i18n, description, note, total_weight_g, extra_kcal, servings_count, updated_at, deleted_at
                 FROM recipes
                 WHERE id = ?1 AND deleted_at IS NULL
                 "#,
@@ -2941,12 +3287,14 @@ fn db_recipe_detail_from_recipe_guarded(path: &Path, recipe: Recipe, visited: &m
                         id: row.get(0)?,
                         source_id: row.get(1)?,
                         name: row.get(2)?,
-                        description: row.get(3)?,
-                        note: row.get(4)?,
-                        total_weight_g: row.get(5)?,
-                        servings_count: row.get(6)?,
-                        updated_at: row.get(7)?,
-                        deleted_at: row.get(8)?,
+                        name_i18n: name_i18n_from_json(row.get(3)?),
+                        description: row.get(4)?,
+                        note: row.get(5)?,
+                        total_weight_g: row.get(6)?,
+                        extra_kcal: row.get(7)?,
+                        servings_count: row.get(8)?,
+                        updated_at: row.get(9)?,
+                        deleted_at: row.get(10)?,
                     })
                 },
             ).optional()?;
@@ -3038,8 +3386,9 @@ fn db_recipe_detail_from_recipe_guarded(path: &Path, recipe: Recipe, visited: &m
 
     visited.remove(&recipe.id);
     let ingredient_weight_g: f64 = items.iter().map(|item| item.amount_g).sum();
-    let total_weight_g = recipe.total_weight_g.filter(|value| value.is_finite() && *value > 0.0).unwrap_or(ingredient_weight_g);
-    let kcal_total: f64 = items.iter().map(|item| item.kcal).sum();
+    let total_weight_g = ingredient_weight_g;
+    let extra_kcal = recipe.extra_kcal.filter(|value| value.is_finite()).unwrap_or(0.0);
+    let kcal_total: f64 = items.iter().map(|item| item.kcal).sum::<f64>() + extra_kcal;
     let carbs_total: f64 = items.iter().map(|item| item.carbs).sum();
     let fat_total: f64 = items.iter().map(|item| item.fat).sum();
     let protein_total: f64 = items.iter().map(|item| item.protein).sum();
@@ -3066,13 +3415,14 @@ fn upsert_food(conn: &Connection, food: &Food) -> Result<()> {
     conn.execute(
         r#"
         INSERT INTO foods (
-            id, source_id, name, brand, catalog_kind, note, barcode, default_unit, serving_size_g,
+            id, source_id, name, name_i18n, brand, catalog_kind, note, barcode, default_unit, serving_size_g,
             kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
             sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
-        ) VALUES (?1, ?2, ?3, ?4, 'food', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 'food', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         ON CONFLICT(id) DO UPDATE SET
             source_id = excluded.source_id,
             name = excluded.name,
+            name_i18n = excluded.name_i18n,
             brand = excluded.brand,
             catalog_kind = 'food',
             note = excluded.note,
@@ -3093,6 +3443,7 @@ fn upsert_food(conn: &Connection, food: &Food) -> Result<()> {
             food.id,
             food.source_id,
             food.name,
+            name_i18n_to_json(&food.name_i18n),
             food.brand,
             food.note,
             food.barcode,
@@ -3119,13 +3470,14 @@ fn upsert_ingredient(conn: &Connection, ingredient: &Ingredient) -> Result<()> {
     conn.execute(
         r#"
         INSERT INTO ingredients (
-            id, source_id, name, note, default_unit, serving_size_g,
+            id, source_id, name, name_i18n, note, default_unit, serving_size_g,
             kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
             sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
         ON CONFLICT(id) DO UPDATE SET
             source_id = excluded.source_id,
             name = excluded.name,
+            name_i18n = excluded.name_i18n,
             note = excluded.note,
             default_unit = excluded.default_unit,
             serving_size_g = excluded.serving_size_g,
@@ -3143,6 +3495,7 @@ fn upsert_ingredient(conn: &Connection, ingredient: &Ingredient) -> Result<()> {
             ingredient.id,
             ingredient.source_id,
             ingredient.name,
+            name_i18n_to_json(&ingredient.name_i18n),
             ingredient.note,
             ingredient.default_unit,
             ingredient.serving_size_g,
@@ -3189,6 +3542,7 @@ fn parse_food_csv(db_path: &Path, csv_text: &str) -> Result<ImportPreview> {
                 .unwrap_or_else(|| format!("food-{}", Uuid::new_v4())),
             source_id: source_id.clone(),
             name,
+            name_i18n: parse_name_i18n_csv(&headers, &record),
             brand,
             note: get_csv(&headers, &record, "note").filter(|value| !value.trim().is_empty()),
             barcode: get_csv(&headers, &record, "barcode").or_else(|| get_csv(&headers, &record, "ean")).or_else(|| get_csv(&headers, &record, "upc")).filter(|value| !value.trim().is_empty()),
@@ -3403,8 +3757,8 @@ fn seed_default_activities(conn: &Connection) -> Result<()> {
     for (id, code, name, description, activity_type, met, kcal_per_min) in defaults {
         conn.execute(
             r#"
-            INSERT INTO activities (id, code, name, description, activity_type, met, kcal_per_min, updated_at, deleted_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)
+            INSERT INTO activities (id, code, name, name_i18n, description, activity_type, met, kcal_per_min, updated_at, deleted_at)
+            VALUES (?1, ?2, ?3, '{}', ?4, ?5, ?6, ?7, ?8, NULL)
             ON CONFLICT(id) DO NOTHING
             "#,
             params![id, code, name, description, activity_type, met, kcal_per_min, now],
@@ -3422,6 +3776,7 @@ fn activity_from_input(input: ActivityInput) -> Result<ActivityDefinition> {
         id: input.id.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| format!("activity-{}", Uuid::new_v4())),
         code: input.code.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| "custom".into()),
         name,
+        name_i18n: clean_name_i18n(input.name_i18n),
         description: input.description.filter(|value| !value.trim().is_empty()),
         activity_type: input.activity_type.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| "custom".into()),
         met: input.met,
@@ -3434,11 +3789,12 @@ fn activity_from_input(input: ActivityInput) -> Result<ActivityDefinition> {
 fn upsert_activity(conn: &Connection, activity: &ActivityDefinition) -> Result<()> {
     conn.execute(
         r#"
-        INSERT INTO activities (id, code, name, description, activity_type, met, kcal_per_min, updated_at, deleted_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        INSERT INTO activities (id, code, name, name_i18n, description, activity_type, met, kcal_per_min, updated_at, deleted_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         ON CONFLICT(id) DO UPDATE SET
             code = excluded.code,
             name = excluded.name,
+            name_i18n = excluded.name_i18n,
             description = excluded.description,
             activity_type = excluded.activity_type,
             met = excluded.met,
@@ -3446,7 +3802,7 @@ fn upsert_activity(conn: &Connection, activity: &ActivityDefinition) -> Result<(
             updated_at = excluded.updated_at,
             deleted_at = excluded.deleted_at
         "#,
-        params![activity.id, activity.code, activity.name, activity.description, activity.activity_type, activity.met, activity.kcal_per_min, activity.updated_at, activity.deleted_at],
+        params![activity.id, activity.code, activity.name, name_i18n_to_json(&activity.name_i18n), activity.description, activity.activity_type, activity.met, activity.kcal_per_min, activity.updated_at, activity.deleted_at],
     )?;
     Ok(())
 }
@@ -3463,14 +3819,14 @@ fn db_query_activities(path: &Path, since: i64, active_only: bool) -> Result<Vec
     let conn = open_conn(path)?;
     let sql = if active_only {
         r#"
-        SELECT id, code, name, description, activity_type, met, kcal_per_min, updated_at, deleted_at
+        SELECT id, code, name, name_i18n, description, activity_type, met, kcal_per_min, updated_at, deleted_at
         FROM activities
         WHERE updated_at > ?1 AND deleted_at IS NULL
         ORDER BY name COLLATE NOCASE
         "#
     } else {
         r#"
-        SELECT id, code, name, description, activity_type, met, kcal_per_min, updated_at, deleted_at
+        SELECT id, code, name, name_i18n, description, activity_type, met, kcal_per_min, updated_at, deleted_at
         FROM activities
         WHERE updated_at > ?1
         ORDER BY name COLLATE NOCASE
@@ -3482,12 +3838,13 @@ fn db_query_activities(path: &Path, since: i64, active_only: bool) -> Result<Vec
             id: row.get(0)?,
             code: row.get(1)?,
             name: row.get(2)?,
-            description: row.get(3)?,
-            activity_type: row.get(4)?,
-            met: row.get(5)?,
-            kcal_per_min: row.get(6)?,
-            updated_at: row.get(7)?,
-            deleted_at: row.get(8)?,
+            name_i18n: name_i18n_from_json(row.get(3)?),
+            description: row.get(4)?,
+            activity_type: row.get(5)?,
+            met: row.get(6)?,
+            kcal_per_min: row.get(7)?,
+            updated_at: row.get(8)?,
+            deleted_at: row.get(9)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

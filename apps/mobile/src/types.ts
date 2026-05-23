@@ -1,7 +1,9 @@
+export type LocalizedNameMap = Record<string, string>;
+
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 export type Gender = 'female' | 'male' | 'non_binary';
 export type ActivityLevel = 'sedentary' | 'low_active' | 'active' | 'very_active';
-export type AppLanguage = 'system' | 'en' | 'hu';
+export type AppLanguage = 'system' | 'en' | 'hu' | 'de' | 'fr' | 'ru' | 'uk' | 'zh' | 'sk' | 'ro' | 'cs' | 'sl' | 'hr' | 'pl' | 'es' | 'pt';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type AppChannel = 'dev' | 'stable';
 export type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
@@ -11,6 +13,7 @@ export interface Ingredient {
   id: string;
   source_id: string;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   note?: string | null;
   default_unit: string;
   serving_size_g?: number | null;
@@ -56,7 +59,10 @@ export interface PairingConfig {
   lastSyncError?: string;
   catalogRevision?: number;
   lastHealthCheckAt?: number;
+  acceptedNewerServerVersion?: string;
+  declinedNewerServerVersion?: string;
 }
+
 
 export interface UserProfile {
   height_cm: number;
@@ -73,6 +79,7 @@ export interface Food {
   id: string;
   source_id: string;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   brand?: string | null;
   catalog_kind?: FoodCatalogKind;
   note?: string | null;
@@ -95,9 +102,11 @@ export interface Recipe {
   id: string;
   source_id: string;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   description?: string | null;
   note?: string | null;
   total_weight_g?: number | null;
+  extra_kcal?: number | null;
   servings_count?: number | null;
   updated_at: number;
   deleted_at?: number | null;
@@ -119,6 +128,7 @@ export interface ActivityDefinition {
   source_id?: string;
   code: string;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   description?: string | null;
   type?: string;
   activity_type?: string;
@@ -142,6 +152,7 @@ export interface Intake {
   food_snapshot_json: string;
   note_title?: string | null;
   note_description?: string | null;
+  note_final?: boolean;
   pending_sync: boolean;
   created_at: number;
   updated_at: number;

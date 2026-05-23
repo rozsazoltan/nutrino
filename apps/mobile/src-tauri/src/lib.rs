@@ -1,3 +1,4 @@
+use serde::Serialize;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -10,6 +11,8 @@ pub fn run() {
             read_mobile_backup_file,
             export_mobile_backup_via_android_picker,
             import_mobile_backup_via_android_picker,
+            exit_mobile_app,
+            get_mobile_device_info,
         ]);
 
     #[cfg(mobile)]
@@ -21,6 +24,99 @@ pub fn run() {
     builder
         .run(tauri::generate_context!())
         .expect("error while running nutrino mobile");
+}
+
+
+
+#[derive(Debug, Clone, Serialize)]
+struct MobileDeviceInfo {
+    device_name: Option<String>,
+    manufacturer: Option<String>,
+    brand: Option<String>,
+    model: Option<String>,
+    device: Option<String>,
+    platform: String,
+    os_version: Option<String>,
+}
+
+fn clean_device_value(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "unknown" && value != "null")
+}
+
+#[cfg(target_os = "android")]
+fn android_getprop(key: &str) -> Option<String> {
+    std::process::Command::new("/system/bin/getprop")
+        .arg(key)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|value| clean_device_value(Some(value)))
+}
+
+#[tauri::command]
+fn get_mobile_device_info() -> MobileDeviceInfo {
+    #[cfg(target_os = "android")]
+    {
+        let manufacturer = android_getprop("ro.product.manufacturer");
+        let brand = android_getprop("ro.product.brand");
+        let model = android_getprop("ro.product.model")
+            .or_else(|| android_getprop("ro.product.vendor.model"))
+            .or_else(|| android_getprop("ro.product.odm.model"));
+        let device = android_getprop("ro.product.device")
+            .or_else(|| android_getprop("ro.product.vendor.device"));
+        let marketing_name = android_getprop("ro.product.marketname")
+            .or_else(|| android_getprop("ro.product.vendor.marketname"))
+            .or_else(|| android_getprop("ro.config.marketing_name"));
+        let device_name = android_getprop("persist.sys.device_name")
+            .or_else(|| android_getprop("bluetooth.device.default_name"))
+            .or(marketing_name)
+            .or_else(|| model.clone());
+        let os_version = android_getprop("ro.build.version.release");
+
+        return MobileDeviceInfo {
+            device_name,
+            manufacturer,
+            brand,
+            model,
+            device,
+            platform: "Android".to_string(),
+            os_version,
+        };
+    }
+
+    #[cfg(target_os = "ios")]
+    {
+        return MobileDeviceInfo {
+            device_name: None,
+            manufacturer: Some("Apple".to_string()),
+            brand: Some("Apple".to_string()),
+            model: None,
+            device: None,
+            platform: "iOS".to_string(),
+            os_version: None,
+        };
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        MobileDeviceInfo {
+            device_name: None,
+            manufacturer: None,
+            brand: None,
+            model: None,
+            device: None,
+            platform: std::env::consts::OS.to_string(),
+            os_version: None,
+        }
+    }
+}
+
+#[tauri::command]
+fn exit_mobile_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 fn validate_zip_bytes(bytes: &[u8]) -> Result<(), String> {

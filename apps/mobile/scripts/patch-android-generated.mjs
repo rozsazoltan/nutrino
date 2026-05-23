@@ -15,7 +15,7 @@ const androidAppGradlePaths = [
   path.join(androidDir, 'app', 'build.gradle.kts'),
   path.join(androidDir, 'app', 'build.gradle'),
 ];
-const NATIVE_STATE_VERSION = 6;
+const NATIVE_STATE_VERSION = 9;
 const forceNativeClean = process.argv.includes('--force-native-clean')
   || process.env.NUTRINO_FORCE_ANDROID_NATIVE_CLEAN === '1';
 
@@ -98,9 +98,6 @@ function patchManifest(config) {
   if (!xml.includes('android.permission.CAMERA')) {
     xml = xml.replace(/<manifest([^>]*)>/, '<manifest$1>\n    <uses-permission android:name="android.permission.CAMERA" />');
   }
-  if (xml.includes('<application') && !xml.includes('android:usesCleartextTraffic=')) {
-    xml = xml.replace(/<application\b/, '<application android:usesCleartextTraffic="true"');
-  }
   if (xml.includes('<activity') && !xml.includes('android:windowSoftInputMode=')) {
     xml = xml.replace(/<activity\s/, '<activity android:windowSoftInputMode="adjustResize" ');
   }
@@ -108,9 +105,12 @@ function patchManifest(config) {
   if (xml.includes('<application')) {
     xml = xml.replace(/<application\b[^>]*>/, (tag) => {
       let next = tag;
+      next = setAndroidAttribute(next, 'android:usesCleartextTraffic', 'true');
+      next = setAndroidAttribute(next, 'android:networkSecurityConfig', '@xml/nutrino_network_security_config');
       next = setAndroidAttribute(next, 'android:icon', '@mipmap/ic_launcher');
       next = setAndroidAttribute(next, 'android:roundIcon', '@mipmap/ic_launcher_round');
       next = setAndroidAttribute(next, 'android:label', config.label);
+      next = setAndroidAttribute(next, 'android:enableOnBackInvokedCallback', 'true');
       return next;
     });
   }
@@ -170,6 +170,27 @@ function ensureLauncherBackgroundColor() {
   }
   fs.writeFileSync(colorsPath, xml);
   return xml !== original;
+}
+
+
+function ensureNetworkSecurityConfig() {
+  if (!fs.existsSync(androidResDir)) return false;
+  const xmlDir = path.join(androidResDir, 'xml');
+  const configPath = path.join(xmlDir, 'nutrino_network_security_config.xml');
+  const content = `<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+`;
+  fs.mkdirSync(xmlDir, { recursive: true });
+  const previous = fs.existsSync(configPath) ? fs.readFileSync(configPath, 'utf8') : '';
+  if (previous === content) return false;
+  fs.writeFileSync(configPath, content);
+  return true;
 }
 
 
@@ -395,32 +416,118 @@ function cleanStaleAndroidNativeState(config) {
   return true;
 }
 
-function normalizeMainActivitySource(source, config) {
+function mobileMainActivitySource(config) {
   const packageLine = `package ${config.applicationId}`;
-  let next = source.trim();
+  return `${packageLine}
 
-  // Tauri's generated MainActivity should stay intentionally tiny. Older
-  // Nutrino builds experimented with status-bar calls here; that broke Android
-  // compilation on some generated projects, so keep this file as the clean
-  // TauriActivity entrypoint and handle system bars in the web layer instead.
-  if (
-    !next ||
-    next.includes('hideSystemBars()') ||
-    next.includes('WindowInsetsController') ||
-    next.includes('WindowCompat') ||
-    next.includes('import app.tauri.TauriActivity')
-  ) {
-    return `${packageLine}\n\nimport app.tauri.TauriActivity\n\nclass MainActivity : TauriActivity()\n`;
-  }
+import android.content.res.Configuration
+import android.graphics.Color
+import android.os.Build
+import android.os.Bundle
+import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebView
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
+// Tauri generates TauriActivity into the same application package at build time.
+// Do not import a global TauriActivity here: with Tauri 2.11 generated Android
+// projects that symbol is not exported from that package and Gradle fails with
+// "Unresolved reference: TauriActivity".
+class MainActivity : TauriActivity() {
+    private var nutrinoBackCallback: OnBackInvokedCallback? = null
 
-  if (/^package\s+[^\n]+/m.test(next)) {
-    next = next.replace(/^package\s+[^\n]+/m, packageLine);
-  } else {
-    next = `${packageLine}\n\n${next}`;
-  }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        configureEdgeToEdgeWindow()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val callback = OnBackInvokedCallback {
+                dispatchNutrinoBackToWebView()
+            }
+            nutrinoBackCallback = callback
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                callback
+            )
+        }
+    }
 
-  return `${next.trimEnd()}\n`;
+    override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            nutrinoBackCallback?.let {
+                onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it)
+            }
+            nutrinoBackCallback = null
+        }
+        super.onDestroy()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+            dispatchNutrinoBackToWebView()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    @Deprecated("Deprecated in Android API 33; Android 13+ uses OnBackInvokedCallback above.")
+    override fun onBackPressed() {
+        dispatchNutrinoBackToWebView()
+    }
+
+
+    private fun configureEdgeToEdgeWindow() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.TRANSPARENT
+        }
+
+        val isNightMode = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        var flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+
+        if (!isNightMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        }
+        if (!isNightMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            flags = flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
+
+        window.decorView.systemUiVisibility = flags
+    }
+
+    private fun dispatchNutrinoBackToWebView() {
+        findWebView(window?.decorView)?.post {
+            findWebView(window?.decorView)?.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('nutrino:android-back'))",
+                null
+            )
+        }
+    }
+
+    private fun findWebView(view: View?): WebView? {
+        if (view is WebView) return view
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                val found = findWebView(view.getChildAt(index))
+                if (found != null) return found
+            }
+        }
+        return null
+    }
 }
+`;
+}
+
+function normalizeMainActivitySource(source, config) {
+  // Android hardware Back must not fall through to the default Activity behavior,
+  // because on Android 13/14 that can move the Tauri WebView task to the background
+  // before the Vue app can show its “press Back again” toast. Keep MainActivity as
+  // a small native bridge that turns every Android Back request into a JS event.
+  return mobileMainActivitySource(config);
+}
+
 
 function removeEmptyDirectories(dir, stopAt) {
   let current = dir;
@@ -466,7 +573,7 @@ function patchMainActivityPackage(config) {
   const sourcePath = files.includes(targetPath) ? targetPath : files[0];
   const current = sourcePath && fs.existsSync(sourcePath)
     ? fs.readFileSync(sourcePath, 'utf8')
-    : `package ${config.applicationId}\n\nimport app.tauri.TauriActivity\n\nclass MainActivity : TauriActivity()\n`;
+    : `package ${config.applicationId}\n\nclass MainActivity : TauriActivity()\n`;
   const next = normalizeMainActivitySource(current, config);
 
   let changed = false;
@@ -587,10 +694,11 @@ const identityPatched = patchAndroidApplicationId(config);
 const signingPatched = patchReleaseSigningFallback();
 const iconsPatched = patchAndroidIcons();
 const launcherColorPatched = ensureLauncherBackgroundColor();
+const networkSecurityPatched = ensureNetworkSecurityConfig();
 const labelResourcesPatched = patchAndroidLabelResources(config);
 const manifestPatched = patchManifest(config);
 const buildSrcRustPluginPatched = normalizeBuildSrcRustPluginResources();
 const nativeStateCleaned = cleanStaleAndroidNativeState(config);
 const generatedKotlinCleaned = cleanGeneratedKotlinPackages();
 const activityPackagePatched = patchMainActivityPackage(config);
-console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);
+console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, networkSecurity=${networkSecurityPatched ? 'yes' : 'already ok'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);

@@ -1,9 +1,130 @@
+import { invoke } from '@tauri-apps/api/core';
 import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult } from '../types';
 import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeFood, normalizeIngredient, resolveCatalogId } from './storage';
 
-function apiUrl(baseUrl: string, path: string): string {
-  let base = baseUrl.trim().replace(/\/+$/, '');
+export const APP_VERSION = '0.11.9';
+const APP_CHANNEL = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
+const DEVICE_ID_STORAGE_KEY = `nutrino.mobile.${APP_CHANNEL}.device_id.v1`;
+
+type MobileDeviceInfo = {
+  device_name?: string | null;
+  manufacturer?: string | null;
+  brand?: string | null;
+  model?: string | null;
+  device?: string | null;
+  platform?: string | null;
+  os_version?: string | null;
+};
+
+let mobileDeviceInfoPromise: Promise<MobileDeviceInfo> | null = null;
+
+function getOrCreateDeviceId(): string {
+  try {
+    const current = localStorage.getItem(DEVICE_ID_STORAGE_KEY);
+    if (current) return current;
+    const next = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `mobile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(DEVICE_ID_STORAGE_KEY, next);
+    return next;
+  } catch {
+    return `mobile-${APP_CHANNEL}`;
+  }
+}
+
+function normalizeHeaderValue(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+function parseAndroidModelFromUserAgent(): string {
+  if (typeof navigator === 'undefined') return '';
+  const match = navigator.userAgent.match(/Android\s+[^;]+;\s*([^;)]*?)(?:\s+Build\/|;|\))/i);
+  return normalizeHeaderValue(match?.[1]);
+}
+
+function parseOsVersionFromUserAgent(userAgent: string): string | null {
+  const android = userAgent.match(/Android\s+([0-9][0-9._]*)/i)?.[1];
+  if (android) return android.replace(/_/g, '.');
+  const ios = userAgent.match(/(?:CPU(?: iPhone)? OS|iPhone OS|iPad; CPU OS)\s+([0-9_]+)/i)?.[1];
+  if (ios) return ios.replace(/_/g, '.');
+  return null;
+}
+
+function mergeDeviceInfo(fallback: MobileDeviceInfo, nativeInfo: MobileDeviceInfo): MobileDeviceInfo {
+  return {
+    ...fallback,
+    ...nativeInfo,
+    os_version: normalizeHeaderValue(nativeInfo.os_version) || fallback.os_version || null,
+    platform: normalizeHeaderValue(nativeInfo.platform) || fallback.platform,
+  };
+}
+
+function fallbackMobileDeviceInfo(): MobileDeviceInfo {
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const isAndroid = /Android/i.test(userAgent);
+  const isIOS = /iPhone|iPad|iPod/i.test(userAgent) || /Macintosh/i.test(userAgent) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1;
+  return {
+    device_name: parseAndroidModelFromUserAgent() || 'Mobile device',
+    model: parseAndroidModelFromUserAgent() || null,
+    platform: isAndroid ? 'Android' : isIOS ? 'iOS' : (typeof navigator !== 'undefined' ? navigator.platform || 'Mobile' : 'Mobile'),
+    os_version: parseOsVersionFromUserAgent(userAgent),
+  };
+}
+
+async function getMobileDeviceInfo(): Promise<MobileDeviceInfo> {
+  if (!mobileDeviceInfoPromise) {
+    mobileDeviceInfoPromise = invoke<MobileDeviceInfo>('get_mobile_device_info')
+      .then((info) => mergeDeviceInfo(fallbackMobileDeviceInfo(), info))
+      .catch(() => fallbackMobileDeviceInfo());
+  }
+  return mobileDeviceInfoPromise;
+}
+
+function friendlyDeviceName(info: MobileDeviceInfo): string {
+  const specific = normalizeHeaderValue(info.device_name);
+  if (specific && !['android', 'linux', 'mobile', 'unknown'].includes(specific.toLowerCase())) return specific;
+  const manufacturer = normalizeHeaderValue(info.manufacturer || info.brand);
+  const model = normalizeHeaderValue(info.model) || parseAndroidModelFromUserAgent();
+  if (manufacturer && model && !model.toLowerCase().startsWith(manufacturer.toLowerCase())) return `${manufacturer} ${model}`;
+  return model || manufacturer || 'Mobile device';
+}
+
+async function nutrinoDeviceHeaders(): Promise<Record<string, string>> {
+  const info = await getMobileDeviceInfo();
+  const headers: Record<string, string> = {
+    'X-Nutrino-Device-Id': getOrCreateDeviceId(),
+    'X-Nutrino-Device-Name': friendlyDeviceName(info),
+    'X-Nutrino-Device-Platform': normalizeHeaderValue(info.platform) || 'Mobile',
+    'X-Nutrino-App-Channel': APP_CHANNEL,
+    'X-Nutrino-App-Version': APP_VERSION,
+  };
+  const manufacturer = normalizeHeaderValue(info.manufacturer || info.brand);
+  const model = normalizeHeaderValue(info.model) || parseAndroidModelFromUserAgent();
+  const device = normalizeHeaderValue(info.device);
+  const osVersion = normalizeHeaderValue(info.os_version);
+  if (manufacturer) headers['X-Nutrino-Device-Manufacturer'] = manufacturer;
+  if (model) headers['X-Nutrino-Device-Model'] = model;
+  if (device) headers['X-Nutrino-Android-Device'] = device;
+  if (osVersion) headers['X-Nutrino-OS-Version'] = osVersion;
+  return headers;
+}
+
+
+export function normalizeApiBaseUrl(baseUrl: string): string {
+  let base = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!base) return '';
+
+  // Users often type LAN endpoints as "192.168.1.202:8090". Browser fetch
+  // treats that as an invalid relative URL inside the Android WebView, while the
+  // dev build used to work because it generated a full http:// URL automatically.
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(base)) {
+    base = `http://${base}`;
+  }
+
   if (base && !/\/api\/v1$/i.test(base)) base = `${base}/api/v1`;
+  return base;
+}
+
+function apiUrl(baseUrl: string, path: string): string {
+  const base = normalizeApiBaseUrl(baseUrl);
   return `${base}${path}`;
 }
 
@@ -13,10 +134,12 @@ function authSecret(tokenOrPassword: string): string {
 
 async function requestJson<T>(baseUrl: string, tokenOrPassword: string, path: string, init: RequestInit = {}): Promise<T> {
   const secret = authSecret(tokenOrPassword);
+  const deviceHeaders = await nutrinoDeviceHeaders();
   const response = await fetch(apiUrl(baseUrl, path), {
     ...init,
     headers: {
       Accept: 'application/json',
+      ...deviceHeaders,
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
       ...(init.headers ?? {}),
@@ -48,19 +171,11 @@ function pendingCatalogPayload(state: AppState): Pick<SyncPushRequest, 'ingredie
   const ingredientIds = new Set<string>();
   const foodIds = new Set<string>();
   const recipeIds = new Set<string>();
-  const activityIds = new Set<string>();
 
-  for (const intake of state.intakes) {
-    if (!intake.pending_sync) continue;
-    if (intake.item_type === 'recipe') recipeIds.add(stripRecipeRef(intake.food_id));
-    else if (intake.item_type === 'ingredient') ingredientIds.add(resolveCatalogId(state, 'ingredient', intake.food_id));
-    else if (intake.item_type === 'food' || !intake.item_type) foodIds.add(resolveCatalogId(state, 'food', intake.food_id));
-  }
-
-  for (const log of state.activityLogs) {
-    if (log.pending_sync && log.activity_id) activityIds.add(resolveCatalogId(state, 'activity', log.activity_id));
-  }
-
+  // Diary entries and activity logs are intentionally mobile-private. They no longer
+  // pull extra catalog records into the desktop upload payload just because they
+  // were used in a local diary entry. Local catalog items still sync through their
+  // own pending/source flags below.
   for (const item of state.recipeItems) {
     if (item.pending_sync || recipeIds.has(stripRecipeRef(item.recipe_id))) {
       recipeIds.add(stripRecipeRef(item.recipe_id));
@@ -74,62 +189,28 @@ function pendingCatalogPayload(state: AppState): Pick<SyncPushRequest, 'ingredie
     foods: state.foods.filter((item) => item.pending_sync || item.source_id === sourceId || foodIds.has(item.id)),
     recipes: state.recipes.filter((item) => item.pending_sync || item.source_id === sourceId || recipeIds.has(item.id)),
     recipe_items: state.recipeItems.filter((item) => item.pending_sync || recipeIds.has(stripRecipeRef(item.recipe_id))),
-    activities: state.activities.filter((item) => item.pending_sync || item.source_id === sourceId || activityIds.has(item.id)),
+    activities: state.activities.filter((item) => item.pending_sync || item.source_id === sourceId),
   };
 }
 
-function pendingPushPayload(state: AppState): SyncPushRequest {
+function pendingPushPayload(state: AppState, deviceInfo: MobileDeviceInfo): SyncPushRequest {
   return {
     source_id: state.pairing.sourceId,
-    device_name: typeof navigator !== 'undefined' ? `${navigator.platform || 'Mobile'} ${navigator.userAgent.includes('Android') ? 'Android' : ''}`.trim() : 'Mobile device',
+    device_name: friendlyDeviceName(deviceInfo),
     sent_at: Date.now(),
     ...pendingCatalogPayload(state),
-    intakes: state.intakes
-      .filter((intake) => intake.pending_sync)
-      .map((intake) => ({
-        id: intake.id,
-        item_type: intake.item_type,
-        food_id: intake.item_type === 'recipe'
-          ? `recipe:${resolveCatalogId(state, 'recipe', intake.food_id)}`
-          : intake.item_type === 'ingredient'
-            ? `ingredient:${resolveCatalogId(state, 'ingredient', intake.food_id)}`
-            : intake.item_type === 'food' ? resolveCatalogId(state, 'food', intake.food_id) : intake.food_id,
-        source_id: intake.source_id,
-        consumed_at: intake.consumed_at,
-        meal_type: intake.meal_type,
-        amount_g: intake.amount_g,
-        food_snapshot_json: intake.food_snapshot_json,
-        note_title: intake.note_title ?? null,
-        note_description: intake.note_description ?? null,
-      })),
-    weight_logs: state.weightLogs
-      .filter((weight) => weight.pending_sync)
-      .map((weight) => ({
-        id: weight.id,
-        measured_at: weight.measured_at,
-        weight_kg: weight.weight_kg,
-        bmi: weight.bmi,
-        source: weight.source,
-      })),
-    activity_logs: state.activityLogs
-      .filter((activity) => activity.pending_sync)
-      .map((activity) => ({
-        id: activity.id,
-        activity_id: activity.activity_id ? resolveCatalogId(state, 'activity', activity.activity_id) : null,
-        activity_name: activity.activity_name,
-        performed_at: activity.performed_at,
-        duration_min: activity.duration_min,
-        kcal: activity.kcal,
-        source: activity.source,
-      })),
+    // Mobile diary entries are local-only privacy data. The desktop server is a
+    // catalog source and optional staging inbox, not the canonical diary store.
+    intakes: [],
+    // Weight logs are private mobile diary/profile data and are not uploaded to desktop.
+    weight_logs: [],
+    // Activity diary logs are local-only for the same reason as meal entries.
+    activity_logs: [],
   };
 }
 
 function payloadHasAnything(payload: SyncPushRequest): boolean {
   return Boolean(
-    payload.intakes.length ||
-    payload.weight_logs.length ||
-    payload.activity_logs.length ||
     payload.ingredients?.length ||
     payload.foods?.length ||
     payload.recipes?.length ||
@@ -167,7 +248,7 @@ function mergePulledCatalog(state: AppState, pulled: SyncPullResponse, serverTim
     catalogAliases: aliases,
     ingredients: keepPending(state.ingredients, mergeById(state.ingredients, (pulled.ingredients ?? []).map(normalizeIngredient))),
     foods: keepPending(state.foods, mergeById(state.foods, (pulled.foods ?? []).map(normalizeFood))),
-    recipes: keepPending(state.recipes, mergeById(state.recipes, pulled.recipes ?? [])),
+    recipes: keepPending(state.recipes, mergeById(state.recipes, (pulled.recipes ?? []).map((recipe) => ({ ...recipe, extra_kcal: recipe.extra_kcal ?? 0, total_weight_g: null })))),
     recipeItems: keepPending(state.recipeItems, mergeById(state.recipeItems, pulled.recipe_items ?? [])),
     activities: keepPending(state.activities, mergeById(state.activities, pulled.activities ?? [])),
   };
@@ -206,12 +287,16 @@ export async function pushToServer(state: AppState): Promise<{ state: AppState; 
   const password = state.pairing.password ?? state.pairing.token ?? '';
   if (!baseUrl.trim()) throw new Error('Missing API base URL.');
 
-  const pushPayload = pendingPushPayload(state);
+  const deviceInfo = await getMobileDeviceInfo();
+  const pushPayload = pendingPushPayload(state, deviceInfo);
   if (!payloadHasAnything(pushPayload)) {
     return {
       state: {
         ...state,
         pairing: { ...state.pairing, lastHealthCheckAt: Date.now(), lastSyncError: undefined },
+        intakes: state.intakes.map((intake) => intake.pending_sync ? { ...intake, pending_sync: false } : intake),
+        weightLogs: state.weightLogs.map((weight) => weight.pending_sync ? { ...weight, pending_sync: false } : weight),
+        activityLogs: state.activityLogs.map((activity) => activity.pending_sync ? { ...activity, pending_sync: false } : activity),
       },
       result: {
         ok: true,
@@ -256,13 +341,13 @@ export async function pushToServer(state: AppState): Promise<{ state: AppState; 
     state: nextState,
     result: {
       ok: true,
-      message: 'Local data sent to the desktop inbox.',
+      message: 'Local catalog data sent to the desktop inbox. Diary and weight data stayed on this device.',
       pulledFoods: 0,
       pulledRecipes: 0,
       pulledActivities: 0,
-      pushedIntakes: pushPayload.intakes.length,
-      pushedWeightLogs: pushPayload.weight_logs.length,
-      pushedActivityLogs: pushPayload.activity_logs.length,
+      pushedIntakes: 0,
+      pushedWeightLogs: 0,
+      pushedActivityLogs: 0,
     },
   };
 }
@@ -300,6 +385,29 @@ function parseCsv(text: string): Record<string, string>[] {
     headers.forEach((header, index) => { row[header] = cells[index] ?? ''; });
     return row;
   });
+}
+
+
+function parseNameI18n(row: Record<string, string>): Record<string, string> {
+  const values: Record<string, string> = {};
+  const rawJson = row.name_i18n_json || row.name_i18n;
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+      for (const [code, value] of Object.entries(parsed || {})) {
+        const language = String(code || '').trim().toLowerCase();
+        const name = String(value ?? '').trim();
+        if (language && name) values[language] = name;
+      }
+    } catch { /* ignore invalid optional i18n JSON */ }
+  }
+  for (const [key, value] of Object.entries(row)) {
+    const match = key.match(/^name[_-]([a-z]{2})$/i);
+    const language = match?.[1]?.toLowerCase();
+    const name = String(value || '').trim();
+    if (language && name) values[language] = name;
+  }
+  return values;
 }
 
 function num(value: string | undefined, fallback = 0): number {
@@ -372,6 +480,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
             const id = row.id || `github-ingredient-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
             ingredientMap.set(id, normalizeIngredient({
               id, source_id: `github:${source.owner}/${source.repo}`, name,
+              name_i18n: parseNameI18n(row),
               note: row.note || row.description || null,
               default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
               kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
@@ -386,6 +495,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
               const id = row.id || `github-ingredient-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
               ingredientMap.set(id, normalizeIngredient({
                 id, source_id: `github:${source.owner}/${source.repo}`, name,
+                name_i18n: parseNameI18n(row),
                 note: row.note || row.description || null,
                 default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
                 kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
@@ -396,6 +506,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
               const id = row.id || `github-food-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
               foodMap.set(id, normalizeFood({
                 id, source_id: `github:${source.owner}/${source.repo}`, name,
+                name_i18n: parseNameI18n(row),
                 brand: row.brand || null,
                 catalog_kind: 'food',
                 note: row.note || row.description || null,
@@ -410,13 +521,13 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
             const name = row.name || row.title;
             if (!name) continue;
             const id = row.id || `github-activity-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-            activityMap.set(id, { id, source_id: `github:${source.owner}/${source.repo}`, code: row.code || id, name, description: row.description || null, activity_type: row.activity_type || row.type || 'custom', met: num(row.met, 1), kcal_per_min: num(row.kcal_per_min, 0), updated_at: now, deleted_at: null });
+            activityMap.set(id, { id, source_id: `github:${source.owner}/${source.repo}`, code: row.code || id, name, name_i18n: parseNameI18n(row), description: row.description || null, activity_type: row.activity_type || row.type || 'custom', met: num(row.met, 1), kcal_per_min: num(row.kcal_per_min, 0), updated_at: now, deleted_at: null });
             imported++;
           } else if (kind === 'recipes') {
             const name = row.name || row.title;
             if (!name) continue;
             const id = row.recipe_id || row.id || `github-recipe-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-            recipeMap.set(id, { id, source_id: `github:${source.owner}/${source.repo}`, name, description: row.description || null, note: row.note || null, servings_count: row.servings_count ? num(row.servings_count, 1) : null, total_weight_g: row.total_weight_g ? num(row.total_weight_g, 0) : null, updated_at: now, deleted_at: null });
+            recipeMap.set(id, { id, source_id: `github:${source.owner}/${source.repo}`, name, name_i18n: parseNameI18n(row), description: row.description || null, note: row.note || null, servings_count: row.servings_count ? num(row.servings_count, 1) : null, total_weight_g: null, extra_kcal: row.extra_kcal ? num(row.extra_kcal, 0) : 0, updated_at: now, deleted_at: null });
             if (row.ingredients_json) {
               try {
                 const ingredients = JSON.parse(row.ingredients_json) as Array<{ food_id: string; amount_g: number }>;

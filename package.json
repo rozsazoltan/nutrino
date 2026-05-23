@@ -1,7 +1,7 @@
 {
   "name": "nutrino",
   "private": true,
-  "version": "0.10.3",
+  "version": "0.11.9",
   "packageManager": "pnpm@10.32.1",
   "type": "module",
   "scripts": {
@@ -13,7 +13,13 @@
     "build:ios": "pnpm --filter nutrino-mobile ios:build",
     "init:android": "pnpm --filter nutrino-mobile android:init",
     "init:ios": "pnpm --filter nutrino-mobile ios:init",
-    "reset:android": "pnpm --filter nutrino-mobile android:reset"
+    "reset:android": "pnpm --filter nutrino-mobile android:reset",
+    "check:vue-i18n-quotes": "node scripts/check-vue-i18n-quotes.mjs",
+    "check:vue-sfc-syntax": "node scripts/check-vue-sfc-syntax.mjs",
+    "check:i18n": "pnpm check:vue-i18n-quotes && pnpm check:vue-sfc-syntax && pnpm check:i18n-completeness && pnpm check:desktop-raw-i18n-keys",
+    "check:i18n-completeness": "node scripts/check-i18n-completeness.mjs",
+    "check:android-mainactivity-bridge": "node scripts/check-android-mainactivity-bridge.mjs",
+    "check:desktop-raw-i18n-keys": "node scripts/check-desktop-raw-i18n-keys.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.0"

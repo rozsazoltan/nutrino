@@ -1,3 +1,5 @@
+export type LocalizedNameMap = Record<string, string>;
+
 export interface ServerStatus {
   running: boolean;
   bind_address: string | null;
@@ -10,12 +12,32 @@ export interface ServerStatus {
   auth_required: boolean;
   dev_mode: boolean;
   catalog_revision: number;
+  connected_devices: number;
+}
+
+export interface ConnectedDevice {
+  id: string;
+  display_name: string;
+  device_name?: string | null;
+  manufacturer?: string | null;
+  model?: string | null;
+  platform?: string | null;
+  os_version?: string | null;
+  app_channel?: string | null;
+  app_version?: string | null;
+  ip_address: string;
+  user_agent?: string | null;
+  first_seen: number;
+  last_seen: number;
+  request_count: number;
+  last_path: string;
 }
 
 export interface Food {
   id: string;
   source_id: string;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   brand?: string | null;
   note?: string | null;
   barcode?: string | null;
@@ -36,6 +58,7 @@ export interface Ingredient {
   id: string;
   source_id: string;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   note?: string | null;
   default_unit: string;
   serving_size_g?: number | null;
@@ -53,6 +76,7 @@ export interface Ingredient {
 export interface FoodInput {
   id?: string | null;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   brand?: string | null;
   note?: string | null;
   barcode?: string | null;
@@ -70,6 +94,7 @@ export interface FoodInput {
 export interface IngredientInput {
   id?: string | null;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   note?: string | null;
   default_unit?: string | null;
   serving_size_g?: number | null;
@@ -106,9 +131,11 @@ export interface Recipe {
   id: string;
   source_id: string;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   description?: string | null;
   note?: string | null;
   total_weight_g?: number | null;
+  extra_kcal?: number | null;
   servings_count?: number | null;
   updated_at: number;
   deleted_at?: number | null;
@@ -122,9 +149,11 @@ export interface RecipeInputItem {
 export interface RecipeInput {
   id?: string | null;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   description?: string | null;
   note?: string | null;
   total_weight_g?: number | null;
+  extra_kcal?: number | null;
   servings_count?: number | null;
   items: RecipeInputItem[];
 }
@@ -139,6 +168,7 @@ export interface RecipeItemDetail {
   carbs: number;
   fat: number;
   protein: number;
+  deleted_at?: number | null;
 }
 
 export interface RecipeNutrition {
@@ -160,6 +190,7 @@ export interface ActivityDefinition {
   id: string;
   code: string;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   description?: string | null;
   activity_type: string;
   met: number;
@@ -172,6 +203,7 @@ export interface ActivityInput {
   id?: string | null;
   code?: string | null;
   name: string;
+  name_i18n?: LocalizedNameMap | null;
   description?: string | null;
   activity_type?: string | null;
   met: number;
@@ -223,6 +255,15 @@ export interface CatalogDuplicateSuggestion {
   items: CatalogDuplicateItem[];
 }
 
+
+export interface SkippedSyncItem {
+  kind: string;
+  id: string;
+  label: string;
+  skipped_at: number;
+  item: unknown;
+}
+
 export interface SyncPushPayload {
   source_id?: string | null;
   device_name?: string | null;
@@ -235,6 +276,7 @@ export interface SyncPushPayload {
   intakes: Array<{ id: string; item_type?: string | null; food_id: string; source_id: string; consumed_at: number; meal_type: string; amount_g: number; food_snapshot_json: string; note_title?: string | null; note_description?: string | null }>;
   weight_logs: Array<{ id: string; measured_at: number; weight_kg: number; bmi?: number | null; source: string }>;
   activity_logs: Array<{ id: string; activity_id?: string | null; activity_name: string; performed_at: number; duration_min: number; kcal: number; source: string }>;
+  skipped_items?: SkippedSyncItem[];
 }
 
 export interface SyncInboxEntry {
