@@ -17,6 +17,7 @@ import type {
   UserProfile,
   WeightLog,
   GitHubCsvSource,
+  LocalizedNameMap,
 } from '../types';
 
 const STORAGE_KEY = 'nutrino.mobile.v3.state';
@@ -31,12 +32,12 @@ const fallbackActivities: ActivityDefinition[] = [
 ];
 
 export function inferDevBaseUrl(): string {
-  if (!import.meta.env.DEV) return '';
-
   const explicit = import.meta.env.VITE_NUTRINO_API_BASE_URL;
   if (typeof explicit === 'string' && explicit.trim()) {
     return explicit.trim().replace(/\/+$/, '');
   }
+
+  if (!import.meta.env.DEV) return '';
 
   if (typeof __NUTRINO_DEV_API_BASE_URL__ === 'string' && __NUTRINO_DEV_API_BASE_URL__.trim()) {
     return __NUTRINO_DEV_API_BASE_URL__.trim().replace(/\/+$/, '');
@@ -166,9 +167,9 @@ export function loadState(): AppState {
       },
       foods,
       ingredients,
-      recipes: Array.isArray(parsed.recipes) ? parsed.recipes : [],
+      recipes: Array.isArray(parsed.recipes) ? parsed.recipes.map((recipe: Recipe) => ({ ...recipe, name_i18n: normalizeNameI18n(recipe.name_i18n), extra_kcal: recipe.extra_kcal ?? 0, total_weight_g: null })) : [],
       recipeItems: Array.isArray(parsed.recipeItems) ? parsed.recipeItems : [],
-      activities: Array.isArray(parsed.activities) ? parsed.activities : defaults.activities,
+      activities: Array.isArray(parsed.activities) ? parsed.activities.map((activity) => ({ ...activity, name_i18n: normalizeNameI18n(activity.name_i18n) })) : defaults.activities,
       intakes: Array.isArray(parsed.intakes) ? parsed.intakes : [],
       activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
       weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
@@ -242,9 +243,23 @@ export function normalizeGitHubSource(source: Partial<GitHubCsvSource> | null | 
   };
 }
 
+
+function normalizeNameI18n(value: unknown): LocalizedNameMap {
+  if (!value || typeof value !== 'object') return {};
+  const result: LocalizedNameMap = {};
+  for (const [rawCode, rawName] of Object.entries(value as Record<string, unknown>)) {
+    const code = String(rawCode || '').trim().toLowerCase();
+    const name = String(rawName ?? '').trim();
+    if (!code || !name) continue;
+    result[code] = name;
+  }
+  return result;
+}
+
 export function normalizeFood(food: Food): Food {
   return {
     ...food,
+    name_i18n: normalizeNameI18n(food.name_i18n),
     brand: food.brand ?? null,
     catalog_kind: 'food',
     note: food.note ?? null,
@@ -260,6 +275,7 @@ export function normalizeFood(food: Food): Food {
 export function normalizeIngredient(ingredient: Ingredient): Ingredient {
   return {
     ...ingredient,
+    name_i18n: normalizeNameI18n(ingredient.name_i18n),
     note: ingredient.note ?? null,
     default_unit: ingredient.default_unit || 'g',
     serving_size_g: ingredient.serving_size_g ?? null,
@@ -274,6 +290,7 @@ export function ingredientAsFood(ingredient: Ingredient): Food {
     id: `ingredient:${ingredient.id}`,
     source_id: ingredient.source_id,
     name: ingredient.name,
+    name_i18n: normalizeNameI18n(ingredient.name_i18n),
     brand: 'Ingredient',
     catalog_kind: 'ingredient',
     note: ingredient.note ?? null,
@@ -298,6 +315,7 @@ function foodToIngredient(food: Food): Ingredient {
     id: food.id,
     source_id: food.source_id,
     name: food.name,
+    name_i18n: normalizeNameI18n(food.name_i18n),
     note: food.note ?? null,
     default_unit: food.default_unit || 'g',
     serving_size_g: food.serving_size_g ?? null,
@@ -329,6 +347,7 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
       recipe_id: recipe.id,
       source_id: recipe.source_id,
       name: recipe.name,
+      name_i18n: normalizeNameI18n(recipe.name_i18n),
       brand: 'Recipe',
       catalog_kind: 'food',
       note: recipe.note ?? recipe.description ?? null,
@@ -348,8 +367,8 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
 
   visited.add(recipe.id);
   const ingredientWeight = items.reduce((sum, item) => sum + Math.max(0, item.amount_g), 0);
-  const totalWeight = Number(recipe.total_weight_g || 0) > 0 ? Number(recipe.total_weight_g) : ingredientWeight;
-  let kcal = 0;
+  const totalWeight = ingredientWeight;
+  let kcal = Number(recipe.extra_kcal || 0);
   let carbs = 0;
   let fat = 0;
   let protein = 0;
@@ -394,6 +413,7 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
     recipe_id: recipe.id,
     source_id: recipe.source_id,
     name: recipe.name,
+    name_i18n: normalizeNameI18n(recipe.name_i18n),
     brand: 'Recipe',
     catalog_kind: 'food',
     note: recipe.note ?? recipe.description ?? null,
@@ -466,15 +486,15 @@ export function canonicalizeStateReferences(state: AppState): AppState {
       };
     }),
     intakes: state.intakes.map((intake) => {
-      if (intake.item_type === 'note') return intake;
+      if (intake.item_type === 'note') return { ...intake, pending_sync: false };
       const kind: CatalogKind = intake.item_type === 'recipe' ? 'recipe' : intake.item_type === 'ingredient' ? 'ingredient' : 'food';
       const canonical = resolveCatalogId(state, kind, intake.food_id);
       const normalized = kind === 'recipe' ? `recipe:${canonical}` : kind === 'ingredient' ? `ingredient:${canonical}` : canonical;
-      return normalized === intake.food_id ? intake : { ...intake, food_id: normalized, pending_sync: true, updated_at: Date.now() };
+      return normalized === intake.food_id ? { ...intake, pending_sync: false } : { ...intake, food_id: normalized, pending_sync: false, updated_at: Date.now() };
     }),
     activityLogs: state.activityLogs.map((log) => {
       const canonical = canonicalActivity(log.activity_id);
-      return canonical === log.activity_id ? log : { ...log, activity_id: canonical, pending_sync: true, updated_at: Date.now() };
+      return canonical === log.activity_id ? { ...log, pending_sync: false } : { ...log, activity_id: canonical, pending_sync: false, updated_at: Date.now() };
     }),
   };
 }

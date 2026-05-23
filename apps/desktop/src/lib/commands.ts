@@ -15,6 +15,7 @@ import type {
   SyncInboxEntry,
   SyncInboxCommitResult,
   CatalogDuplicateSuggestion,
+  ConnectedDevice,
 } from '../types';
 
 export const commands = {
@@ -60,4 +61,5 @@ export const commands = {
   updateSyncInboxPayload: (entryId: string, payloadJson: string) => invoke<SyncInboxEntry>('update_sync_inbox_payload', { entryId, payloadJson }),
   mergeCatalogItem: (kind: string, aliasId: string, canonicalId: string) => invoke<void>('merge_catalog_item', { kind, aliasId, canonicalId }),
   listCatalogDuplicateSuggestions: () => invoke<CatalogDuplicateSuggestion[]>('list_catalog_duplicate_suggestions'),
+  listConnectedDevices: () => invoke<ConnectedDevice[]>('list_connected_devices'),
 };
