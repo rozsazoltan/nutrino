@@ -223,6 +223,36 @@ App-local maintenance commands still exist where they are needed, for example An
 
 On Windows, the Vite dev servers ignore Rust/Tauri build output directories such as `src-tauri/target` and `src-tauri/gen`, so Cargo-generated `.pdb` files are not watched while they are locked by the compiler.
 
+### Release workflow
+
+The repository has one manual `Release` workflow. Start it from GitHub Actions and provide the version, for example `0.11.12`. The input version must match the root package, desktop package, mobile package, both Tauri configs, and both Rust crates.
+
+The workflow builds release artifacts first and publishes the GitHub Release only after every build job succeeds:
+
+```text
+Desktop: Linux, Windows, macOS
+Mobile:  Android, plus signed iOS when Apple signing secrets are configured
+```
+
+Release builds use the public `verzly/tauri-release` GitHub Action. The generated GitHub Release body uses GitHub's `What's Changed` release notes and compares against the highest previous full `vX.Y.Z` tag, ignoring moving tags such as `latest`, `vX`, and `vX.Y`. After the assets are uploaded, the workflow updates these channel tags:
+
+```text
+latest
+vX
+vX.Y
+```
+
+The iOS job is optional. It runs only when all Apple signing secrets are configured:
+
+```text
+APPLE_TEAM_ID
+IOS_CERTIFICATE_P12_BASE64
+IOS_CERTIFICATE_PASSWORD
+IOS_PROVISIONING_PROFILE_BASE64
+```
+
+When these secrets are missing, the workflow skips the iOS build and still publishes the release with the desktop and Android artifacts. This keeps hobby/open-source releases usable without paying for Apple Developer Program membership, while leaving the signed iOS path ready for later.
+
 ### Runtime channels and Android dev flow
 
 Nutrino detects its channel at runtime. Vite/Tauri dev sessions show the Dev channel inside the app. Packaged builds are stable and use the normal `Nutrino` app name.
