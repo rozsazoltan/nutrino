@@ -1,6 +1,6 @@
 [package]
 name = "nutrino_desktop"
-version = "0.11.14"
+version = "0.11.15"
 description = "nutrino desktop catalog and LAN API server"
 authors = ["nutrino"]
 edition = "2021"
