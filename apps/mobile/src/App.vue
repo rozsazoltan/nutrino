@@ -1001,6 +1001,11 @@ const diaryKcalTone = computed(() => kcalTone(consumedKcal.value, dailyGoal.valu
 const homeShellToneClass = computed(() => activeTab.value === 'home' ? `home-${diaryKcalTone.value}` : '');
 const selectedDayMacroSummary = computed(() => dayMacroSummary(selectedDate.value));
 
+
+const normalizeTranslationValues = (values: Partial<Record<string, string>>): Record<string, string> => Object.fromEntries(
+  Object.entries(values).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+);
+
 const translations: Record<string, Record<string, string>> = {
   en: {
     home: 'Home', diary: 'Diary', recipes: 'Recipes', profile: 'Profile', settings: 'Settings', synced: 'Synced', syncing: 'Syncing', pending: 'pending',
@@ -1040,7 +1045,7 @@ const fallbackTranslations: Record<string, Partial<Record<string, string>>> = {
   pt: { language: 'Idioma', systemDefault: 'Padrão do sistema', english: 'Inglês', hungarian: 'Húngaro', scan: 'Digitalizar', languageSearch: 'Pesquisar por nome em inglês, nome nativo ou código…' },
 };
 for (const [code, values] of Object.entries(fallbackTranslations)) {
-  translations[code] = { ...translations.en, ...values };
+  translations[code] = { ...translations.en, ...normalizeTranslationValues(values) };
 }
 
 const supplementalTranslations: Record<string, Partial<Record<string, string>>> = {
@@ -1067,7 +1072,7 @@ const supplementalTranslations: Record<string, Partial<Record<string, string>>> 
   pt: { scanBarcodeQr: 'Digitalizar código / QR', scanNutrinoQr: 'Digitalizar QR Nutrino', scanPlaceholder: 'código de barras, conteúdo QR ou código Nutrino', translationsHint: 'Adiciona apenas os idiomas necessários. O nome base fica como fallback.', translationLanguage: 'Idioma', translationValue: 'Nome traduzido', translationAddPlaceholder: 'Adicionar idioma…', name: 'Nome', note: 'Nota', description: 'Descrição', optional: 'opcional', remove: 'Remover', find: 'Procurar', noMatchingItem: 'Sem correspondência.' },
 };
 for (const [code, values] of Object.entries(supplementalTranslations)) {
-  translations[code] = { ...(translations[code] || translations.en), ...values };
+  translations[code] = { ...(translations[code] || translations.en), ...normalizeTranslationValues(values) };
 }
 
 
@@ -1087,7 +1092,7 @@ const mobileCoreLanguageTranslations: Record<string, Partial<Record<string, stri
   pt: { home: 'Início', diary: 'Diário', recipes: 'Receitas', profile: 'Perfil', settings: 'Definições', activity: 'Atividade', breakfast: 'Pequeno-almoço', lunch: 'Almoço', dinner: 'Jantar', snack: 'Lanche', units: 'Unidades', calculations: 'Cálculos', privacy: 'Privacidade', about: 'Sobre', licenses: 'Licenças', translations: 'Traduções', noTranslations: 'Ainda não há traduções.', addTranslation: 'Adicionar tradução', cancel: 'Cancelar', ok: 'OK', save: 'Guardar', add: 'Adicionar', update: 'Atualizar', edit: 'Editar', delete: 'Eliminar', food: 'Alimento', foods: 'Alimentos', ingredient: 'Ingrediente', recipe: 'Receita', activities: 'Atividades' },
 };
 for (const [language, values] of Object.entries(mobileCoreLanguageTranslations)) {
-  translations[language] = { ...translations[language], ...values };
+  translations[language] = { ...(translations[language] || translations.en), ...normalizeTranslationValues(values) };
 }
 
 
