@@ -24,7 +24,7 @@ use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 const APP_NAME: &str = "Nutrino Desktop";
-const APP_VERSION: &str = "0.11.15";
+const APP_VERSION: &str = "0.11.16";
 
 struct ServerRuntime {
     port: u16,
