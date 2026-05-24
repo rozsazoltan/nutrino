@@ -23,8 +23,8 @@ use tokio::sync::oneshot;
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
-const APP_NAME: &str = "Nutrino Desktop";
-const APP_VERSION: &str = "0.11.16";
+const APP_NAME: &str = "Nutrino";
+const APP_VERSION: &str = "0.11.17";
 
 struct ServerRuntime {
     port: u16,
