@@ -287,6 +287,20 @@ pnpm dev:android -- --host <your-desktop-lan-ip>
 
 The mobile app intentionally avoids using `tauri.localhost` for LAN API access in development. The desktop LAN IP is used instead.
 
+### Tauri and Android artifact storage
+
+Nutrino keeps heavy Rust and Android cache output out of `src-tauri` where possible. The desktop and mobile Tauri wrappers set Cargo output to `.cache/tauri/cargo-target/<app>` by default, and Android Gradle user cache output to `.cache/tauri/gradle`. The generated Android project still lives under `apps/mobile/src-tauri/gen/android` because Tauri Android requires that native Gradle project, but package outputs are pruned after dev sessions and copied to `apps/mobile/dist/android/<channel>/` after successful stable builds.
+
+Useful maintenance commands:
+
+```bash
+pnpm size:android      # show the largest Android/Tauri artifact directories
+pnpm prune:android     # remove generated APK/AAB package outputs only
+pnpm reset:android     # regenerate the Android native project, preserving Rust cache
+```
+
+Set `NUTRINO_ANDROID_KEEP_GENERATED_OUTPUTS=1` when you want to keep the Gradle-generated APK/AAB outputs inside `src-tauri/gen/android/app/build/outputs` for manual inspection. Set `NUTRINO_BUILD_CACHE_DIR` to move the shared Tauri cache somewhere else.
+
 
 ## License
 
