@@ -1,0 +1,41 @@
+[project]
+project_dir = "apps/desktop"
+package_manager = "pnpm"
+install_command = "corepack enable && corepack prepare pnpm@10.32.1 --activate && pnpm install --no-frozen-lockfile"
+
+[output]
+clean = true
+sha256 = true
+manifest = true
+
+[artifacts]
+include_extensions = ["AppImage", "deb", "rpm", "exe", "msi", "zip", "dmg", "sig"]
+include_files = ["latest.json", "release.json", "release-manifest.json"]
+keep_relative_paths = false
+allow_empty = false
+
+[linux]
+enabled = true
+strategy = "host-only"
+bundles = ["appimage", "deb", "rpm"]
+targets = []
+
+[windows]
+enabled = true
+strategy = "host-only"
+bundles = ["nsis", "msi"]
+targets = ["x86_64-pc-windows-msvc"]
+
+[macos]
+enabled = true
+strategy = "host-only"
+bundles = ["dmg", "app"]
+targets = ["universal-apple-darwin"]
+
+[android]
+enabled = false
+strategy = "disabled"
+
+[ios]
+enabled = false
+strategy = "disabled"

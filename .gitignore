@@ -1,22 +1,36 @@
 # Dependencies
 node_modules/
 .pnpm-store/
+.pnp.*
 
 # Build output
 dist/
 build/
 coverage/
+.vite/
+
+# Local caches
+.cache/
+.tauri-release-work/
+**/.cache/
+**/.vite/
 
 # Tauri / Rust
+/target/
 **/src-tauri/target/
 **/src-tauri/gen/android/.gradle/
 **/src-tauri/gen/android/build/
 **/src-tauri/gen/apple/build/
 **/src-tauri/gen/schemas/
 
-# Generated mobile projects can be recreated with pnpm mobile:android:init / ios:init
-# Keep this commented if you want to commit native generated projects.
+# Generated mobile projects can be recreated with pnpm init:android / pnpm init:ios.
+# Keep this commented if you intentionally commit native generated projects.
 # apps/mobile/src-tauri/gen/
+
+# Local app data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
 # Local env
 .env
