@@ -23,7 +23,6 @@ concurrency:
 env:
   NODE_VERSION: "22"
   PNPM_VERSION: "10.32.1"
-  TAURI_RELEASE_BINARY: "v0.2.2"
   ANDROID_NDK_VERSION: "27.0.11718014"
 
 jobs:
@@ -260,9 +259,8 @@ jobs:
           pnpm install --no-frozen-lockfile
 
       - name: Build desktop artifacts
-        uses: verzly/tauri-release@v0.2.2
+        uses: verzly/tauri-release@latest
         with:
-          version: ${{ env.TAURI_RELEASE_BINARY }}
           args: >-
             build
             --config .github/release/nutrino-desktop.tauri-release.toml
@@ -348,9 +346,8 @@ jobs:
           pnpm install --no-frozen-lockfile
 
       - name: Build Android artifacts
-        uses: verzly/tauri-release@v0.2.2
+        uses: verzly/tauri-release@latest
         with:
-          version: ${{ env.TAURI_RELEASE_BINARY }}
           args: >-
             build
             --config .github/release/nutrino-mobile.tauri-release.toml
@@ -437,11 +434,10 @@ jobs:
           cp "${PROFILE_PATH}" "${HOME}/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
 
       - name: Build iOS artifact
-        uses: verzly/tauri-release@v0.2.2
+        uses: verzly/tauri-release@latest
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          version: ${{ env.TAURI_RELEASE_BINARY }}
           args: >-
             build
             --config .github/release/nutrino-mobile.tauri-release.toml
