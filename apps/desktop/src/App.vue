@@ -44,7 +44,7 @@ const foodSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const recipeQuery = ref('');
 const recipeSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const settings = ref<DesktopSettings | null>(null);
-const appVersion = '0.11.10';
+const appVersion = '0.11.15';
 const appChannel = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
 const appName = appChannel === 'dev' ? 'Nutrino Desktop Dev' : 'Nutrino Desktop';
 document.title = appName;
@@ -73,6 +73,9 @@ const languageOptions: LanguageOption[] = [
 ];
 
 const supportedLanguageCodes = languageOptions.filter((language) => language.code !== 'system').map((language) => language.code);
+const normalizeTranslationValues = (values: Partial<Record<string, string>>): Record<string, string> => Object.fromEntries(
+  Object.entries(values).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+);
 const desktopLanguage = ref<AppLanguage>((localStorage.getItem(desktopLanguageKey) as AppLanguage | null) || 'system');
 const languageSearch = ref('');
 
@@ -557,7 +560,7 @@ const desktopCoreLanguageTranslations: Record<string, Partial<Record<string, str
   pt: { 'nav.dashboard': 'Painel', 'nav.ingredients': 'Ingredientes', 'nav.foods': 'Alimentos', 'nav.recipes': 'Receitas', 'nav.activities': 'Atividades', 'nav.server': 'Servidor', 'nav.settings': 'Definições', language: 'Idioma', languageSearch: 'Pesquisar por nome em inglês, nome nativo ou código…', translations: 'Traduções', addTranslation: 'Adicionar tradução', translationHint: 'O nome base continua obrigatório. Adiciona nomes localizados apenas quando necessário.', noTranslation: 'Ainda não há traduções.', selectLanguage: 'Selecionar idioma', nameInLanguage: 'Nome localizado', remove: 'Remover' },
 };
 for (const [language, values] of Object.entries(desktopCoreLanguageTranslations)) {
-  translations[language] = { ...translations[language], ...values };
+  translations[language] = { ...translations[language], ...normalizeTranslationValues(values) };
 }
 
 
@@ -4183,10 +4186,10 @@ const desktopCompactTranslations: Record<string, Partial<Record<keyof typeof des
   pt: { "ui.apiRunning": "API em execução", "ui.apiStopped": "API parada", "ui.lanApiRunningTitle": "API LAN em execução", "ui.lanApiStoppedTitle": "API LAN parada", "ui.mobileCanSyncCatalog": "A aplicação móvel pode sincronizar o catálogo a partir deste computador.", "ui.startServerToPairRefresh": "Inicia o servidor para emparelhar ou atualizar o catálogo móvel.", "ui.startServerToPairMobile": "Inicia o servidor para emparelhar o móvel", "ui.online": "Online", "ui.offline": "Offline", "ui.portLabel": "Porta", "ui.versionLabel": "Versão", "ui.never": "nunca", "ui.justNow": "agora mesmo", "ui.versionUnknown": "versão desconhecida", "ui.settingRuntimeTitle": "Execução", "ui.settingRuntimeSubtitle": "Comportamento do servidor e do segundo plano.", "ui.settingWindowTitle": "Comportamento da janela", "ui.settingWindowSubtitle": "Preferências da janela desktop e tray.", "ui.settingRememberWindowTitle": "Memorizar posição e tamanho da janela", "ui.settingRememberWindowBody": "Restaura a última geometria da janela no próximo arranque. Quando ativo, guarda automaticamente o tamanho e a posição ao fechar.", "ui.settingLaunchStartupTitle": "Iniciar com o sistema", "ui.settingLaunchStartupBody": "Registar nutrino Desktop para iniciar no login do Windows.", "ui.settingRunBackgroundTitle": "Executar em segundo plano", "ui.settingRunBackgroundBody": "Manter o processo no tray ativo para que a API LAN continue a funcionar.", "ui.settingAutoStartServerTitle": "Iniciar servidor API ao abrir a app", "ui.settingAutoStartServerBody": "Iniciar automaticamente o servidor LAN na porta guardada.", "ui.settingCloseTrayTitle": "O botão fechar oculta no tray", "ui.settingCloseTrayBody": "Quando o modo de segundo plano está ativo, X oculta a janela em vez de sair.", "ui.settingStartHiddenTitle": "Iniciar oculto no tray ao entrar no Windows", "ui.settingStartHiddenBody": "Iniciar no tray quando lançado pelo arranque do Windows.", "ui.settingsSaved": "Definições guardadas.", "ui.currentWindowSaved": "Posição e tamanho atuais da janela guardados.", "ui.thirdPartyNoticesAndAcknowledgements_833ba": "Avisos de terceiros e agradecimentos.", "ui.runtimeTrayStartupBackupsPrivacyAnd_fbc8f": "Execução, tray, arranque, cópias, privacidade e links do projeto.", "ui.backupsRestoreAndReset_6433e": "Cópias, restauro e reposição.", "ui.storeTheCurrentPositionAndSize_161c9": "Guardar imediatamente a posição e o tamanho atuais.", "ui.repository_33fcf": "Repositório", "ui.reportIssue_92fd0": "Reportar problema", "ui.star_26f93": "Estrela" }
 };
 for (const [language, values] of Object.entries(desktopFinalFallbacks)) {
-  desktopFinalTranslations[language] = { ...desktopFinalTranslations.en, ...values };
+  desktopFinalTranslations[language] = { ...desktopFinalTranslations.en, ...normalizeTranslationValues(values) };
 }
 for (const [language, values] of Object.entries(desktopCompactTranslations)) {
-  desktopFinalTranslations[language] = { ...desktopFinalTranslations.en, ...values };
+  desktopFinalTranslations[language] = { ...desktopFinalTranslations.en, ...normalizeTranslationValues(values) };
 }
 
 for (const [language, values] of Object.entries(desktopFinalTranslations)) {

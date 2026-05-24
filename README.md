@@ -239,7 +239,7 @@ Set `NUTRINO_ANDROID_KEEP_GENERATED_OUTPUTS=1` when you want to keep Gradle-gene
 
 ## Release workflow
 
-The repository has one manual `Release` workflow on the `master` branch. Start it from GitHub Actions and provide the version, for example `0.11.14`. The input version may be written with or without a leading `v`, but repository files must use the plain version number.
+The repository has one manual `Release` workflow on the `master` branch. Start it from GitHub Actions and provide the version, for example `0.11.15`. The input version may be written with or without a leading `v`, but repository files must use the plain version number.
 
 The workflow validates the root package, shared packages, desktop package, mobile package, both Tauri configs, both Rust crates and the Android `versionCode` before any release build starts. It resolves the selected ref to a commit SHA first, so all platform jobs build the same commit even if `master` moves while the workflow is running.
 
