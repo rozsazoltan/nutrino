@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { channelConfig, parseChannel, stripChannelArgs } from './android-channel.mjs';
+import { mobileCargoTargetDir, mobileGradleUserHome, archiveAndroidPackageOutputs, pruneAndroidPackageOutputs, formatBytes } from './android-artifacts.mjs';
 
 const projectRoot = process.cwd();
 const androidDir = path.join(projectRoot, 'src-tauri', 'gen', 'android');
@@ -54,6 +55,8 @@ function cleanEnv(channel) {
   env.WRY_ANDROID_KOTLIN_FILES_OUT_DIR = androidGeneratedKotlinDir(config.applicationId);
   env.CARGO_BUILD_JOBS = env.CARGO_BUILD_JOBS || String(cpuCount());
   env.CARGO_INCREMENTAL = env.CARGO_INCREMENTAL || '1';
+  env.CARGO_TARGET_DIR = env.CARGO_TARGET_DIR || mobileCargoTargetDir(projectRoot);
+  env.GRADLE_USER_HOME = env.GRADLE_USER_HOME || mobileGradleUserHome(projectRoot);
   env.GRADLE_OPTS = [
     env.GRADLE_OPTS || '',
     '-Dorg.gradle.daemon=true',
@@ -102,11 +105,14 @@ const isApkBuild = args.includes('--apk');
 const isDebugBuild = args.includes('--debug') || args.includes('-d');
 const targetValues = args.flatMap((arg, index) => (arg === '--target' && args[index + 1] ? [args[index + 1]] : []));
 const keystorePropertiesPath = path.join(androidDir, 'keystore.properties');
+const androidEnv = cleanEnv(channel);
 
 console.log(isDebugBuild
   ? 'Debug APK build: fast and installable for development, but larger than release.'
   : 'Release build: optimized for size. A real keystore is recommended for distribution.');
 console.log(targetValues.length ? `Native targets: ${targetValues.join(', ')}` : 'Native targets: all supported ABIs (larger and slower).');
+console.log(`Cargo target cache: ${androidEnv.CARGO_TARGET_DIR}`);
+console.log(`Gradle user cache: ${androidEnv.GRADLE_USER_HOME}`);
 console.log('Use root commands: pnpm dev:android for live Vite development or pnpm build:android for a stable aarch64 APK.');
 if (isApkBuild && !isDebugBuild && !fs.existsSync(keystorePropertiesPath)) {
   console.warn('\nWarning: no src-tauri/gen/android/keystore.properties file found.');
@@ -122,7 +128,7 @@ const commandArgs = process.platform === 'win32'
 
 const child = spawn(command, commandArgs, {
   stdio: 'inherit',
-  env: cleanEnv(channel),
+  env: androidEnv,
 });
 
 child.on('error', (error) => {
@@ -132,6 +138,23 @@ child.on('error', (error) => {
 });
 
 child.on('exit', (code, signal) => {
+  if ((code ?? 0) === 0) {
+    const copied = archiveAndroidPackageOutputs({ projectRoot, androidDir, channel: config.channel });
+    if (copied.length > 0) {
+      console.log('\nAndroid package artifact archive:');
+      for (const item of copied) {
+        console.log(`- ${item.to} (${formatBytes(item.size)})`);
+      }
+    }
+
+    if (process.env.NUTRINO_ANDROID_KEEP_GENERATED_OUTPUTS !== '1' && copied.length > 0) {
+      const removed = pruneAndroidPackageOutputs(androidDir);
+      const total = removed.reduce((sum, item) => sum + item.size, 0);
+      if (removed.length > 0) {
+        console.log(`Pruned duplicate generated Android package outputs: ${formatBytes(total)}`);
+      }
+    }
+  }
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 0);
 });

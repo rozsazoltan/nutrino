@@ -1,0 +1,42 @@
+[project]
+project_dir = "apps/mobile"
+package_manager = "pnpm"
+install_command = "corepack enable && corepack prepare pnpm@10.32.1 --activate && pnpm install --no-frozen-lockfile"
+
+[output]
+clean = true
+sha256 = true
+manifest = true
+
+[artifacts]
+include_extensions = ["apk", "aab", "ipa", "sig"]
+include_files = ["latest.json", "release.json", "release-manifest.json"]
+keep_relative_paths = false
+allow_empty = false
+
+[linux]
+enabled = false
+strategy = "disabled"
+
+[windows]
+enabled = false
+strategy = "disabled"
+
+[macos]
+enabled = false
+strategy = "disabled"
+
+[android]
+enabled = true
+strategy = "host-only"
+apk = true
+aab = true
+split_per_abi = false
+targets = ["aarch64"]
+command = "node scripts/android-build.mjs --channel stable --apk --aab --target aarch64"
+
+[ios]
+enabled = true
+strategy = "host-only"
+targets = []
+command = "pnpm ios:build"

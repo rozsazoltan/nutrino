@@ -4,6 +4,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { channelConfig, parseChannel, patchTauriConfig } from './android-channel.mjs';
+import { mobileCargoTargetDir } from './android-artifacts.mjs';
 
 const projectRoot = process.cwd();
 const androidDir = path.join(projectRoot, 'src-tauri', 'gen', 'android');
@@ -405,6 +406,7 @@ function cleanStaleAndroidNativeState(config) {
   // Android package/channel really changes and JNI symbols may be stale.
   if (forceNativeClean || packageChanged) {
     removePathIfExists(path.join(projectRoot, 'src-tauri', 'target'));
+    removePathIfExists(mobileCargoTargetDir(projectRoot));
   }
 
   removePathIfExists(path.join(androidDir, 'app', 'src', 'main', 'jniLibs'));

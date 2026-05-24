@@ -1,9 +1,16 @@
 node_modules/
 dist/
+build/
+coverage/
 .vite/
-.DS_Store
+.cache/
 src-tauri/target/
 src-tauri/gen/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 .env
 .env.*
 *.log
+.DS_Store
+Thumbs.db
