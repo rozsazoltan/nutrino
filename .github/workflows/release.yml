@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version without a leading v, for example 0.11.16"
+        description: "Release version without a leading v, for example 0.11.17"
         required: true
         type: string
       ref:
@@ -23,7 +23,7 @@ concurrency:
 env:
   NODE_VERSION: "22"
   PNPM_VERSION: "10.32.1"
-  TAURI_RELEASE_BINARY: "v0.2.1"
+  TAURI_RELEASE_BINARY: "v0.2.2"
   ANDROID_NDK_VERSION: "27.0.11718014"
 
 jobs:
@@ -52,7 +52,7 @@ jobs:
           VERSION="${RAW_VERSION#v}"
 
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Release version must be a full semantic version, for example 0.11.16"
+            echo "::error::Release version must be a full semantic version, for example 0.11.17"
             exit 1
           fi
 
@@ -260,7 +260,7 @@ jobs:
           pnpm install --no-frozen-lockfile
 
       - name: Build desktop artifacts
-        uses: verzly/tauri-release@v0.2.1
+        uses: verzly/tauri-release@v0.2.2
         with:
           version: ${{ env.TAURI_RELEASE_BINARY }}
           args: >-
@@ -348,7 +348,7 @@ jobs:
           pnpm install --no-frozen-lockfile
 
       - name: Build Android artifacts
-        uses: verzly/tauri-release@v0.2.1
+        uses: verzly/tauri-release@v0.2.2
         with:
           version: ${{ env.TAURI_RELEASE_BINARY }}
           args: >-
@@ -437,7 +437,7 @@ jobs:
           cp "${PROFILE_PATH}" "${HOME}/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
 
       - name: Build iOS artifact
-        uses: verzly/tauri-release@v0.2.1
+        uses: verzly/tauri-release@v0.2.2
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:

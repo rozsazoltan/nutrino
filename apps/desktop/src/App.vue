@@ -44,9 +44,9 @@ const foodSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const recipeQuery = ref('');
 const recipeSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const settings = ref<DesktopSettings | null>(null);
-const appVersion = '0.11.16';
+const appVersion = '0.11.17';
 const appChannel = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
-const appName = appChannel === 'dev' ? 'Nutrino Desktop Dev' : 'Nutrino Desktop';
+const appName = appChannel === 'dev' ? 'Nutrino Dev' : 'Nutrino';
 document.title = appName;
 
 type AppLanguage = 'system' | 'en' | 'hu' | 'de' | 'fr' | 'ru' | 'uk' | 'zh' | 'sk' | 'ro' | 'cs' | 'sl' | 'hr' | 'pl' | 'es' | 'pt';
