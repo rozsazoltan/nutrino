@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { DEV_APPLICATION_ID, channelConfig } from './android-channel.mjs';
+import { mobileCargoTargetDir, mobileGradleUserHome, pruneAndroidPackageOutputs, formatBytes } from './android-artifacts.mjs';
 
 const projectRoot = process.cwd();
 const androidDir = path.join(projectRoot, 'src-tauri', 'gen', 'android');
@@ -117,6 +118,8 @@ function cleanEnv(host) {
   env.NUTRINO_DEV_API_BASE_URL = `http://${host}:8090/api/v1`;
   env.CARGO_BUILD_JOBS = env.CARGO_BUILD_JOBS || String(cpuCount());
   env.CARGO_INCREMENTAL = env.CARGO_INCREMENTAL || '1';
+  env.CARGO_TARGET_DIR = env.CARGO_TARGET_DIR || mobileCargoTargetDir(projectRoot);
+  env.GRADLE_USER_HOME = env.GRADLE_USER_HOME || mobileGradleUserHome(projectRoot);
   env.GRADLE_OPTS = [
     env.GRADLE_OPTS || '',
     '-Dorg.gradle.daemon=true',
@@ -171,8 +174,12 @@ await ensureAndroidProjectExists('dev');
 const patchCode = await patchGeneratedAndroidProject();
 if (patchCode !== 0) process.exit(patchCode);
 
+const androidEnv = cleanEnv(host);
+
 console.log(`\nStarting Tauri Android dev with host ${host}`);
 console.log(`Dev package: ${DEV_APPLICATION_ID}`);
+console.log(`Cargo target cache: ${androidEnv.CARGO_TARGET_DIR}`);
+console.log(`Gradle user cache: ${androidEnv.GRADLE_USER_HOME}`);
 console.log('If this is not your Wi-Fi/LAN IP, stop it and run:');
 console.log('  pnpm android:dev -- --host <your-desktop-lan-ip>\n');
 
@@ -183,7 +190,7 @@ const args = process.platform === 'win32'
 
 const child = spawn(command, args, {
   stdio: 'inherit',
-  env: cleanEnv(host),
+  env: androidEnv,
 });
 
 child.on('error', (error) => {
@@ -193,6 +200,13 @@ child.on('error', (error) => {
 });
 
 child.on('exit', (code, signal) => {
+  if (process.env.NUTRINO_ANDROID_KEEP_GENERATED_OUTPUTS !== '1') {
+    const removed = pruneAndroidPackageOutputs(androidDir);
+    if (removed.length > 0) {
+      const total = removed.reduce((sum, item) => sum + item.size, 0);
+      console.log(`Pruned generated Android package outputs after dev: ${formatBytes(total)}`);
+    }
+  }
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 0);
 });

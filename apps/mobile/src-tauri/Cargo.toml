@@ -1,6 +1,6 @@
 [package]
 name = "nutrino_mobile"
-version = "0.11.9"
+version = "0.11.10"
 description = "nutrino mobile Tauri v2 Android client"
 authors = ["nutrino"]
 edition = "2021"

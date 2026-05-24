@@ -1983,7 +1983,7 @@ dependencies = [
 
 [[package]]
 name = "nutrino_desktop"
-version = "0.11.9"
+version = "0.11.10"
 dependencies = [
  "anyhow",
  "axum",

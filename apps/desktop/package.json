@@ -1,15 +1,15 @@
 {
   "name": "nutrino-desktop",
   "private": true,
-  "version": "0.11.9",
+  "version": "0.11.10",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri": "node ../../scripts/tauri-env.mjs",
+    "tauri:dev": "node ../../scripts/tauri-env.mjs dev",
+    "tauri:build": "node ../../scripts/tauri-env.mjs build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

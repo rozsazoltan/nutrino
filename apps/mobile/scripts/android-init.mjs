@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { channelConfig, parseChannel } from './android-channel.mjs';
+import { mobileCargoTargetDir, mobileGradleUserHome } from './android-artifacts.mjs';
 
 const projectRoot = process.cwd();
 const androidDir = path.join(projectRoot, 'src-tauri', 'gen', 'android');
@@ -57,6 +58,8 @@ function envForAndroid(channel) {
   env.WRY_ANDROID_KOTLIN_FILES_OUT_DIR = path.join(androidDir, 'app', 'src', 'main', 'java', ...config.applicationId.split('.'), 'generated');
   env.CARGO_BUILD_JOBS = env.CARGO_BUILD_JOBS || String(cpuCount());
   env.CARGO_INCREMENTAL = env.CARGO_INCREMENTAL || '1';
+  env.CARGO_TARGET_DIR = env.CARGO_TARGET_DIR || mobileCargoTargetDir(projectRoot);
+  env.GRADLE_USER_HOME = env.GRADLE_USER_HOME || mobileGradleUserHome(projectRoot);
   return env;
 }
 function writeGeneratedState(config) {
