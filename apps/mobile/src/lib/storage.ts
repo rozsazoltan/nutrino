@@ -87,6 +87,17 @@ export function defaultSettings(): AppSettings {
     show_meal_macros: true,
     show_micronutrients: false,
     daily_reminder: false,
+    weekly_weight_average_enabled: false,
+    daily_weight_reminder_enabled: false,
+    daily_weight_reminder_time: '07:30',
+    meal_reminders_enabled: false,
+    meal_reminder_morning_time: '08:00',
+    meal_reminder_noon_time: '12:30',
+    meal_reminder_afternoon_time: '17:30',
+    calorie_deficit_enabled: false,
+    target_deficit_kcal: 300,
+    calorie_limit_warning_enabled: false,
+    exercise_kcal_eatback_percent: 50,
     kcal_adjustment: 0,
     macro_carbs_percent: 60,
     macro_protein_percent: 15,
@@ -148,10 +159,22 @@ export function loadState(): AppState {
     const foods = rawFoods.filter((food) => food.catalog_kind !== 'ingredient').map((food) => ({ ...food, catalog_kind: 'food' as const }));
     const ingredients = mergeById(parsedIngredients, migratedIngredients);
 
+    const mergedSettings: AppSettings = {
+      ...defaults.settings,
+      ...storedSettings,
+      weekly_weight_average_enabled: storedSettings.weekly_weight_average_enabled === true,
+      daily_weight_reminder_enabled: storedSettings.daily_weight_reminder_enabled === true,
+      meal_reminders_enabled: storedSettings.meal_reminders_enabled === true,
+      calorie_deficit_enabled: storedSettings.calorie_deficit_enabled === true,
+      calorie_limit_warning_enabled: storedSettings.calorie_limit_warning_enabled === true,
+      target_deficit_kcal: Number.isFinite(Number(storedSettings.target_deficit_kcal)) ? Number(storedSettings.target_deficit_kcal) : defaults.settings.target_deficit_kcal,
+      exercise_kcal_eatback_percent: Number.isFinite(Number(storedSettings.exercise_kcal_eatback_percent)) ? Number(storedSettings.exercise_kcal_eatback_percent) : defaults.settings.exercise_kcal_eatback_percent,
+    };
+
     return {
       ...defaults,
       ...parsed,
-      settings: { ...defaults.settings, ...storedSettings },
+      settings: mergedSettings,
       pairing: {
         ...defaults.pairing,
         ...storedPairing,

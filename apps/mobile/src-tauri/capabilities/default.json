@@ -9,6 +9,7 @@
     "core:default",
     "dialog:default",
     "fs:default",
-    "share:default"
+    "share:default",
+    "notification:default"
   ]
 }

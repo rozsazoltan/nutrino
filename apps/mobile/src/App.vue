@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readFile, writeFile } from '@tauri-apps/plugin-fs';
+import { isPermissionGranted, requestPermission as requestNativeNotificationPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import JSZip from 'jszip';
 import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, Food, Ingredient, Intake, LocalizedNameMap, MealType, Recipe, RecipeItem, WeightLog, GitHubCsvSource } from './types';
 import {
@@ -34,8 +35,10 @@ type Tab = 'home' | 'diary' | 'recipes' | 'profile';
 type AddMode = 'food' | 'activity' | null;
 type MealEntryMode = 'catalog' | 'note';
 type CatalogSearchScope = 'title' | 'all' | 'brand' | 'category' | 'description';
+type WeightTrendMode = 'daily' | 'weekly' | 'monthly';
 type LocalEditorKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 type LocalRecipeDraftItem = { food_id: string; amount_g: number; unit: 'g' | 'serving'; query: string; pickerOpen: boolean };
+type MealNoteSuggestion = { key: string; title: string; description: string; kcal: number; lastUsedAt: number; count: number };
 
 type MealSection = {
   key: MealType | 'activity';
@@ -113,7 +116,22 @@ let todayRolloverTimer: number | undefined;
 const offlineToastShown = ref(false);
 const toast = ref('');
 const settingsOpen = ref(false);
-const settingsDialog = ref<'units' | 'calculations' | 'language' | 'privacy' | 'about' | 'licenses' | null>(null);
+const settingsDialog = ref<'units' | 'calculations' | 'tracking' | 'language' | 'privacy' | 'about' | 'licenses' | null>(null);
+const analysisOpen = ref(false);
+const deficitInfoOpen = ref(false);
+const weightTrendMode = ref<WeightTrendMode>('weekly');
+const notificationPermission = ref('unknown');
+const calorieLegendOpen = ref(false);
+const weightLegendOpen = ref(false);
+const selectedCalorieRowKey = ref<string | null>(null);
+const selectedWeightRowKey = ref<string | null>(null);
+type EntryActionSheetState = { kind: 'intake' | 'activity'; id: string };
+const entryActionSheet = ref<EntryActionSheetState | null>(null);
+const duplicateMealTargetOpen = ref(false);
+const pendingDuplicateIntakeId = ref<string | null>(null);
+let entryLongPressTimer: number | undefined;
+let reminderTimer: number | undefined;
+
 const languageSearch = ref('');
 const unlockedDiaryDate = ref<string | null>(null);
 const futureConfirmedDates = ref<Record<string, boolean>>({});
@@ -216,6 +234,7 @@ const acknowledgements = [
 const settingsIconMap: Record<string, IconName> = {
   units: 'ruler',
   calculations: 'calculator',
+  tracking: 'scale',
   activity: 'activity',
   macros: 'chartPie',
   micros: 'flaskConical',
@@ -288,6 +307,7 @@ const sections: MealSection[] = [
   { key: 'dinner', label: 'Dinner', icon: 'dinner_dining', hint: 'Evening meal' },
   { key: 'snack', label: 'Snack', icon: 'bakery_dining', hint: 'Small meals' },
 ];
+const mealTargetSections = computed(() => sections.filter((section): section is MealSection & { key: MealType } => section.key !== 'activity'));
 
 const mealIconSvg: Record<string, string> = {
   directions_walk: lucideSvg('personStanding'),
@@ -301,13 +321,6 @@ watch(state, () => saveState(JSON.parse(JSON.stringify(state)) as AppState), { d
 watch(selectedDate, () => {
   editingDayWeight.value = false;
 });
-watch(activeTab, (next, previous) => {
-  if (previous === 'diary' && next !== 'diary') {
-    unlockedDiaryDate.value = null;
-    editingDayWeight.value = false;
-  }
-});
-
 function updateKeyboardOffset() {
   const viewport = window.visualViewport;
   if (!viewport) {
@@ -571,8 +584,33 @@ function handleBackNavigation(event?: PopStateEvent) {
     return;
   }
 
+  if (duplicateMealTargetOpen.value) {
+    closeDuplicateMealTarget();
+    keepBackInsideApp();
+    return;
+  }
+
+  if (entryActionSheet.value) {
+    entryActionSheet.value = null;
+    keepBackInsideApp();
+    return;
+  }
+
+  if (calorieLegendOpen.value || weightLegendOpen.value) {
+    calorieLegendOpen.value = false;
+    weightLegendOpen.value = false;
+    keepBackInsideApp();
+    return;
+  }
+
   if (settingsDialog.value) {
     settingsDialog.value = null;
+    keepBackInsideApp();
+    return;
+  }
+
+  if (analysisOpen.value) {
+    analysisOpen.value = false;
     keepBackInsideApp();
     return;
   }
@@ -692,6 +730,8 @@ onMounted(() => {
   void installWindowCloseGuard();
   void pollServerHealth({ syncOnChange: true, quiet: true });
   healthTimer = window.setInterval(() => void pollServerHealth({ syncOnChange: true, quiet: true }), 30000);
+  reminderTimer = window.setInterval(checkReminderNotifications, 60000);
+  checkReminderNotifications();
 });
 
 onBeforeUnmount(() => {
@@ -704,6 +744,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('nutrino:android-back', handleNativeAndroidBack);
   uninstallWindowCloseGuard();
   if (healthTimer) window.clearInterval(healthTimer);
+  if (reminderTimer) window.clearInterval(reminderTimer);
   if (todayRolloverTimer) window.clearTimeout(todayRolloverTimer);
   if (backTrapRearmingTimer) window.clearTimeout(backTrapRearmingTimer);
   if (highlightedReviewTimer) window.clearTimeout(highlightedReviewTimer);
@@ -721,22 +762,69 @@ const currentBmi = computed(() => bmi(currentWeight.value, state.profile.height_
 const bmiInfo = computed(() => bmiStatus(currentBmi.value));
 const age = computed(() => ageFromBirthday(state.profile.birthday));
 const burnedKcal = computed(() => Math.round(currentDayActivities.value.reduce((sum, entry) => sum + entry.kcal, 0)));
+const exerciseEatbackRatio = computed(() => Math.max(0, Math.min(1, Number(state.settings.exercise_kcal_eatback_percent ?? 50) / 100)));
+const creditedBurnedKcal = computed(() => Math.round(burnedKcal.value * exerciseEatbackRatio.value));
+const baseDailyGoal = computed(() => dailyKcalGoal(profileForActiveDay.value, 0) + Number(state.settings.kcal_adjustment || 0));
 const dailyGoal = computed(() => dailyKcalGoal(profileForActiveDay.value, burnedKcal.value) + Number(state.settings.kcal_adjustment || 0));
 const consumedKcal = computed(() => Math.round(currentDayIntakes.value.reduce((sum, entry) => sum + intakeKcal(entry), 0)));
+const calorieDeficitEnabled = computed(() => state.settings.calorie_deficit_enabled === true);
+const targetDeficitKcal = computed(() => calorieDeficitEnabled.value ? Math.max(0, Math.round(Number(state.settings.target_deficit_kcal || 0))) : 0);
+const effectiveDailyGoal = computed(() => calorieDeficitEnabled.value
+  ? Math.max(0, baseDailyGoal.value + creditedBurnedKcal.value - targetDeficitKcal.value)
+  : dailyGoal.value);
 const kcalLeft = computed(() => dailyGoal.value - consumedKcal.value);
-const kcalGaugeValue = computed(() => {
-  if (kcalLeft.value > dailyGoal.value) return 0;
-  if (kcalLeft.value < 0) return 1;
-  return clamp((dailyGoal.value - kcalLeft.value) / Math.max(1, dailyGoal.value));
+const deficitKcalLeft = computed(() => effectiveDailyGoal.value - consumedKcal.value);
+const kcalGaugeValue = computed(() => clamp(consumedKcal.value / Math.max(1, dailyGoal.value)));
+const deficitMarkerProgress = computed(() => calorieDeficitEnabled.value ? clamp(effectiveDailyGoal.value / Math.max(1, dailyGoal.value)) : 0);
+const kcalDeficitMarkerStyle = computed(() => {
+  const arcDegrees = 360 * 0.78;
+  const markerAngle = 128 + deficitMarkerProgress.value * arcDegrees;
+  const angle = markerAngle * Math.PI / 180;
+  // Keep the marker centered inside the ring stroke so it does not protrude
+  // outside or inward while still pointing at the exact deficit boundary.
+  const markerRadiusPercent = 41;
+  const x = Math.cos(angle) * markerRadiusPercent;
+  const y = Math.sin(angle) * markerRadiusPercent;
+  return {
+    left: `calc(50% + ${x.toFixed(3)}%)`,
+    top: `calc(50% + ${y.toFixed(3)}%)`,
+    transform: `translate(-50%, -50%) rotate(${(markerAngle + 90).toFixed(1)}deg)`,
+  };
 });
-const kcalCenterValue = computed(() => Math.round(kcalLeft.value < 0 ? Math.abs(kcalLeft.value) : Math.min(kcalLeft.value, dailyGoal.value)));
-const kcalCenterLabel = computed(() => kcalLeft.value < 0 ? 'too much' : 'kcal left');
+const kcalCenterSource = computed(() => kcalLeft.value);
+const kcalCenterValue = computed(() => Math.round(kcalCenterSource.value < 0 ? Math.abs(kcalCenterSource.value) : Math.min(kcalCenterSource.value, dailyGoal.value)));
+const kcalCenterLabel = computed(() => kcalLeft.value < 0 ? 'tooMuch' : 'kcalLeft');
+const kcalFullRemainingLabel = computed(() => kcalLeft.value < 0
+  ? `${Math.abs(Math.round(kcalLeft.value))} kcal ${t('overDailyLimit')}`
+  : `${Math.round(kcalLeft.value)} kcal ${t('kcalLeft')}`);
 const kcalProgressDash = computed(() => `${kcalArcLength * kcalGaugeValue.value} ${ringCircumference}`);
+const kcalRingToneClass = computed(() => kcalTone(consumedKcal.value, effectiveDailyGoal.value, dailyGoal.value));
+const deficitStatusText = computed(() => {
+  if (!calorieDeficitEnabled.value) return `${Math.round(kcalLeft.value)} kcal ${t('kcalLeft')}`;
+  if (deficitKcalLeft.value >= 0) return `${Math.round(deficitKcalLeft.value)} kcal ${t('safeKcalLeft')}`;
+  if (kcalLeft.value >= 0) return `${Math.abs(Math.round(deficitKcalLeft.value))} kcal ${t('overDeficitButWithinLimit')}`;
+  return `${Math.abs(Math.round(kcalLeft.value))} kcal ${t('overDailyLimit')}`;
+});
+const deficitHelpTitle = computed(() => currentLocale().startsWith('hu') ? 'Mit jelent a deficit cél?' : 'What does the deficit target mean?');
+const deficitHelpBody = computed(() => {
+  const full = Math.round(dailyGoal.value);
+  const effective = Math.round(effectiveDailyGoal.value);
+  const consumed = Math.round(consumedKcal.value);
+  const deficitLeft = Math.round(deficitKcalLeft.value);
+  if (currentLocale().startsWith('hu')) {
+    return calorieDeficitEnabled.value
+      ? `A napi maximumod ${full} kcal a teljes mozgásjóváírással. A deficit cél ebből levonja a ${targetDeficitKcal.value} kcal biztonsági tartalékot, majd hozzáadja a beállított mozgásjóváírást (${creditedBurnedKcal.value}/${burnedKcal.value} kcal). Így a mai deficites cél ${effective} kcal. Eddig ${consumed} kcal-t vittél be, ezért ${deficitLeft >= 0 ? deficitLeft + ' kcal maradt a deficit cél előtt' : Math.abs(deficitLeft) + ' kcal-lal vagy a deficit cél felett'}. A nagy kör továbbra is a teljes napi maximumhoz viszonyít, és csak a teljes keret túllépése után megy pirosba.`
+      : `A biztonsági deficit ki van kapcsolva, ezért a napi maximumod ${full} kcal, és ebből nem von le külön tartalékot az app.`;
+  }
+  return calorieDeficitEnabled.value
+    ? `Your full daily maximum is ${full} kcal with the full exercise credit. The deficit target subtracts the ${targetDeficitKcal.value} kcal safety buffer, then adds the configured exercise credit (${creditedBurnedKcal.value}/${burnedKcal.value} kcal). Today's effective deficit target is ${effective} kcal. You have logged ${consumed} kcal, so you are ${deficitLeft >= 0 ? deficitLeft + ' kcal before the target deficit' : Math.abs(deficitLeft) + ' kcal over the target deficit'}. The large ring still follows the full daily maximum and turns red only after the full limit is exceeded.`
+    : `Safety deficit tracking is off, so your daily maximum is ${full} kcal and no extra buffer is subtracted.`;
+});
 const protein = computed(() => Math.round(totalMacro('protein_per_100g')));
 const carbs = computed(() => Math.round(totalMacro('carbs_per_100g')));
 const fat = computed(() => Math.round(totalMacro('fat_per_100g')));
 const macroGoals = computed(() => {
-  const kcal = Math.max(1, dailyGoal.value);
+  const kcal = Math.max(1, calorieDeficitEnabled.value ? effectiveDailyGoal.value : dailyGoal.value);
   return {
     carbs: Math.max(1, Math.round((kcal * (state.settings.macro_carbs_percent || 60) / 100) / 4)),
     fat: Math.max(1, Math.round((kcal * (state.settings.macro_fat_percent || 25) / 100) / 9)),
@@ -749,7 +837,7 @@ const macros = computed(() => [
   { label: 'protein', value: protein.value, goal: macroGoals.value.protein, progress: clamp(protein.value / macroGoals.value.protein) },
 ]);
 const pendingCount = computed(() => 0);
-const weightPromptDue = computed(() => needsWeightPrompt(state.profile, state.weightLogs));
+const weightPromptDue = computed(() => (state.settings.daily_weight_reminder_enabled || state.settings.weekly_weight_average_enabled) ? !latestWeightForDay(state.weightLogs, todayKey.value) : needsWeightPrompt(state.profile, state.weightLogs));
 const allCatalogItems = computed(() => catalogItems(state));
 
 const latestIngredientUpdatedAt = computed(() => latestUpdatedAt(state.ingredients));
@@ -931,6 +1019,39 @@ const catalogExactPickerItems = computed(() => catalogExactItems.value.filter((i
 const catalogSuggestedPickerItems = computed(() => catalogSuggestedItems.value.filter((item) => item.id !== selectedCatalogId.value));
 const catalogHasSearchResults = computed(() => catalogExactItems.value.length > 0 || catalogSuggestedItems.value.length > 0);
 
+function mealNoteSuggestionKey(entry: Intake): string {
+  const title = String(entry.note_title || itemTitle(foodFromIntake(entry)) || '').trim().toLowerCase();
+  const description = String(entry.note_description || foodFromIntake(entry)?.note || '').trim().toLowerCase();
+  const kcal = Math.round(intakeKcal(entry));
+  return `${title}|${description}|${kcal}`;
+}
+
+const reusableMealNoteSuggestions = computed<MealNoteSuggestion[]>(() => {
+  const q = search.value.trim();
+  const byKey = new Map<string, MealNoteSuggestion>();
+
+  for (const entry of state.intakes) {
+    if (entry.item_type !== 'note') continue;
+    const title = String(entry.note_title || itemTitle(foodFromIntake(entry)) || '').trim();
+    if (!title) continue;
+    const description = String(entry.note_description || foodFromIntake(entry)?.note || '').trim();
+    const kcal = Math.round(intakeKcal(entry));
+    if (!kcal || kcal <= 0) continue;
+    if (q && !matchesSearchQuery(q, title, description, `${kcal} kcal`)) continue;
+
+    const key = mealNoteSuggestionKey(entry);
+    const previous = byKey.get(key);
+    if (!previous) {
+      byKey.set(key, { key, title, description, kcal, lastUsedAt: entry.consumed_at, count: 1 });
+    } else {
+      previous.count += 1;
+      previous.lastUsedAt = Math.max(previous.lastUsedAt, entry.consumed_at);
+    }
+  }
+
+  return [...byKey.values()].sort((a, b) => b.lastUsedAt - a.lastUsedAt).slice(0, 8);
+});
+
 const visibleCatalogItems = computed(() => {
   if (catalogSearchActive.value) return [...catalogExactItems.value, ...catalogSuggestedItems.value];
   return selectedFirst(allCatalogItems.value);
@@ -997,9 +1118,40 @@ const SERVER_STALE_MS = 5 * 60 * 1000;
 const selectedDayUnlocked = computed(() => activeTab.value === 'diary' && unlockedDiaryDate.value === selectedDate.value);
 const selectedDateIsFuture = computed(() => dayStartMs(activeLogDateKey.value) > dayStartMs(todayKey.value));
 const currentBmiInfo = computed(() => bmiStatus(currentBmi.value));
-const diaryKcalTone = computed(() => kcalTone(consumedKcal.value, dailyGoal.value));
+const diaryKcalTone = computed(() => kcalTone(consumedKcal.value, dailyGoal.value, dailyGoal.value));
 const homeShellToneClass = computed(() => activeTab.value === 'home' ? `home-${diaryKcalTone.value}` : '');
+const selectedDayAnalysis = computed(() => buildDailyAnalysis(selectedDate.value));
 const selectedDayMacroSummary = computed(() => dayMacroSummary(selectedDate.value));
+const currentDeficitStreak = computed(() => calculateDeficitStreak(selectedDate.value));
+const bestDeficitStreak = computed(() => calculateBestDeficitStreak(30));
+const analysisDailyRows = computed(() => buildDailyAnalysisRows(14, selectedDate.value));
+const analysisWeightRows = computed(() => buildWeightTrendRows(weightTrendMode.value, 12, selectedDate.value));
+const weightChartPoints = computed(() => buildWeightChartPoints(analysisWeightRows.value));
+const calorieChartMax = computed(() => Math.max(1, ...analysisDailyRows.value.map((row) => Math.max(row.consumedKcal, row.dailyLimitKcal, row.effectiveLimitKcal))));
+const calorieSuccessRate = computed(() => {
+  const tracked = analysisDailyRows.value.filter((row) => row.tracked);
+  if (!tracked.length) return 0;
+  return Math.round(tracked.filter((row) => row.success).length * 100 / tracked.length);
+});
+const selectedCalorieChartRow = computed(() => analysisDailyRows.value.find((row) => row.key === (selectedCalorieRowKey.value || selectedDate.value)) || selectedDayAnalysis.value);
+const selectedWeightChartRow = computed(() => analysisWeightRows.value.find((row) => row.key === selectedWeightRowKey.value) || analysisWeightRows.value.find((row) => row.selected) || analysisWeightRows.value.at(-1) || null);
+const weightChartScale = computed(() => buildWeightChartScale(analysisWeightRows.value));
+
+watch(analysisDailyRows, (rows) => {
+  if (!rows.some((row) => row.key === selectedCalorieRowKey.value)) selectedCalorieRowKey.value = selectedDate.value;
+}, { immediate: true });
+watch(analysisWeightRows, (rows) => {
+  if (!rows.some((row) => row.key === selectedWeightRowKey.value)) selectedWeightRowKey.value = rows.find((row) => row.selected)?.key || rows.at(-1)?.key || null;
+}, { immediate: true });
+
+watch([consumedKcal, effectiveDailyGoal, dailyGoal], () => {
+  if (!state.settings.calorie_limit_warning_enabled || !calorieDeficitEnabled.value) return;
+  if (consumedKcal.value <= effectiveDailyGoal.value) return;
+  const key = `${todayKey.value}.deficit-limit`;
+  if (reminderAlreadySent(key)) return;
+  markReminderSent(key);
+  notifyUser(t('deficitWarningTitle'), `${Math.round(consumedKcal.value - effectiveDailyGoal.value)} kcal ${t('overDeficitButWithinLimit')}`);
+});
 
 
 const normalizeTranslationValues = (values: Partial<Record<string, string>>): Record<string, string> => Object.fromEntries(
@@ -1011,11 +1163,11 @@ const translations: Record<string, Record<string, string>> = {
     home: 'Home', diary: 'Diary', recipes: 'Recipes', profile: 'Profile', settings: 'Settings', synced: 'Synced', syncing: 'Syncing', pending: 'pending',
     supplied: 'supplied', burned: 'burned', kcalLeft: 'kcal left', tooMuch: 'too much', activity: 'Activity', breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snack',
     carbs: 'carbs', fat: 'fat', protein: 'protein', addBurnedKcal: 'Add burned kcal', startTheDay: 'Start the day', middayMeal: 'Midday meal', eveningMeal: 'Evening meal', smallMeals: 'Small meals', addNewItem: 'Add new item',
-    unlockEditConfirm: 'Enable editing for this day? This prevents accidental changes to older diary days.', discardCurrentEditConfirm: 'Discard the current edit without saving?', finishSetupBeforeExit: 'Finish setup before leaving the app.', pressBackAgain: 'Press Back again within 5 seconds to exit.', noActivity: 'No activity logged for this day.', noEntries: 'No entries yet.', edit: 'Edit', delete: 'Delete',
+    unlockEditConfirm: 'Enable editing for this day? This prevents accidental changes to older diary days.', discardCurrentEditConfirm: 'Discard the current edit without saving?', finishSetupBeforeExit: 'Finish setup before leaving the app.', pressBackAgain: 'Press Back again within 5 seconds to exit.', noActivity: 'No activity logged for this day.', noEntries: 'No entries yet.', edit: 'Edit', delete: 'Delete', duplicate: 'Duplicate', duplicateEntry: 'Duplicate entry', duplicateMealTargetHint: 'Choose which meal should receive the duplicate.', moveToMeal: 'Move to meal', entryActions: 'Entry actions', entryDuplicated: 'Entry duplicated.', entryMoved: 'Entry moved.',
     units: 'Units', calculations: 'Calculations', language: 'Language', privacy: 'Privacy Settings', about: 'About', licenses: 'Licenses', thirdPartyNotices: 'Third-party notices', acknowledgements: 'Acknowledgements', exportImport: 'Export / Import App Data', clearCache: 'Clear cached items',
-    dailyReminder: 'Daily Reminder', theme: 'Theme', showActivity: 'Show Activity Tracking', showMacros: 'Show Meal Macros', showMicros: 'Show Micronutrients',
+    dailyReminder: 'Daily Reminder', trackingReminders: 'Tracking & reminders', weeklyWeightAverage: 'Weekly weight average', weeklyWeightAverageHint: 'Calculate weekly average weight for each Sunday.', dailyWeightReminder: 'Daily weight reminder', dailyWeightReminderTime: 'Daily weight reminder time', mealReminders: 'Meal logging reminders', mealReminderMorning: 'Log breakfast or your morning meal.', mealReminderNoon: 'Log lunch or your midday meal.', mealReminderAfternoon: 'Log dinner, snack or your afternoon meal.', mealReminderTitle: 'Meal reminder', weightReminderTitle: 'Weight reminder', weightReminderBody: 'Add today’s body weight so the weekly average stays useful.', calorieDeficitTracking: 'Safety deficit tracking', targetDeficit: 'Target safety deficit', calorieLimitWarning: 'Warn when target deficit is exceeded', exerciseKcalEatback: 'Exercise calories to eat back', eatbackNone: 'Do not eat back exercise kcal', eatbackHalf: 'Eat back half', eatbackFull: 'Eat back all', requestNotifications: 'Enable notifications', notificationsUnsupported: 'Notifications are not supported here.', notificationsEnabled: 'Notifications enabled.', notificationsNotEnabled: 'Notifications were not enabled.', deficitWarningTitle: 'Deficit limit exceeded', deficitKcalLeft: 'deficit kcal left', safeKcalLeft: 'left before target deficit', overDeficit: 'over deficit', overDeficitButWithinLimit: 'over the target deficit, still within daily limit', overDailyLimit: 'over the daily limit', deficitOffHint: 'Safety deficit is off.', analysis: 'Analysis', openAnalysis: 'Open analysis', closeAnalysis: 'Close analysis', weightTrend: 'Weight trend', calorieTrend: 'Calorie trend', deficitStreak: 'Deficit streak', currentStreak: 'Current streak', bestStreak: 'Best streak', successRate: 'Success rate', days: 'days', weeklyAverage: 'Weekly average', limitedData: 'limited data', noWeightTrend: 'Add weight entries to see the selected weight trend.', fullLimit: 'full limit', effectiveLimit: 'deficit target', exerciseCredit: 'exercise credit', legend: 'Legend', consumedLegend: 'Consumed kcal', weightLegendValue: 'Weight value', theme: 'Theme', showActivity: 'Show Activity Tracking', showMacros: 'Show Meal Macros', showMicros: 'Show Micronutrients',
     metric: 'Metric (kg, cm, ml)', imperial: 'Imperial (lbs, ft, oz)', systemDefault: 'System default', english: 'English', hungarian: 'Hungarian', scan: 'Scan', languageSearch: 'Search language by English name, native name or code…', translations: 'Translations', noTranslations: 'No translations yet.', addTranslation: 'Add translation', cancel: 'Cancel', ok: 'OK', reset: 'Reset',
-    unlockDay: 'Unlock day editing', lockedNote: 'Unlock editing before changing entries on this day.', editingEnabled: 'Editing enabled', selectedDayEntriesNote: 'Food and activity entries for the selected calendar day are shown below.', mealNotesToReview: 'Meal notes to review', mealNotesToReviewHint: 'These notes stay on this phone. Open the day to replace them with real foods later, or keep them as final notes.', openDay: 'Open day', keepAsNote: 'Keep as note', noMealNotesToReview: 'No meal notes need review.', localOnlyDiaryHint: 'Diary entries and activity logs stay local on mobile.', target: 'target', weight: 'weight', saveWeight: 'Save weight', weightForThisDay: 'Weight for this day in kg', editWeight: 'Edit weight', futureDateWarning: 'This date is in the future. Logging future diary data can make your diary inaccurate. Continue anyway?', weeklyWeightCheck: 'Weekly weight check', weeklyWeightCheckBody: 'Update your weight once a week. If it does not change, nutrino keeps using the latest known value.', save: 'Save', addTo: 'Add to', add: 'Add', update: 'Update', addActivity: 'Add activity', updateActivity: 'Update activity', customRecipe: 'Customize recipe', customRecipeHint: 'Changes are saved only for this diary entry.', customizedRecipe: 'custom recipe', editRecipeLocally: 'Edit recipe for this entry', changeSelection: 'Change food/recipe', selected: 'Selected', baseAmount: 'base', onePiece: '1 pc', selectFoodFirst: 'Select a food or recipe first.', amountGreaterThanZero: 'Amount must be greater than zero.', enterValidWeight: 'Enter a valid weight in kg.', weightSaved: 'Weight saved.', activityUpdated: 'Activity updated.', activityAdded: 'Activity added.', activities: 'activities', entries: 'entries', foodAndRecipeSearch: 'Search foods and recipes', searchIn: 'Search in', searchScopeTitle: 'Title', searchScopeAll: 'All', searchScopeBrand: 'Brand', searchScopeCategory: 'Category', searchScopeDescription: 'Description', exactMatches: 'Exact matches', maybeYouMean: 'Maybe you meant', activitySearch: 'Search activities', recipe: 'Recipe', food: 'Food', ingredient: 'Ingredient', grams: 'grams', pieces: 'pieces', catalog: 'Catalog', watch: 'Watch', manual: 'Manual', minutes: 'minutes', kcalFromWatchManual: 'kcal from watch/manual', exportAppData: 'Export app data', exportAppDataBody: 'Save a full local ZIP backup.', importAppData: 'Import app data', importAppDataBody: 'Select a nutrino mobile app ZIP backup.', channelDataTransfer: 'Dev / stable data transfer', channelDataTransferBody: 'Android installs dev and stable as two separate apps. Transfer is explicit through a ZIP handoff because the apps cannot read each other’s private storage directly.', updateDevFromStable: 'Update dev from stable backup', updateStableFromDev: 'Update stable from dev backup', exportDevForStable: 'Create package for stable', exportStableForDev: 'Create package for dev', confirmChannelTransferImport: 'This will overwrite the current app data with a backup from the other installed channel. Continue?', channelTransferExportProfile: 'Channel transfer export', beforeChannelTransferImportBackupProfile: 'Before channel transfer import', channelTransferImportProfile: 'Channel transfer import', channelTransferExportCreated: 'Channel transfer package created.', channelTransferImported: 'Data imported from the other channel.', activityLevel: 'Activity', activityLevelHint: 'Used for daily kcal target', weeklyGoal: 'Weekly goal', perWeek: 'kg / week', height: 'Height', age: 'Age', years: 'years', gender: 'Gender', apiSettings: 'API settings', appChannel: 'Channel', devApiHint: 'Development mode uses the desktop LAN URL automatically. Password is only needed if the desktop server requires one.', apiUrl: 'API URL', pairingPassword: 'Server password', pairingToken: 'Pairing token', addKcalNote: 'Note', existingItem: 'Existing', noteEntry: 'Note', kcalNoteTitle: 'Note title', kcalNoteDescription: 'Description', kcalNoteValue: 'kcal', localCatalogActions: 'Local catalog actions', addLocalIngredient: 'Add local ingredient', addLocalFood: 'Add local food', addLocalRecipe: 'Add local recipe', addLocalActivity: 'Add local activity', localItemCreated: 'Local item saved. Sync when the desktop server is reachable.', genderHint: 'Used for kcal estimate', male: 'Male', female: 'Female', nonBinary: 'Non-binary', test: 'Test', syncNow: 'Load data from server', pushNow: 'Send data to server', pullFailedOffline: 'Download failed. Local data remains available.', pushFailedOffline: 'Upload failed. Local data stays pending until the server is reachable.', dailyBackupProfile: 'Daily automatic backup profile', online: 'Online', available: 'Available', offline: 'Offline', serverOffline: 'Desktop server is offline.', serverOfflineUsingCache: 'Desktop server is offline. Using local cached catalog.', deleteEntryConfirm: 'Delete this entry?', deleteActivityConfirm: 'Delete this activity?', exportCanceled: 'Export canceled.', importCanceled: 'Import canceled.', foods: 'Foods', noSyncedItems: 'No synced foods or recipes yet. Start the desktop server or add a GitHub CSV source and sync.', appDataExportCreated: 'App data export created.', appDataImported: 'App data imported.', importFailed: 'Import failed', confirmImportOverwrite: 'This backup will overwrite all current local app data. Continue?', invalidBackupFile: 'This is not a valid nutrino mobile app backup.', clearCachedConfirm: 'Clear synced foods, recipes, activities and merge aliases from the mobile cache? Diary logs remain on the device. The next server download will reload a full catalog snapshot.', cachedCatalogCleared: 'Cached catalog cleared. The next server download will fully reload the catalog.', privacyBody: 'nutrino stores your profile, diary, food cache and activity data locally on your device. The app only talks to your paired desktop server on your network. We do not collect, sell or upload your data to third-party services.', reportIssue: 'Report an issue', reportIssueBody: 'Open GitHub Issues to report bugs or request features.', openRepository: 'Open GitHub repository', openRepositoryBody: 'View the source code, README and releases.', starProject: 'Star nutrino on GitHub', starProjectBody: 'If nutrino is useful, a star helps the project.', license: 'License', sourceCode: 'Source code', factoryReset: 'Factory reset', factoryResetBody: 'Delete all local app data and restart onboarding.', factoryResetConfirm: 'This deletes all local mobile diary, profile, cached catalog and settings data. Continue?', onboardingTitle: 'Set up nutrino', onboardingIntro: 'Add your basic profile so kcal, BMI and goals can be calculated.', onboardingProfile: 'Profile basics', onboardingTour: 'Quick tour', onboardingTourBody: 'Home shows calories and macros. Diary shows your calendar. Recipes lists synced catalog items. Profile stores your body and goal settings.', finishSetup: 'Finish setup', next: 'Next', back: 'Back', startUsingNutrino: 'Start using nutrino', restoreBackup: 'Restore backup', restore: 'Restore', backupProfiles: 'Backup profiles', backupProfilesBody: 'Local restore points are stored separately from your normal profile and survive in-app factory reset.', noBackupProfiles: 'No local backup profiles yet.', createBackupProfile: 'Create backup profile', manualBackupProfile: 'Manual backup profile', exportBackupProfile: 'Export restore point', beforeFactoryResetBackupProfile: 'Before factory reset', beforeImportBackupProfile: 'Before import', importBackupProfile: 'Imported backup', beforeBackupProfileRestore: 'Before backup profile restore', restoreBackupProfile: 'Restore local profile', backupProfileCreated: 'Backup profile saved.', backupProfileDeleted: 'Backup profile deleted.', backupProfileRestored: 'Backup profile restored.', backupProfileMissing: 'Backup profile is no longer available.', confirmRestoreBackupProfile: 'Restore this local backup profile? Current app data will be saved as a safety restore point first.', backupProfileSaveFailed: 'Could not save a local backup profile', backupProfilesUnavailable: 'Backup profile storage is unavailable on this device.', continueFactoryResetWithoutBackup: 'Continue factory reset without a safety restore point?', continueExternalExport: 'Continue external ZIP export anyway?', emptyBackupFile: 'The selected backup file is empty (0 B).', backupVerifySizeMismatch: 'Export verification size mismatch:', backupVerifyFailed: 'External ZIP export could not be verified; a browser download fallback was attempted.', backupProfileStillAvailable: 'A local backup profile is still available in the app.', exportFailed: 'Export failed', backupWriteFailed: 'Backup file write failed', mobileShareUnavailable: 'This device does not support safe mobile ZIP sharing. The unstable mobile save/download export was not used, so no 0 B ZIP was created.', mobileShareSheetHint: 'Choose Files, Drive or another storage app in the system share sheet.',
+    unlockDay: 'Unlock day editing', lockedNote: 'Unlock editing before changing entries on this day.', editingEnabled: 'Editing enabled', selectedDayEntriesNote: 'Food and activity entries for the selected calendar day are shown below.', mealNotesToReview: 'Meal notes to review', mealNotesToReviewHint: 'These notes stay on this phone. Open the day to replace them with real foods later, or keep them as final notes.', openDay: 'Open day', keepAsNote: 'Keep as note', noMealNotesToReview: 'No meal notes need review.', previousMealNotes: 'Previous notes', useNote: 'Use note', convertToCatalogItem: 'Convert to food', convertNoteToCatalogHint: 'Replace this note with an ingredient, food or recipe.', localOnlyDiaryHint: 'Diary entries and activity logs stay local on mobile.', target: 'target', weight: 'weight', saveWeight: 'Save weight', weightForThisDay: 'Weight for this day in kg', editWeight: 'Edit weight', futureDateWarning: 'This date is in the future. Logging future diary data can make your diary inaccurate. Continue anyway?', weeklyWeightCheck: 'Weekly weight check', weeklyWeightCheckBody: 'Update your weight once a week. If it does not change, nutrino keeps using the latest known value.', save: 'Save', addTo: 'Add to', add: 'Add', update: 'Update', addActivity: 'Add activity', updateActivity: 'Update activity', customRecipe: 'Customize recipe', customRecipeHint: 'Changes are saved only for this diary entry.', customizedRecipe: 'custom recipe', editRecipeLocally: 'Edit recipe for this entry', changeSelection: 'Change food/recipe', selected: 'Selected', baseAmount: 'base', onePiece: '1 pc', selectFoodFirst: 'Select a food or recipe first.', amountGreaterThanZero: 'Amount must be greater than zero.', enterValidWeight: 'Enter a valid weight in kg.', weightSaved: 'Weight saved.', activityUpdated: 'Activity updated.', activityAdded: 'Activity added.', activities: 'activities', entries: 'entries', foodAndRecipeSearch: 'Search foods and recipes', searchIn: 'Search in', searchScopeTitle: 'Title', searchScopeAll: 'All', searchScopeBrand: 'Brand', searchScopeCategory: 'Category', searchScopeDescription: 'Description', exactMatches: 'Exact matches', maybeYouMean: 'Maybe you meant', activitySearch: 'Search activities', recipe: 'Recipe', food: 'Food', ingredient: 'Ingredient', grams: 'grams', pieces: 'pieces', catalog: 'Catalog', watch: 'Watch', manual: 'Manual', minutes: 'minutes', kcalFromWatchManual: 'kcal from watch/manual', exportAppData: 'Export app data', exportAppDataBody: 'Save a full local ZIP backup.', importAppData: 'Import app data', importAppDataBody: 'Select a nutrino mobile app ZIP backup.', channelDataTransfer: 'Dev / stable data transfer', channelDataTransferBody: 'Android installs dev and stable as two separate apps. Transfer is explicit through a ZIP handoff because the apps cannot read each other’s private storage directly.', updateDevFromStable: 'Update dev from stable backup', updateStableFromDev: 'Update stable from dev backup', exportDevForStable: 'Create package for stable', exportStableForDev: 'Create package for dev', confirmChannelTransferImport: 'This will overwrite the current app data with a backup from the other installed channel. Continue?', channelTransferExportProfile: 'Channel transfer export', beforeChannelTransferImportBackupProfile: 'Before channel transfer import', channelTransferImportProfile: 'Channel transfer import', channelTransferExportCreated: 'Channel transfer package created.', channelTransferImported: 'Data imported from the other channel.', activityLevel: 'Activity', activityLevelHint: 'Used for daily kcal target', weeklyGoal: 'Weekly goal', perWeek: 'kg / week', height: 'Height', age: 'Age', years: 'years', gender: 'Gender', apiSettings: 'API settings', appChannel: 'Channel', devApiHint: 'Development mode uses the desktop LAN URL automatically. Password is only needed if the desktop server requires one.', apiUrl: 'API URL', pairingPassword: 'Server password', pairingToken: 'Pairing token', addKcalNote: 'Note', existingItem: 'Existing', noteEntry: 'Note', kcalNoteTitle: 'Note title', kcalNoteDescription: 'Description', kcalNoteValue: 'kcal', localCatalogActions: 'Local catalog actions', addLocalIngredient: 'Add local ingredient', addLocalFood: 'Add local food', addLocalRecipe: 'Add local recipe', addLocalActivity: 'Add local activity', localItemCreated: 'Local item saved. Sync when the desktop server is reachable.', genderHint: 'Used for kcal estimate', male: 'Male', female: 'Female', nonBinary: 'Non-binary', test: 'Test', syncNow: 'Load data from server', pushNow: 'Send data to server', pullFailedOffline: 'Download failed. Local data remains available.', pushFailedOffline: 'Upload failed. Local data stays pending until the server is reachable.', dailyBackupProfile: 'Daily automatic backup profile', online: 'Online', available: 'Available', offline: 'Offline', serverOffline: 'Desktop server is offline.', serverOfflineUsingCache: 'Desktop server is offline. Using local cached catalog.', deleteEntryConfirm: 'Delete this entry?', deleteActivityConfirm: 'Delete this activity?', exportCanceled: 'Export canceled.', importCanceled: 'Import canceled.', foods: 'Foods', noSyncedItems: 'No synced foods or recipes yet. Start the desktop server or add a GitHub CSV source and sync.', appDataExportCreated: 'App data export created.', appDataImported: 'App data imported.', importFailed: 'Import failed', confirmImportOverwrite: 'This backup will overwrite all current local app data. Continue?', invalidBackupFile: 'This is not a valid nutrino mobile app backup.', clearCachedConfirm: 'Clear synced foods, recipes, activities and merge aliases from the mobile cache? Diary logs remain on the device. The next server download will reload a full catalog snapshot.', cachedCatalogCleared: 'Cached catalog cleared. The next server download will fully reload the catalog.', privacyBody: 'nutrino stores your profile, diary, food cache and activity data locally on your device. The app only talks to your paired desktop server on your network. We do not collect, sell or upload your data to third-party services.', reportIssue: 'Report an issue', reportIssueBody: 'Open GitHub Issues to report bugs or request features.', openRepository: 'Open GitHub repository', openRepositoryBody: 'View the source code, README and releases.', starProject: 'Star nutrino on GitHub', starProjectBody: 'If nutrino is useful, a star helps the project.', license: 'License', sourceCode: 'Source code', factoryReset: 'Factory reset', factoryResetBody: 'Delete all local app data and restart onboarding.', factoryResetConfirm: 'This deletes all local mobile diary, profile, cached catalog and settings data. Continue?', onboardingTitle: 'Set up nutrino', onboardingIntro: 'Add your basic profile so kcal, BMI and goals can be calculated.', onboardingProfile: 'Profile basics', onboardingTour: 'Quick tour', onboardingTourBody: 'Home shows calories and macros. Diary shows your calendar. Recipes lists synced catalog items. Profile stores your body and goal settings.', finishSetup: 'Finish setup', next: 'Next', back: 'Back', startUsingNutrino: 'Start using nutrino', restoreBackup: 'Restore backup', restore: 'Restore', backupProfiles: 'Backup profiles', backupProfilesBody: 'Local restore points are stored separately from your normal profile and survive in-app factory reset.', noBackupProfiles: 'No local backup profiles yet.', createBackupProfile: 'Create backup profile', manualBackupProfile: 'Manual backup profile', exportBackupProfile: 'Export restore point', beforeFactoryResetBackupProfile: 'Before factory reset', beforeImportBackupProfile: 'Before import', importBackupProfile: 'Imported backup', beforeBackupProfileRestore: 'Before backup profile restore', restoreBackupProfile: 'Restore local profile', backupProfileCreated: 'Backup profile saved.', backupProfileDeleted: 'Backup profile deleted.', backupProfileRestored: 'Backup profile restored.', backupProfileMissing: 'Backup profile is no longer available.', confirmRestoreBackupProfile: 'Restore this local backup profile? Current app data will be saved as a safety restore point first.', backupProfileSaveFailed: 'Could not save a local backup profile', backupProfilesUnavailable: 'Backup profile storage is unavailable on this device.', continueFactoryResetWithoutBackup: 'Continue factory reset without a safety restore point?', continueExternalExport: 'Continue external ZIP export anyway?', emptyBackupFile: 'The selected backup file is empty (0 B).', backupVerifySizeMismatch: 'Export verification size mismatch:', backupVerifyFailed: 'External ZIP export could not be verified; a browser download fallback was attempted.', backupProfileStillAvailable: 'A local backup profile is still available in the app.', exportFailed: 'Export failed', backupWriteFailed: 'Backup file write failed', mobileShareUnavailable: 'This device does not support safe mobile ZIP sharing. The unstable mobile save/download export was not used, so no 0 B ZIP was created.', mobileShareSheetHint: 'Choose Files, Drive or another storage app in the system share sheet.',
   },
   hu: {
     home: 'Kezdőlap', diary: 'Napló', recipes: 'Receptek', profile: 'Profil', settings: 'Beállítások', synced: 'Szinkronban', syncing: 'Szinkronizálás', pending: 'függő',
@@ -1132,6 +1284,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "Még nincs bejegyzés.",
     "edit": "Szerkesztés",
     "delete": "Törlés",
+    "duplicate": "Duplikálás",
+    "duplicateEntry": "Tétel duplikálása",
+    "duplicateMealTargetHint": "Válaszd ki, melyik étkezéshez kerüljön a duplikáció.",
+    "moveToMeal": "Áthelyezés étkezéshez",
+    "entryActions": "Tétel műveletei",
+    "entryDuplicated": "Tétel duplikálva.",
+    "entryMoved": "Tétel áthelyezve.",
     "units": "Mértékegységek",
     "calculations": "Számítások",
     "language": "Nyelv",
@@ -1143,6 +1302,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Appadat export / import",
     "clearCache": "Gyorsítótár törlése",
     "dailyReminder": "Napi emlékeztető",
+    "trackingReminders": "Követés és emlékeztetők",
+    "weeklyWeightAverage": "Heti átlagsúly",
+    "weeklyWeightAverageHint": "Minden vasárnapra heti átlagsúlyt számol a mérésekből.",
+    "dailyWeightReminder": "Napi súlyemlékeztető",
+    "dailyWeightReminderTime": "Súlyemlékeztető ideje",
+    "mealReminders": "Étkezésnapló emlékeztetők",
+    "mealReminderMorning": "Vidd fel a reggelit vagy a délelőtti étkezést.",
+    "mealReminderNoon": "Vidd fel az ebédet vagy a déli étkezést.",
+    "mealReminderAfternoon": "Vidd fel a vacsorát, nasit vagy délutáni étkezést.",
+    "mealReminderTitle": "Étkezés emlékeztető",
+    "weightReminderTitle": "Súlyemlékeztető",
+    "weightReminderBody": "Add meg a mai testsúlyod, hogy a heti átlag hasznos maradjon.",
+    "calorieDeficitTracking": "Biztonsági deficit követése",
+    "targetDeficit": "Cél biztonsági deficit",
+    "calorieLimitWarning": "Figyelmeztetés deficit túllépésnél",
+    "exerciseKcalEatback": "Visszaehető mozgás kcal",
+    "eatbackNone": "Ne add vissza a mozgás kcal-t",
+    "eatbackHalf": "A felét add vissza",
+    "eatbackFull": "Az egészet add vissza",
+    "requestNotifications": "Értesítések engedélyezése",
+    "notificationsUnsupported": "Az értesítés itt nem támogatott.",
+    "notificationsEnabled": "Értesítések engedélyezve.",
+    "notificationsNotEnabled": "Az értesítések nincsenek engedélyezve.",
+    "deficitWarningTitle": "Deficit cél túllépve",
+    "deficitKcalLeft": "deficites kcal maradt",
+    "safeKcalLeft": "maradt a deficit cél előtt",
+    "overDeficit": "deficit felett",
+    "overDeficitButWithinLimit": "a deficit cél felett, még napi kereten belül",
+    "overDailyLimit": "a napi keret felett",
+    "deficitOffHint": "A biztonsági deficit ki van kapcsolva.",
+    "analysis": "Analízis",
+    "openAnalysis": "Analízis megnyitása",
+    "closeAnalysis": "Analízis bezárása",
+    "weightTrend": "Súlytrend",
+    "calorieTrend": "Kalóriatrend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Aktuális streak",
+    "bestStreak": "Legjobb streak",
+    "successRate": "Sikerarány",
+    "days": "nap",
+    "weeklyAverage": "Heti átlag",
+    "limitedData": "kevés adat",
+    "noWeightTrend": "Adj meg súlyméréseket a kiválasztott súlytrend megjelenítéséhez.",
+    "fullLimit": "teljes keret",
+    "effectiveLimit": "deficit cél",
+    "exerciseCredit": "mozgás jóváírás",
+    "legend": "Jelmagyarázat",
+    "consumedLegend": "Bevitt kcal",
+    "weightLegendValue": "Súlyérték",
     "theme": "Téma",
     "showActivity": "Aktivitás követése",
     "showMacros": "Makrók megjelenítése",
@@ -1169,6 +1377,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Nap megnyitása",
     "keepAsNote": "Maradjon jegyzet",
     "noMealNotesToReview": "Nincs átnézendő étkezési jegyzet.",
+    "previousMealNotes": "Korábbi jegyzetek",
+    "useNote": "Jegyzet használata",
+    "convertToCatalogItem": "Étellé alakítás",
+    "convertNoteToCatalogHint": "A jegyzet cseréje alapanyagra, ételre vagy receptre.",
     "localOnlyDiaryHint": "A naplóbejegyzések és aktivitásnaplók mobilon maradnak.",
     "target": "cél",
     "weight": "súly",
@@ -1441,6 +1653,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No Einträge yet.",
     "edit": "Bearbeiten",
     "delete": "Löschen",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Einheiten",
     "calculations": "Berechnungen",
     "language": "Sprache",
@@ -1452,6 +1671,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "App-Daten exportieren / importieren",
     "clearCache": "Cache-Einträge löschen",
     "dailyReminder": "Tägliche Erinnerung",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Design",
     "showActivity": "Aktivitätstracking anzeigen",
     "showMacros": "Mahlzeiten-Makros anzeigen",
@@ -1478,6 +1746,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as Notiz",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Tagebuch Einträge and Aktivität logs bleiben lokal auf dem Mobilgerät.",
     "target": "target",
     "weight": "Gewicht",
@@ -1750,6 +2022,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No entrées yet.",
     "edit": "Modifier",
     "delete": "Supprimer",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Unités",
     "calculations": "Calculs",
     "language": "Langue",
@@ -1761,6 +2040,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached éléments",
     "dailyReminder": "Rappel quotidien",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Thème",
     "showActivity": "Show Activité Tracking",
     "showMacros": "Show Meal Macros",
@@ -1787,6 +2115,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as note",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Journal entrées and activité logs restent locaux sur mobile.",
     "target": "target",
     "weight": "poids",
@@ -2059,6 +2391,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No записи yet.",
     "edit": "Изменить",
     "delete": "Удалить",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Единицы",
     "calculations": "Расчёты",
     "language": "Язык",
@@ -2070,6 +2409,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached элементы",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Активность Tracking",
     "showMacros": "Show Meal Macros",
@@ -2096,6 +2484,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as заметка",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Дневник записи and активность logs stay локальный on мобильный.",
     "target": "target",
     "weight": "вес",
@@ -2368,6 +2760,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No записи yet.",
     "edit": "Редагувати",
     "delete": "Видалити",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Одиниці",
     "calculations": "Розрахунки",
     "language": "Мова",
@@ -2379,6 +2778,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached елементи",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Активність Tracking",
     "showMacros": "Show Meal Macros",
@@ -2405,6 +2853,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as нотатка",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Щоденник записи and активність logs stay локальний on мобільний.",
     "target": "target",
     "weight": "вага",
@@ -2677,6 +3129,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No 记录 yet.",
     "edit": "编辑",
     "delete": "删除",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "单位",
     "calculations": "计算",
     "language": "语言",
@@ -2688,6 +3147,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached 项目",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show 活动 Tracking",
     "showMacros": "Show Meal Macros",
@@ -2714,6 +3222,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as 备注",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "日记 记录 and 活动 logs stay 本地 on 移动端.",
     "target": "target",
     "weight": "体重",
@@ -2986,6 +3498,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No záznamy yet.",
     "edit": "Upraviť",
     "delete": "Vymazať",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Jednotky",
     "calculations": "Výpočty",
     "language": "Jazyk",
@@ -2997,6 +3516,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached položky",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Aktivita Tracking",
     "showMacros": "Show Meal Macros",
@@ -3023,6 +3591,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as poznámka",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Denník záznamy and aktivita logs stay lokálne on mobil.",
     "target": "target",
     "weight": "hmotnosť",
@@ -3295,6 +3867,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No înregistrări yet.",
     "edit": "Editează",
     "delete": "Șterge",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Unități",
     "calculations": "Calcule",
     "language": "Limbă",
@@ -3306,6 +3885,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached elemente",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Activitate Tracking",
     "showMacros": "Show Meal Macros",
@@ -3332,6 +3960,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as notă",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Jurnal înregistrări and activitate logs stay local on mobil.",
     "target": "target",
     "weight": "greutate",
@@ -3604,6 +4236,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No záznamy yet.",
     "edit": "Upravit",
     "delete": "Smazat",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Jednotky",
     "calculations": "Výpočty",
     "language": "Jazyk",
@@ -3615,6 +4254,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached položky",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Aktivita Tracking",
     "showMacros": "Show Meal Macros",
@@ -3641,6 +4329,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as poznámka",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Deník záznamy and aktivita logs stay místní on mobil.",
     "target": "target",
     "weight": "hmotnost",
@@ -3913,6 +4605,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No vnosi yet.",
     "edit": "Uredi",
     "delete": "Izbriši",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Enote",
     "calculations": "Izračuni",
     "language": "Jezik",
@@ -3924,6 +4623,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached elementi",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Aktivnost Tracking",
     "showMacros": "Show Meal Macros",
@@ -3950,6 +4698,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as opomba",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Dnevnik vnosi and aktivnost logs stay lokalno on mobilno.",
     "target": "target",
     "weight": "teža",
@@ -4222,6 +4974,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No unosi yet.",
     "edit": "Uredi",
     "delete": "Izbriši",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Jedinice",
     "calculations": "Izračuni",
     "language": "Jezik",
@@ -4233,6 +4992,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached stavke",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Aktivnost Tracking",
     "showMacros": "Show Meal Macros",
@@ -4259,6 +5067,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as bilješka",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Dnevnik unosi and aktivnost logs stay lokalno on mobilno.",
     "target": "target",
     "weight": "težina",
@@ -4531,6 +5343,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No wpisy yet.",
     "edit": "Edytuj",
     "delete": "Usuń",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Jednostki",
     "calculations": "Obliczenia",
     "language": "Język",
@@ -4542,6 +5361,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached pozycje",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Aktywność Tracking",
     "showMacros": "Show Meal Macros",
@@ -4568,6 +5436,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as notatka",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Dziennik wpisy and aktywność logs stay lokalne on mobilne.",
     "target": "target",
     "weight": "waga",
@@ -4840,6 +5712,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No entradas yet.",
     "edit": "Editar",
     "delete": "Eliminar",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Unidades",
     "calculations": "Cálculos",
     "language": "Idioma",
@@ -4851,6 +5730,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached elementos",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Actividad Tracking",
     "showMacros": "Show Meal Macros",
@@ -4877,6 +5805,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as nota",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Diario entradas and actividad logs stay local on móvil.",
     "target": "target",
     "weight": "peso",
@@ -5149,6 +6081,13 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "noEntries": "No entradas yet.",
     "edit": "Editar",
     "delete": "Eliminar",
+    "duplicate": "Duplicate",
+    "duplicateEntry": "Duplicate entry",
+    "duplicateMealTargetHint": "Choose which meal should receive the duplicate.",
+    "moveToMeal": "Move to meal",
+    "entryActions": "Entry actions",
+    "entryDuplicated": "Entry duplicated.",
+    "entryMoved": "Entry moved.",
     "units": "Unidades",
     "calculations": "Cálculos",
     "language": "Idioma",
@@ -5160,6 +6099,55 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "exportImport": "Export / Import App Data",
     "clearCache": "Clear cached itens",
     "dailyReminder": "Daily Reminder",
+    "trackingReminders": "Tracking & reminders",
+    "weeklyWeightAverage": "Weekly weight average",
+    "weeklyWeightAverageHint": "Calculate weekly average weight for each Sunday.",
+    "dailyWeightReminder": "Daily weight reminder",
+    "dailyWeightReminderTime": "Daily weight reminder time",
+    "mealReminders": "Meal logging reminders",
+    "mealReminderMorning": "Log breakfast or your morning meal.",
+    "mealReminderNoon": "Log lunch or your midday meal.",
+    "mealReminderAfternoon": "Log dinner, snack or your afternoon meal.",
+    "mealReminderTitle": "Meal reminder",
+    "weightReminderTitle": "Weight reminder",
+    "weightReminderBody": "Add today’s body weight so the weekly average stays useful.",
+    "calorieDeficitTracking": "Safety deficit tracking",
+    "targetDeficit": "Target safety deficit",
+    "calorieLimitWarning": "Warn when target deficit is exceeded",
+    "exerciseKcalEatback": "Exercise calories to eat back",
+    "eatbackNone": "Do not eat back exercise kcal",
+    "eatbackHalf": "Eat back half",
+    "eatbackFull": "Eat back all",
+    "requestNotifications": "Enable notifications",
+    "notificationsUnsupported": "Notifications are not supported here.",
+    "notificationsEnabled": "Notifications enabled.",
+    "notificationsNotEnabled": "Notifications were not enabled.",
+    "deficitWarningTitle": "Deficit limit exceeded",
+    "deficitKcalLeft": "deficit kcal left",
+    "safeKcalLeft": "left before target deficit",
+    "overDeficit": "over deficit",
+    "overDeficitButWithinLimit": "over the target deficit, still within daily limit",
+    "overDailyLimit": "over the daily limit",
+    "deficitOffHint": "Safety deficit is off.",
+    "analysis": "Analysis",
+    "openAnalysis": "Open analysis",
+    "closeAnalysis": "Close analysis",
+    "weightTrend": "Weight trend",
+    "calorieTrend": "Calorie trend",
+    "deficitStreak": "Deficit streak",
+    "currentStreak": "Current streak",
+    "bestStreak": "Best streak",
+    "successRate": "Success rate",
+    "days": "days",
+    "weeklyAverage": "Weekly average",
+    "limitedData": "limited data",
+    "noWeightTrend": "Add weight entries to see the selected weight trend.",
+    "fullLimit": "full limit",
+    "effectiveLimit": "deficit target",
+    "exerciseCredit": "exercise credit",
+    "legend": "Legend",
+    "consumedLegend": "Consumed kcal",
+    "weightLegendValue": "Weight value",
     "theme": "Theme",
     "showActivity": "Show Atividade Tracking",
     "showMacros": "Show Meal Macros",
@@ -5186,6 +6174,10 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     "openDay": "Open day",
     "keepAsNote": "Keep as nota",
     "noMealNotesToReview": "No meal notes need review.",
+    "previousMealNotes": "Previous notes",
+    "useNote": "Use note",
+    "convertToCatalogItem": "Convert to food",
+    "convertNoteToCatalogHint": "Replace this note with an ingredient, food or recipe.",
     "localOnlyDiaryHint": "Diário entradas and atividade logs stay local on móvel.",
     "target": "target",
     "weight": "peso",
@@ -5937,6 +6929,43 @@ function startNoteMealEntry() {
   nextTick(() => scrollFocusedInputIntoView());
 }
 
+function useMealNoteSuggestion(note: MealNoteSuggestion) {
+  mealEntryMode.value = 'note';
+  catalogPickerOpen.value = false;
+  recipeCustomizeOpen.value = false;
+  selectedCatalogId.value = '';
+  recipeIngredientAmounts.value = {};
+  recipeCustomExtraKcal.value = 0;
+  foodAmount.value = null;
+  noteTitle.value = note.title;
+  noteDescription.value = note.description;
+  noteKcal.value = note.kcal;
+  search.value = '';
+  void nextTick(() => scrollFocusedInputIntoView());
+}
+
+function openNoteConversion(entry: Intake) {
+  const key = dateKey(new Date(entry.consumed_at));
+  selectedDate.value = key;
+  calendarMonth.value = new Date(dayStartMs(key));
+  activeTab.value = 'diary';
+  unlockedDiaryDate.value = key;
+  editingIntakeId.value = entry.id;
+  addMode.value = 'food';
+  addMealType.value = entry.meal_type;
+  mealEntryMode.value = 'catalog';
+  selectedCatalogId.value = '';
+  catalogPickerOpen.value = true;
+  recipeCustomizeOpen.value = false;
+  recipeIngredientAmounts.value = {};
+  recipeCustomExtraKcal.value = 0;
+  foodUnit.value = 'g';
+  foodAmount.value = 100;
+  search.value = String(entry.note_title || itemTitle(foodFromIntake(entry)) || '').trim();
+  entryActionSheet.value = null;
+  void nextTick(() => scrollFocusedInputIntoView());
+}
+
 function addMealNoteFromForm() {
   const title = noteTitle.value.trim();
   if (!title) return showToast(t('kcalNoteTitle'));
@@ -6454,11 +7483,14 @@ function bmiStatus(value: number) {
   return { key: 'obese3', name: 'Obese class III', risk: 'Very severe risk', tone: 'bmi-obese-3' };
 }
 
-function kcalTone(kcal: number, goal: number) {
-  const ratio = goal > 0 ? kcal / goal : 0;
-  if (ratio <= 0.9) return 'kcal-low';
-  if (ratio <= 1.05) return 'kcal-ok';
-  if (ratio <= 1.2) return 'kcal-warn';
+function kcalTone(kcal: number, effectiveGoal: number, fullGoal = effectiveGoal) {
+  const effective = Math.max(1, effectiveGoal);
+  const full = Math.max(effective, fullGoal, 1);
+  const ratio = kcal / effective;
+  if (kcal > full) return 'kcal-over';
+  if (ratio <= 0.82) return 'kcal-low';
+  if (ratio <= 1) return 'kcal-ok';
+  if (kcal <= full) return 'kcal-warn';
   return 'kcal-over';
 }
 
@@ -6480,22 +7512,386 @@ function syncProfileWeightFromToday() {
   if (todayWeight && Number.isFinite(todayWeight)) state.profile.current_weight_kg = todayWeight;
 }
 
-function dayMacroSummary(key: string) {
-  const intakes = dayIntakes(key);
+function dayFullKcalGoal(key: string) {
   const activities = dayActivities(key);
   const burned = Math.round(activities.reduce((sum, entry) => sum + entry.kcal, 0));
-  const kcalGoal = Math.max(1, dailyKcalGoal(profileForDay(key), burned) + Number(state.settings.kcal_adjustment || 0));
+  return Math.max(1, dailyKcalGoal(profileForDay(key), burned) + Number(state.settings.kcal_adjustment || 0));
+}
+
+function dayEffectiveKcalGoal(key: string) {
+  const activities = dayActivities(key);
+  const burned = Math.round(activities.reduce((sum, entry) => sum + entry.kcal, 0));
+  if (!calorieDeficitEnabled.value) return dayFullKcalGoal(key);
+  const credited = Math.round(burned * Math.max(0, Math.min(1, Number(state.settings.exercise_kcal_eatback_percent ?? 50) / 100)));
+  const deficit = Math.max(0, Math.round(Number(state.settings.target_deficit_kcal || 0)));
+  return Math.max(0, dailyKcalGoal(profileForDay(key), 0) + Number(state.settings.kcal_adjustment || 0) + credited - deficit);
+}
+
+function dayMacroSummary(key: string) {
+  const intakes = dayIntakes(key);
+  const kcalGoal = dayFullKcalGoal(key);
+  const macroKcalGoal = Math.max(1, calorieDeficitEnabled.value ? dayEffectiveKcalGoal(key) : kcalGoal);
   const summary = macroForEntries(intakes);
   return {
     kcal: summary.kcal,
     kcalGoal,
+    effectiveKcalGoal: dayEffectiveKcalGoal(key),
     carbs: summary.carbs,
-    carbsGoal: Math.max(1, Math.round((kcalGoal * (state.settings.macro_carbs_percent || 60) / 100) / 4)),
+    carbsGoal: Math.max(1, Math.round((macroKcalGoal * (state.settings.macro_carbs_percent || 60) / 100) / 4)),
     fat: summary.fat,
-    fatGoal: Math.max(1, Math.round((kcalGoal * (state.settings.macro_fat_percent || 25) / 100) / 9)),
+    fatGoal: Math.max(1, Math.round((macroKcalGoal * (state.settings.macro_fat_percent || 25) / 100) / 9)),
     protein: summary.protein,
-    proteinGoal: Math.max(1, Math.round((kcalGoal * (state.settings.macro_protein_percent || 15) / 100) / 4)),
+    proteinGoal: Math.max(1, Math.round((macroKcalGoal * (state.settings.macro_protein_percent || 15) / 100) / 4)),
   };
+}
+
+type DailyAnalysisRow = {
+  key: string;
+  label: string;
+  consumedKcal: number;
+  dailyLimitKcal: number;
+  effectiveLimitKcal: number;
+  deficitKcal: number;
+  burnedKcal: number;
+  creditedBurnedKcal: number;
+  tracked: boolean;
+  selected: boolean;
+  success: boolean;
+  tone: string;
+};
+
+type WeightTrendRow = {
+  key: string;
+  label: string;
+  weightKg: number;
+  entryCount: number;
+  selected: boolean;
+  limitedData: boolean;
+};
+
+function addDays(key: string, days: number): string {
+  const date = new Date(dayStartMs(key));
+  date.setDate(date.getDate() + days);
+  return dateKey(date);
+}
+
+function buildCenteredDateKeys(centerKey: string, count: number, maxEndKey = todayKey.value): string[] {
+  const safeCount = Math.max(1, count);
+  const maxEndMs = dayStartMs(maxEndKey);
+  const centerMs = Math.min(dayStartMs(centerKey), maxEndMs);
+  const centerDateKey = dateKey(new Date(centerMs));
+  const centerIndex = Math.floor((safeCount - 1) / 2);
+  let startKey = addDays(centerDateKey, -centerIndex);
+  let endKey = addDays(startKey, safeCount - 1);
+  const overflow = Math.max(0, Math.round((dayStartMs(endKey) - maxEndMs) / 86400000));
+  if (overflow > 0) {
+    startKey = addDays(startKey, -overflow);
+    endKey = addDays(endKey, -overflow);
+  }
+
+  return Array.from({ length: safeCount }, (_, index) => addDays(startKey, index));
+}
+
+function buildDailyAnalysis(key: string): DailyAnalysisRow {
+  const intakes = dayIntakes(key);
+  const activities = dayActivities(key);
+  const consumed = macroForEntries(intakes).kcal;
+  const burned = Math.round(activities.reduce((sum, entry) => sum + entry.kcal, 0));
+  const credited = Math.round(burned * Math.max(0, Math.min(1, Number(state.settings.exercise_kcal_eatback_percent ?? 50) / 100)));
+  const full = dayFullKcalGoal(key);
+  const effective = dayEffectiveKcalGoal(key);
+  const tracked = intakes.length > 0 || activities.length > 0;
+  return {
+    key,
+    label: formatDate(dayStartMs(key)),
+    consumedKcal: consumed,
+    dailyLimitKcal: full,
+    effectiveLimitKcal: effective,
+    deficitKcal: Math.max(0, full - effective),
+    burnedKcal: burned,
+    creditedBurnedKcal: credited,
+    tracked,
+    selected: key === selectedDate.value,
+    success: tracked && consumed <= effective,
+    tone: kcalTone(consumed, effective, full),
+  };
+}
+
+function buildDailyAnalysisRows(days: number, centerKey = selectedDate.value): DailyAnalysisRow[] {
+  return buildCenteredDateKeys(centerKey, days).map((key) => buildDailyAnalysis(key));
+}
+
+function calculateDeficitStreak(endKey: string): number {
+  let streak = 0;
+  for (let offset = 0; offset < 365; offset += 1) {
+    const row = buildDailyAnalysis(addDays(endKey, -offset));
+    if (!row.success) break;
+    streak += 1;
+  }
+  return streak;
+}
+
+function calculateBestDeficitStreak(days: number): number {
+  let best = 0;
+  let current = 0;
+  for (const row of buildDailyAnalysisRows(days, selectedDate.value)) {
+    if (row.success) {
+      current += 1;
+      best = Math.max(best, current);
+    } else {
+      current = 0;
+    }
+  }
+  return best;
+}
+
+function mondayKeyFor(key: string): string {
+  const date = new Date(dayStartMs(key));
+  const offset = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - offset);
+  return dateKey(date);
+}
+
+function monthStartKeyFor(key: string): string {
+  const date = new Date(dayStartMs(key));
+  date.setDate(1);
+  return dateKey(date);
+}
+
+function addMonths(key: string, months: number): string {
+  const date = new Date(dayStartMs(monthStartKeyFor(key)));
+  date.setMonth(date.getMonth() + months, 1);
+  return dateKey(date);
+}
+
+function buildCenteredPeriodStartKeys(centerStartKey: string, count: number, addPeriod: (key: string, amount: number) => string, maxStartKey: string): string[] {
+  const safeCount = Math.max(1, count);
+  const centerIndex = Math.floor((safeCount - 1) / 2);
+  let startKey = addPeriod(centerStartKey, -centerIndex);
+  let endKey = addPeriod(startKey, safeCount - 1);
+  let guard = 0;
+  while (dayStartMs(endKey) > dayStartMs(maxStartKey) && guard < safeCount + 24) {
+    startKey = addPeriod(startKey, -1);
+    endKey = addPeriod(endKey, -1);
+    guard += 1;
+  }
+  return Array.from({ length: safeCount }, (_, index) => addPeriod(startKey, index));
+}
+
+function weightEntriesBetween(startKey: string, endKeyExclusive: string): WeightLog[] {
+  const start = dayStartMs(startKey);
+  const end = dayStartMs(endKeyExclusive);
+  return state.weightLogs.filter((entry) => entry.measured_at >= start && entry.measured_at < end);
+}
+
+function averageWeight(entries: WeightLog[]): number | null {
+  if (!entries.length) return null;
+  const avg = entries.reduce((sum, entry) => sum + entry.weight_kg, 0) / entries.length;
+  return Math.round(avg * 10) / 10;
+}
+
+function formatMonthShort(key: string): string {
+  const date = new Date(dayStartMs(key));
+  return date.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+}
+
+function buildWeightTrendRows(mode: WeightTrendMode, count: number, centerKey = selectedDate.value): WeightTrendRow[] {
+  if (mode === 'daily') {
+    return buildCenteredDateKeys(centerKey, count)
+      .map((key): WeightTrendRow | null => {
+        const entry = latestWeightForDay(state.weightLogs, key);
+        if (!entry) return null;
+        return {
+          key,
+          label: formatDate(dayStartMs(key)),
+          weightKg: Math.round(entry.weight_kg * 10) / 10,
+          entryCount: 1,
+          selected: key === selectedDate.value,
+          limitedData: false,
+        } satisfies WeightTrendRow;
+      })
+      .filter((row): row is WeightTrendRow => Boolean(row));
+  }
+
+  if (mode === 'monthly') {
+    const selectedMonth = monthStartKeyFor(centerKey);
+    const currentMonth = monthStartKeyFor(todayKey.value);
+    return buildCenteredPeriodStartKeys(selectedMonth, count, addMonths, currentMonth)
+      .map((startKey): WeightTrendRow | null => {
+        const endKey = addMonths(startKey, 1);
+        const entries = weightEntriesBetween(startKey, endKey);
+        const avg = averageWeight(entries);
+        if (avg === null) return null;
+        return {
+          key: startKey,
+          label: formatMonthShort(startKey),
+          weightKg: avg,
+          entryCount: entries.length,
+          selected: monthStartKeyFor(selectedDate.value) === startKey,
+          limitedData: entries.length < 3,
+        } satisfies WeightTrendRow;
+      })
+      .filter((row): row is WeightTrendRow => Boolean(row));
+  }
+
+  const selectedMonday = mondayKeyFor(centerKey);
+  const currentMonday = mondayKeyFor(todayKey.value);
+  return buildCenteredPeriodStartKeys(selectedMonday, count, (key, amount) => addDays(key, amount * 7), currentMonday)
+    .map((startKey): WeightTrendRow | null => {
+      const endKey = addDays(startKey, 7);
+      const entries = weightEntriesBetween(startKey, endKey);
+      const avg = averageWeight(entries);
+      if (avg === null) return null;
+      const weekEndKey = addDays(startKey, 6);
+      return {
+        key: weekEndKey,
+        label: weekEndKey,
+        weightKg: avg,
+        entryCount: entries.length,
+        selected: mondayKeyFor(selectedDate.value) === startKey,
+        limitedData: entries.length < 3,
+      } satisfies WeightTrendRow;
+    })
+    .filter((row): row is WeightTrendRow => Boolean(row));
+}
+
+function buildWeightChartPoints(rows: WeightTrendRow[]): string {
+  if (rows.length < 2) return '';
+  const scale = buildWeightChartScale(rows);
+  const range = Math.max(0.1, scale.max - scale.min);
+  return rows.map((row, index) => {
+    const x = rows.length === 1 ? 50 : 8 + (index * 84 / Math.max(1, rows.length - 1));
+    const y = 82 - ((row.weightKg - scale.min) / range) * 64;
+    return `${Math.round(x * 10) / 10},${Math.round(y * 10) / 10}`;
+  }).join(' ');
+}
+
+function buildWeightChartScale(rows: WeightTrendRow[]) {
+  if (!rows.length) return { min: 0, max: 1, ticks: [] as number[] };
+  const values = rows.map((row) => row.weightKg);
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const pad = Math.max(0.5, (rawMax - rawMin) * 0.18);
+  const min = Math.floor((rawMin - pad) * 2) / 2;
+  const max = Math.ceil((rawMax + pad) * 2) / 2;
+  const step = Math.max(0.5, Math.round(((max - min) / 3) * 2) / 2);
+  const ticks = [max, max - step, max - step * 2, min].map((value) => Math.round(value * 10) / 10);
+  return { min, max: Math.max(max, min + 0.5), ticks };
+}
+
+function weightBarHeight(row: WeightTrendRow): number {
+  const scale = weightChartScale.value;
+  const range = Math.max(0.1, scale.max - scale.min);
+  return Math.max(8, Math.min(100, ((row.weightKg - scale.min) / range) * 100));
+}
+
+function weightTrendModeLabel(mode: WeightTrendMode): string {
+  const labels = currentLocale() === 'hu'
+    ? { daily: 'Napi', weekly: 'Heti', monthly: 'Havi' }
+    : { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
+  return labels[mode];
+}
+
+async function requestReminderPermission() {
+  try {
+    if (await isPermissionGranted()) {
+      notificationPermission.value = 'granted';
+      showToast(t('notificationsEnabled'));
+      return;
+    }
+    const permission = await requestNativeNotificationPermission();
+    notificationPermission.value = permission;
+    showToast(permission === 'granted' ? t('notificationsEnabled') : t('notificationsNotEnabled'));
+  } catch {
+    if (typeof Notification === 'undefined') {
+      showToast(t('notificationsUnsupported'));
+      notificationPermission.value = 'unsupported';
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    notificationPermission.value = permission;
+    showToast(permission === 'granted' ? t('notificationsEnabled') : t('notificationsNotEnabled'));
+  }
+}
+
+async function ensureNotificationPermissionForReminders() {
+  if (!state.settings.daily_reminder
+    && !state.settings.daily_weight_reminder_enabled
+    && !state.settings.meal_reminders_enabled
+    && !state.settings.calorie_limit_warning_enabled) {
+    return;
+  }
+
+  try {
+    if (await isPermissionGranted()) {
+      notificationPermission.value = 'granted';
+      return;
+    }
+  } catch {
+    // Fall through to the shared permission request helper.
+  }
+
+  await requestReminderPermission();
+}
+
+async function notifyUser(title: string, body: string) {
+  try {
+    if (await isPermissionGranted()) {
+      sendNotification({ title, body });
+      notificationPermission.value = 'granted';
+      return;
+    }
+  } catch {
+    // Fall through to Web Notification or toast fallback for preview/dev environments.
+  }
+
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    new Notification(title, { body });
+  } else {
+    showToast(`${title}: ${body}`);
+  }
+}
+
+function reminderAlreadySent(key: string): boolean {
+  return localStorage.getItem(`nutrino.reminder.${key}`) === '1';
+}
+
+function markReminderSent(key: string) {
+  localStorage.setItem(`nutrino.reminder.${key}`, '1');
+}
+
+function currentTimeReached(timeValue: string, now = new Date()): boolean {
+  const [hour, minute] = String(timeValue || '').split(':').map(Number);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false;
+  const current = now.getHours() * 60 + now.getMinutes();
+  return current >= hour * 60 + minute;
+}
+
+function checkReminderNotifications() {
+  const today = todayKey.value;
+  const now = new Date();
+  if (state.settings.daily_weight_reminder_enabled && currentTimeReached(state.settings.daily_weight_reminder_time, now) && !latestWeightForDay(state.weightLogs, today)) {
+    const key = `${today}.weight.${state.settings.daily_weight_reminder_time}`;
+    if (!reminderAlreadySent(key)) {
+      markReminderSent(key);
+      notifyUser(t('weightReminderTitle'), t('weightReminderBody'));
+    }
+  }
+
+  if (state.settings.meal_reminders_enabled) {
+    const reminders = [
+      ['morning', state.settings.meal_reminder_morning_time, t('mealReminderMorning')],
+      ['noon', state.settings.meal_reminder_noon_time, t('mealReminderNoon')],
+      ['afternoon', state.settings.meal_reminder_afternoon_time, t('mealReminderAfternoon')],
+    ] as const;
+    for (const [slot, time, body] of reminders) {
+      const key = `${today}.meal.${slot}.${time}`;
+      if (currentTimeReached(time, now) && !reminderAlreadySent(key)) {
+        markReminderSent(key);
+        notifyUser(t('mealReminderTitle'), body);
+      }
+    }
+  }
 }
 
 function buildCalendar(monthDate: Date) {
@@ -6703,6 +8099,84 @@ function removeActivity(id: string) {
   if (!window.confirm(t('deleteActivityConfirm'))) return;
   state.activityLogs = state.activityLogs.filter((entry) => entry.id !== id);
 }
+
+function cloneIntakeToMeal(id: string, mealType: MealType) {
+  if (!ensureSelectedDayEditing()) return;
+  const entry = state.intakes.find((item) => item.id === id);
+  if (!entry) return;
+  const now = Date.now();
+  state.intakes.push({
+    ...entry,
+    id: generateId('intake'),
+    meal_type: mealType,
+    consumed_at: timestampForActiveLogDay(now),
+    pending_sync: true,
+    created_at: now,
+    updated_at: now,
+  });
+  closeDuplicateMealTarget();
+  entryActionSheet.value = null;
+  showToast(t('entryDuplicated'));
+}
+
+function openDuplicateIntakeTarget(entry: Intake) {
+  if (!ensureSelectedDayEditing()) return;
+  pendingDuplicateIntakeId.value = entry.id;
+  duplicateMealTargetOpen.value = true;
+  entryActionSheet.value = null;
+}
+
+function closeDuplicateMealTarget() {
+  duplicateMealTargetOpen.value = false;
+  pendingDuplicateIntakeId.value = null;
+}
+
+function duplicatePendingIntake(mealType: MealType) {
+  if (!pendingDuplicateIntakeId.value) return;
+  cloneIntakeToMeal(pendingDuplicateIntakeId.value, mealType);
+}
+
+function moveIntakeToMeal(id: string, mealType: MealType) {
+  if (!ensureSelectedDayEditing()) return;
+  const now = Date.now();
+  state.intakes = state.intakes.map((entry) => entry.id === id ? { ...entry, meal_type: mealType, pending_sync: true, updated_at: now } : entry);
+  entryActionSheet.value = null;
+  showToast(t('entryMoved'));
+}
+
+function duplicateActivity(id: string) {
+  if (!ensureSelectedDayEditing()) return;
+  const entry = state.activityLogs.find((item) => item.id === id);
+  if (!entry) return;
+  const now = Date.now();
+  state.activityLogs.push({
+    ...entry,
+    id: generateId('activity-log'),
+    performed_at: timestampForActiveLogDay(now),
+    pending_sync: true,
+    created_at: now,
+    updated_at: now,
+  });
+  entryActionSheet.value = null;
+  showToast(t('entryDuplicated'));
+}
+
+function startEntryLongPress(kind: EntryActionSheetState['kind'], id: string, event?: PointerEvent) {
+  if (event?.pointerType === 'mouse' && event.button !== 0) return;
+  clearEntryLongPress();
+  entryLongPressTimer = window.setTimeout(() => {
+    entryActionSheet.value = { kind, id };
+    if (navigator.vibrate) navigator.vibrate(18);
+  }, 520);
+}
+
+function clearEntryLongPress() {
+  if (entryLongPressTimer) window.clearTimeout(entryLongPressTimer);
+  entryLongPressTimer = undefined;
+}
+
+const actionSheetIntake = computed(() => entryActionSheet.value?.kind === 'intake' ? state.intakes.find((entry) => entry.id === entryActionSheet.value?.id) || null : null);
+const actionSheetActivity = computed(() => entryActionSheet.value?.kind === 'activity' ? state.activityLogs.find((entry) => entry.id === entryActionSheet.value?.id) || null : null);
 
 function upsertWeightForDay(value: number, source: WeightLog['source'], key = activeLogDateKey.value) {
   const now = Date.now();
@@ -7221,6 +8695,8 @@ function resetCalculations() {
   state.settings.macro_carbs_percent = 60;
   state.settings.macro_protein_percent = 15;
   state.settings.macro_fat_percent = 25;
+  state.settings.target_deficit_kcal = 300;
+  state.settings.exercise_kcal_eatback_percent = 50;
 }
 
 
@@ -7881,8 +9357,8 @@ function setTab(tab: Tab) {
     <section v-if="activeTab === 'home'" class="page-stack home-page">
       <article v-if="weightPromptDue" class="card weight-prompt">
         <div>
-          <b>{{ t('weeklyWeightCheck') }}</b>
-          <p>{{ t('weeklyWeightCheckBody') }}</p>
+          <b>{{ state.settings.daily_weight_reminder_enabled ? t('weightReminderTitle') : t('weeklyWeightCheck') }}</b>
+          <p>{{ state.settings.daily_weight_reminder_enabled ? t('weightReminderBody') : t('weeklyWeightCheckBody') }}</p>
         </div>
         <div class="inline-form compact">
           <input v-model.number="weightInput" class="input" type="number" step="0.1" min="1" :placeholder="t('kgUnit')"  @focus="selectNumberInput"  @pointerdown="clearNumberInputOnDoubleTap"  inputmode="decimal" />
@@ -7899,10 +9375,11 @@ function setTab(tab: Tab) {
             <small>{{ t('supplied') }}</small>
           </div>
           <div class="kcal-ring-wrap">
-            <svg class="kcal-ring" viewBox="0 0 220 220">
+            <svg class="kcal-ring" viewBox="0 0 220 220" :class="kcalRingToneClass">
               <circle cx="110" cy="110" r="90" class="ring-bg" :stroke-dasharray="`${kcalArcLength} ${ringCircumference}`" />
               <circle cx="110" cy="110" r="90" class="ring-fg" :stroke-dasharray="kcalProgressDash" />
             </svg>
+            <span v-if="calorieDeficitEnabled" class="kcal-deficit-pin" :style="kcalDeficitMarkerStyle"></span>
             <div class="kcal-center">
               <strong>{{ kcalCenterValue }}</strong>
               <span>{{ t(kcalCenterLabel) }}</span>
@@ -7913,6 +9390,11 @@ function setTab(tab: Tab) {
             <b>{{ burnedKcal }}</b>
             <small>{{ t('burned') }}</small>
           </div>
+        </div>
+
+        <div class="deficit-dashboard-note">
+          <div class="deficit-status-row"><b>{{ deficitStatusText }}</b><button v-if="calorieDeficitEnabled" class="inline-help-button" type="button" :aria-label="deficitHelpTitle" @click="deficitInfoOpen = true" v-html="lucideSvg('circleQuestionMark')"></button></div>
+          <small v-if="calorieDeficitEnabled">{{ t('fullLimit') }} {{ dailyGoal }} kcal · {{ t('effectiveLimit') }} {{ effectiveDailyGoal }} kcal · {{ t('exerciseCredit') }} {{ creditedBurnedKcal }}/{{ burnedKcal }} kcal</small>
         </div>
 
         <div class="macro-rail">
@@ -7935,16 +9417,16 @@ function setTab(tab: Tab) {
           <span class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
-          <div v-for="activity in activitiesForSection()" :key="activity.id" class="entry-row">
+          <div v-for="activity in activitiesForSection()" :key="activity.id" class="entry-row" @pointerdown="startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="entryActionSheet = { kind: 'activity', id: activity.id }">
             <div><b>{{ activity.activity_name }}</b><small>{{ activity.duration_min }} min · {{ activity.kcal }} kcal · {{ activity.source }}</small></div>
-            <div class="entry-actions"><button class="text-button" @click="editActivityLog(activity)">{{ t('edit') }}</button><button class="delete-button" @click="removeActivity(activity.id)">{{ t('delete') }}</button></div>
+            <div class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="duplicateActivity(activity.id)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editActivityLog(activity)" v-html="lucideSvg('pencil')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeActivity(activity.id)" v-html="lucideSvg('trash2')"></button></div>
           </div>
           <p v-if="!activitiesForSection().length" class="empty-line">{{ t('noActivity') }}</p>
         </div>
         <div v-else class="entry-list">
-          <div v-for="entry in entriesForSection(section)" :id="`intake-entry-${entry.id}`" :key="entry.id" class="entry-row" :class="{ 'review-highlight': highlightedReviewIntakeId === entry.id }">
+          <div v-for="entry in entriesForSection(section)" :id="`intake-entry-${entry.id}`" :key="entry.id" class="entry-row" :class="{ 'review-highlight': highlightedReviewIntakeId === entry.id }" @pointerdown="startEntryLongPress('intake', entry.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="entryActionSheet = { kind: 'intake', id: entry.id }">
             <div><b>{{ itemTitle(foodFromIntake(entry)) }}</b><small>{{ amountLabel(entry.amount_g, foodFromIntake(entry)) }} · {{ intakeKcal(entry) }} kcal</small></div>
-            <div class="entry-actions"><button class="text-button" @click="editIntake(entry)">{{ t('edit') }}</button><button class="delete-button" @click="removeIntake(entry.id)">{{ t('delete') }}</button></div>
+            <div class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="openDuplicateIntakeTarget(entry)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editIntake(entry)" v-html="lucideSvg('pencil')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeIntake(entry.id)" v-html="lucideSvg('trash2')"></button></div>
           </div>
           <p v-if="!entriesForSection(section).length" class="empty-line">{{ t('noEntries') }}</p>
         </div>
@@ -7973,6 +9455,7 @@ function setTab(tab: Tab) {
               </div>
               <div class="entry-actions">
                 <button class="text-button" @click="openMealNoteDay(entry)">{{ t('openDay') }}</button>
+                <button class="text-button" @click="openNoteConversion(entry)">{{ t('convertToCatalogItem') }}</button>
                 <button class="text-button" @click="keepMealNoteAsFinal(entry)">{{ t('keepAsNote') }}</button>
               </div>
             </div>
@@ -8004,9 +9487,9 @@ function setTab(tab: Tab) {
       </article>
 
       <article class="card">
-        <h2>{{ selectedDate }}</h2>
+        <div class="diary-title-row"><h2>{{ selectedDate }}</h2><button class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="analysisOpen = true" v-html="lucideSvg('chartPie')"></button></div>
         <div class="diary-stats">
-          <div :class="['kcal-stat', diaryKcalTone]"><span>{{ t('supplied') }}</span><b>{{ consumedKcal }} / {{ dailyGoal }} kcal</b></div>
+          <div :class="['kcal-stat', diaryKcalTone]"><span>{{ t('supplied') }}</span><b>{{ consumedKcal }} / {{ dailyGoal }} kcal</b><small v-if="calorieDeficitEnabled">{{ t('effectiveLimit') }} {{ effectiveDailyGoal }} kcal</small></div>
           <div><span>{{ t('burned') }}</span><b>{{ burnedKcal }} kcal</b></div>
           <div class="weight-stat"><span>{{ t('weight') }}</span><b>{{ currentDayWeightKg ? `${Number(currentDayWeightKg).toFixed(1)} kg` : '—' }}</b><button class="mini-edit-button" @click="editSelectedDayWeight">{{ t('edit') }}</button></div>
           <div :class="['bmi-stat', currentBmiInfo.tone]"><span>BMI</span><b>{{ currentBmi || '—' }}</b></div>
@@ -8042,16 +9525,16 @@ function setTab(tab: Tab) {
           <span v-if="selectedDayUnlocked" class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
-          <div v-for="activity in activitiesForSection()" :key="activity.id" class="entry-row">
+          <div v-for="activity in activitiesForSection()" :key="activity.id" class="entry-row" @pointerdown="selectedDayUnlocked && startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="selectedDayUnlocked && (entryActionSheet = { kind: 'activity', id: activity.id })">
             <div><b>{{ activity.activity_name }}</b><small>{{ activity.duration_min }} min · {{ activity.kcal }} kcal</small></div>
-            <div v-if="selectedDayUnlocked" class="entry-actions"><button class="text-button" @click="editActivityLog(activity)">{{ t('edit') }}</button><button class="delete-button" @click="removeActivity(activity.id)">{{ t('delete') }}</button></div>
+            <div v-if="selectedDayUnlocked" class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="duplicateActivity(activity.id)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editActivityLog(activity)" v-html="lucideSvg('pencil')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeActivity(activity.id)" v-html="lucideSvg('trash2')"></button></div>
           </div>
           <p v-if="!activitiesForSection().length" class="empty-line">{{ t('noActivity') }}</p>
         </div>
         <div v-else class="entry-list">
-          <div v-for="entry in entriesForSection(section)" :id="`intake-entry-${entry.id}`" :key="entry.id" class="entry-row" :class="{ 'review-highlight': highlightedReviewIntakeId === entry.id }">
+          <div v-for="entry in entriesForSection(section)" :id="`intake-entry-${entry.id}`" :key="entry.id" class="entry-row" :class="{ 'review-highlight': highlightedReviewIntakeId === entry.id }" @pointerdown="selectedDayUnlocked && startEntryLongPress('intake', entry.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="selectedDayUnlocked && (entryActionSheet = { kind: 'intake', id: entry.id })">
             <div><b>{{ itemTitle(foodFromIntake(entry)) }}</b><small>{{ amountLabel(entry.amount_g, foodFromIntake(entry)) }} · {{ intakeKcal(entry) }} kcal</small></div>
-            <div v-if="selectedDayUnlocked" class="entry-actions"><button class="text-button" @click="editIntake(entry)">{{ t('edit') }}</button><button class="delete-button" @click="removeIntake(entry.id)">{{ t('delete') }}</button></div>
+            <div v-if="selectedDayUnlocked" class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="openDuplicateIntakeTarget(entry)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editIntake(entry)" v-html="lucideSvg('pencil')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeIntake(entry.id)" v-html="lucideSvg('trash2')"></button></div>
           </div>
           <p v-if="!entriesForSection(section).length" class="empty-line">{{ t('noEntries') }}</p>
         </div>
@@ -8280,6 +9763,13 @@ function setTab(tab: Tab) {
                     <strong>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)}g/db` : 'g' }}</strong>
                   </button>
                 </div>
+                <div v-if="reusableMealNoteSuggestions.length" class="picker-group note-suggestion-group">
+                  <div class="picker-group-title">{{ t('previousMealNotes') }}</div>
+                  <button v-for="note in reusableMealNoteSuggestions" :key="`picker-note-${note.key}`" class="picker-row note-suggestion-row" @click="useMealNoteSuggestion(note)">
+                    <span><b>{{ note.title }}</b><small>{{ note.kcal }} kcal · {{ t('noteEntry') }}<template v-if="note.count > 1"> · ×{{ note.count }}</template></small><small v-if="note.description" class="catalog-note">{{ note.description }}</small></span>
+                    <strong>{{ t('useNote') }}</strong>
+                  </button>
+                </div>
               </template>
               <template v-else>
                 <div v-if="visibleRecipeItems.length" class="picker-group">
@@ -8496,16 +9986,87 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
+      <section v-if="analysisOpen" class="analysis-screen app-overlay">
+        <header class="settings-header"><button class="back-button" @click="analysisOpen = false" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('analysis') }}</h2></header>
+        <div class="analysis-content">
+          <article class="card analysis-summary-card">
+            <div><span>{{ t('currentStreak') }}</span><b>{{ currentDeficitStreak }} {{ t('days') }}</b></div>
+            <div><span>{{ t('bestStreak') }}</span><b>{{ bestDeficitStreak }} {{ t('days') }}</b></div>
+            <div><span>{{ t('successRate') }}</span><b>{{ calorieSuccessRate }}%</b></div>
+          </article>
+
+          <article class="card analysis-card">
+            <div class="analysis-card-header compact">
+              <h2>{{ t('calorieTrend') }}</h2>
+              <button class="info-button" type="button" :aria-label="t('legend')" @click="calorieLegendOpen = !calorieLegendOpen" v-html="lucideSvg('info')"></button>
+            </div>
+            <div v-if="calorieLegendOpen" class="chart-legend">
+              <span><i class="legend-box consumed"></i>{{ t('consumedLegend') }}</span>
+              <span><i class="legend-line full"></i>{{ t('fullLimit') }}</span>
+              <span v-if="calorieDeficitEnabled"><i class="legend-line effective"></i>{{ t('effectiveLimit') }}</span>
+            </div>
+            <div class="calorie-chart">
+              <button v-for="row in analysisDailyRows" :key="`calorie-${row.key}`" type="button" class="calorie-bar-wrap" :class="{ selected: row.key === selectedCalorieChartRow.key }" @click="selectedCalorieRowKey = row.key">
+                <span class="calorie-bar-track">
+                  <span class="calorie-limit-line full" :style="{ bottom: `${Math.min(96, row.dailyLimitKcal / calorieChartMax * 100)}%` }"></span>
+                  <span v-if="calorieDeficitEnabled && row.deficitKcal > 0" class="calorie-limit-line effective" :style="{ bottom: `${Math.min(96, row.effectiveLimitKcal / calorieChartMax * 100)}%` }"></span>
+                  <span :class="['calorie-bar', row.tone]" :style="{ height: `${Math.min(100, row.consumedKcal / calorieChartMax * 100)}%` }"></span>
+                </span>
+                <small>{{ row.label }}</small>
+              </button>
+            </div>
+            <p class="helper big">
+              <b>{{ selectedCalorieChartRow.label }}</b> ·
+              {{ selectedCalorieChartRow.consumedKcal }} / {{ calorieDeficitEnabled ? selectedCalorieChartRow.effectiveLimitKcal : selectedCalorieChartRow.dailyLimitKcal }} kcal
+              <span v-if="calorieDeficitEnabled">({{ selectedCalorieChartRow.dailyLimitKcal }} kcal {{ t('fullLimit') }})</span>
+              · {{ t('burned') }}: {{ selectedCalorieChartRow.burnedKcal }} kcal
+            </p>
+          </article>
+
+          <article class="card analysis-card">
+            <div class="analysis-card-header">
+              <h2>{{ t('weightTrend') }}</h2>
+              <button class="info-button" type="button" :aria-label="t('legend')" @click="weightLegendOpen = !weightLegendOpen" v-html="lucideSvg('info')"></button>
+            </div>
+            <div class="trend-mode-toggle weight-mode-row" role="tablist" :aria-label="t('weightTrend')">
+              <button type="button" :class="{ active: weightTrendMode === 'daily' }" @click="weightTrendMode = 'daily'">{{ weightTrendModeLabel('daily') }}</button>
+              <button type="button" :class="{ active: weightTrendMode === 'weekly' }" @click="weightTrendMode = 'weekly'">{{ weightTrendModeLabel('weekly') }}</button>
+              <button type="button" :class="{ active: weightTrendMode === 'monthly' }" @click="weightTrendMode = 'monthly'">{{ weightTrendModeLabel('monthly') }}</button>
+            </div>
+            <div v-if="weightLegendOpen" class="chart-legend">
+              <span><i class="legend-box weight"></i>{{ t('weightLegendValue') }}</span>
+              <span><i class="legend-dot selected"></i>{{ t('selected') }}</span>
+            </div>
+            <template v-if="analysisWeightRows.length">
+              <div class="weight-axis-chart">
+                <div class="weight-y-axis"><span v-for="tick in weightChartScale.ticks" :key="`tick-${tick}`">{{ tick }} kg</span></div>
+                <div class="weight-bar-chart">
+                  <button v-for="row in analysisWeightRows" :key="row.key" type="button" class="weight-bar-wrap" :class="{ selected: row.key === selectedWeightChartRow?.key }" @click="selectedWeightRowKey = row.key">
+                    <span class="weight-bar-track"><span class="weight-bar" :style="{ height: `${weightBarHeight(row)}%` }"></span></span>
+                    <small>{{ row.label }}</small>
+                  </button>
+                </div>
+              </div>
+              <p v-if="selectedWeightChartRow" class="helper big"><b>{{ selectedWeightChartRow.label }}</b> · {{ selectedWeightChartRow.weightKg.toFixed(1) }} kg <span v-if="selectedWeightChartRow.limitedData">· {{ t('limitedData') }}</span></p>
+            </template>
+            <p v-else class="helper big">{{ t('noWeightTrend') }}</p>
+          </article>
+        </div>
+      </section>
+    </Teleport>
+
+    <Teleport to="body">
       <section v-if="settingsOpen" class="settings-screen app-overlay">
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
         <button class="settings-row" @click="settingsDialog = 'units'"><span class="settings-row-icon" v-html="settingsIcon('units')"></span><b>{{ t('units') }}</b><small>{{ state.settings.units === 'metric' ? t('metric') : t('imperial') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'calculations'"><span class="settings-row-icon" v-html="settingsIcon('calculations')"></span><b>{{ t('calculations') }}</b><small>{{ t('iomEquationMacro') }}</small></button>
+        <button class="settings-row" @click="settingsDialog = 'tracking'"><span class="settings-row-icon" v-html="settingsIcon('tracking')"></span><b>{{ t('trackingReminders') }}</b><small>{{ calorieDeficitEnabled ? `${state.settings.target_deficit_kcal} kcal ${t('targetDeficit')}` : t('deficitOffHint') }}</small></button>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('activity')"></span><b>{{ t('showActivity') }}</b><input v-model="state.settings.show_activity_tracking" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('macros')"></span><b>{{ t('showMacros') }}</b><input v-model="state.settings.show_meal_macros" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('showMicros') }}</b><input v-model="state.settings.show_micronutrients" type="checkbox" /></label>
         <button class="settings-row" @click="settingsDialog = 'language'"><span class="settings-row-icon" v-html="settingsIcon('language')"></span><b>{{ t('language') }}</b><small>{{ selectedLanguageLabel() }}</small></button>
-        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('reminder')"></span><b>{{ t('dailyReminder') }}</b><input v-model="state.settings.daily_reminder" type="checkbox" /></label>
+        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('reminder')"></span><b>{{ t('dailyReminder') }}</b><input v-model="state.settings.daily_reminder" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
         <div class="settings-divider"></div>
         <button class="settings-row" @click="exportAppData"><span class="settings-row-icon" v-html="settingsIcon('export')"></span><b>{{ t('exportAppData') }}</b><small>{{ t('exportAppDataBody') }}</small></button>
         <button class="settings-row" @click="importAppData"><span class="settings-row-icon" v-html="settingsIcon('import')"></span><b>{{ t('importAppData') }}</b><small>{{ t('importAppDataBody') }}</small></button>
@@ -8546,6 +10107,33 @@ function setTab(tab: Tab) {
             <label class="field-label">fat {{ state.settings.macro_fat_percent }}%</label><input v-model.number="state.settings.macro_fat_percent" type="range" min="0" max="100" step="5" class="tile-range fat-range" />
             <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('cancel') }}</button><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button></div>
           </template>
+          <template v-else-if="settingsDialog === 'tracking'">
+            <div class="dialog-title-row tracking-dialog-title"><h2>{{ t('trackingReminders') }}</h2><button class="text-button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button></div>
+            <div class="tracking-settings-panel">
+              <section class="tracking-settings-group">
+                <label class="tracking-toggle-card"><span><b>{{ t('weeklyWeightAverage') }}</b><small>{{ t('weeklyWeightAverageHint') }}</small></span><input v-model="state.settings.weekly_weight_average_enabled" type="checkbox" /></label>
+                <label class="tracking-toggle-card"><span><b>{{ t('dailyWeightReminder') }}</b><small>{{ t('dailyWeightReminderTime') }} · {{ state.settings.daily_weight_reminder_time }}</small></span><input v-model="state.settings.daily_weight_reminder_enabled" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
+                <label class="tracking-input-card" :class="{ disabled: !state.settings.daily_weight_reminder_enabled }"><span>{{ t('dailyWeightReminderTime') }}</span><input v-model="state.settings.daily_weight_reminder_time" class="input" type="time" :disabled="!state.settings.daily_weight_reminder_enabled" /></label>
+              </section>
+
+              <section class="tracking-settings-group">
+                <label class="tracking-toggle-card"><span><b>{{ t('mealReminders') }}</b><small>{{ t('breakfast') }} · {{ t('lunch') }} · {{ t('dinner') }}</small></span><input v-model="state.settings.meal_reminders_enabled" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
+                <div class="time-grid tracking-time-grid" :class="{ disabled: !state.settings.meal_reminders_enabled }">
+                  <label><span>{{ t('breakfast') }}</span><input v-model="state.settings.meal_reminder_morning_time" class="input" type="time" :disabled="!state.settings.meal_reminders_enabled" /></label>
+                  <label><span>{{ t('lunch') }}</span><input v-model="state.settings.meal_reminder_noon_time" class="input" type="time" :disabled="!state.settings.meal_reminders_enabled" /></label>
+                  <label><span>{{ t('dinner') }}</span><input v-model="state.settings.meal_reminder_afternoon_time" class="input" type="time" :disabled="!state.settings.meal_reminders_enabled" /></label>
+                </div>
+              </section>
+
+              <section class="tracking-settings-group">
+                <label class="tracking-toggle-card"><span><b>{{ t('calorieDeficitTracking') }}</b><small>{{ state.settings.target_deficit_kcal }} kcal · {{ t('targetDeficit') }}</small></span><input v-model="state.settings.calorie_deficit_enabled" type="checkbox" /></label>
+                <label class="tracking-range-card" :class="{ disabled: !calorieDeficitEnabled }"><span>{{ t('targetDeficit') }}</span><b>{{ state.settings.target_deficit_kcal }} kcal</b><input v-model.number="state.settings.target_deficit_kcal" class="tile-range" type="range" min="0" max="600" step="25" :disabled="!calorieDeficitEnabled" /></label>
+                <label class="tracking-input-card" :class="{ disabled: !calorieDeficitEnabled }"><span>{{ t('exerciseKcalEatback') }}</span><select v-model.number="state.settings.exercise_kcal_eatback_percent" class="input" :disabled="!calorieDeficitEnabled"><option :value="0">{{ t('eatbackNone') }}</option><option :value="25">25%</option><option :value="50">{{ t('eatbackHalf') }}</option><option :value="100">{{ t('eatbackFull') }}</option></select></label>
+                <label class="tracking-toggle-card"><span><b>{{ t('calorieLimitWarning') }}</b><small>{{ t('deficitWarningTitle') }}</small></span><input v-model="state.settings.calorie_limit_warning_enabled" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
+              </section>
+            </div>
+            <div class="dialog-actions"><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></div>
+          </template>
           <template v-else-if="settingsDialog === 'privacy'"><h2>{{ t('privacy') }}</h2><p class="helper big">{{ t('privacyBody') }}</p><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></template>
           <template v-else-if="settingsDialog === 'licenses'">
             <h2>{{ t('licenses') }}</h2>
@@ -8566,6 +10154,62 @@ function setTab(tab: Tab) {
       </section>
     </Teleport>
 
+
+    <Teleport to="body">
+      <div v-if="deficitInfoOpen" class="dialog-backdrop app-overlay" @click.self="deficitInfoOpen = false">
+        <article class="settings-dialog deficit-info-dialog">
+          <div class="dialog-title-row"><h2>{{ deficitHelpTitle }}</h2><button class="text-button" @click="deficitInfoOpen = false">{{ t('ok') }}</button></div>
+          <div class="deficit-info-grid">
+            <div><span>{{ t('fullLimit') }}</span><b>{{ dailyGoal }} kcal</b></div>
+            <div><span>{{ t('effectiveLimit') }}</span><b>{{ effectiveDailyGoal }} kcal</b></div>
+            <div><span>{{ t('supplied') }}</span><b>{{ consumedKcal }} kcal</b></div>
+            <div><span>{{ t('exerciseCredit') }}</span><b>{{ creditedBurnedKcal }}/{{ burnedKcal }} kcal</b></div>
+          </div>
+          <p class="helper big">{{ deficitHelpBody }}</p>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="duplicateMealTargetOpen" class="dialog-backdrop app-overlay" @click.self="closeDuplicateMealTarget">
+        <article class="settings-dialog entry-action-dialog">
+          <div class="dialog-title-row"><h2>{{ t('duplicateEntry') }}</h2><button class="text-button" @click="closeDuplicateMealTarget">{{ t('cancel') }}</button></div>
+          <p class="helper big">{{ t('duplicateMealTargetHint') }}</p>
+          <div class="meal-target-grid">
+            <button v-for="section in mealTargetSections" :key="`duplicate-${section.key}`" class="dialog-option meal-target-option" @click="duplicatePendingIntake(section.key)">
+              <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
+              <b>{{ t(section.key) }}</b>
+            </button>
+          </div>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="entryActionSheet" class="dialog-backdrop app-overlay" @click.self="entryActionSheet = null">
+        <article class="settings-dialog entry-action-dialog">
+          <div class="dialog-title-row"><h2>{{ t('entryActions') }}</h2><button class="text-button" @click="entryActionSheet = null">{{ t('cancel') }}</button></div>
+          <template v-if="actionSheetIntake">
+            <p class="helper big">{{ itemTitle(foodFromIntake(actionSheetIntake)) }}</p>
+            <button class="dialog-option" @click="openDuplicateIntakeTarget(actionSheetIntake)"><span>{{ t('duplicate') }}</span><small>{{ t('duplicateMealTargetHint') }}</small></button>
+            <button v-if="actionSheetIntake.item_type === 'note'" class="dialog-option" @click="openNoteConversion(actionSheetIntake)"><span>{{ t('convertToCatalogItem') }}</span><small>{{ t('convertNoteToCatalogHint') }}</small></button>
+            <h3>{{ t('moveToMeal') }}</h3>
+            <div class="meal-target-grid">
+              <button v-for="section in mealTargetSections" :key="`move-${section.key}`" class="dialog-option meal-target-option" :disabled="actionSheetIntake.meal_type === section.key" @click="moveIntakeToMeal(actionSheetIntake.id, section.key)">
+                <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
+                <b>{{ t(section.key) }}</b>
+              </button>
+            </div>
+            <div class="dialog-actions"><button class="text-button" @click="editIntake(actionSheetIntake); entryActionSheet = null">{{ t('edit') }}</button><button class="delete-button" @click="removeIntake(actionSheetIntake.id); entryActionSheet = null">{{ t('delete') }}</button></div>
+          </template>
+          <template v-else-if="actionSheetActivity">
+            <p class="helper big">{{ actionSheetActivity.activity_name }}</p>
+            <button class="dialog-option" @click="duplicateActivity(actionSheetActivity.id)"><span>{{ t('duplicate') }}</span><small>{{ actionSheetActivity.kcal }} kcal</small></button>
+            <div class="dialog-actions"><button class="text-button" @click="editActivityLog(actionSheetActivity); entryActionSheet = null">{{ t('edit') }}</button><button class="delete-button" @click="removeActivity(actionSheetActivity.id); entryActionSheet = null">{{ t('delete') }}</button></div>
+          </template>
+        </article>
+      </div>
+    </Teleport>
 
     <Teleport to="body">
       <div v-if="backupProfilesOpen" class="dialog-backdrop app-overlay" @click.self="backupProfilesOpen = false">
