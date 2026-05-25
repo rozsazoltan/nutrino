@@ -475,6 +475,7 @@ jobs:
       TARGET_SHA: ${{ needs.validate-release.outputs.target_sha }}
       PREVIOUS_TAG: ${{ needs.validate-release.outputs.previous_tag }}
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Download release build artifacts
         uses: actions/download-artifact@v8
@@ -545,7 +546,7 @@ jobs:
 
           gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" "${ARGS[@]}" --jq '.body' > release-notes.md
 
-      - name: Create or update draft release
+      - name: Create or update GitHub release
         shell: bash
         run: |
           set -euo pipefail
@@ -558,8 +559,7 @@ jobs:
             gh release create "${TAG}" \
               --target "${TARGET_SHA}" \
               --title "Nutrino v${VERSION}" \
-              --notes-file release-notes.md \
-              --draft
+              --notes-file release-notes.md
           fi
 
       - name: Upload release assets
@@ -568,14 +568,3 @@ jobs:
           set -euo pipefail
           gh release upload "${TAG}" dist/release-upload/* --clobber
 
-      - name: Publish release
-        shell: bash
-        run: |
-          set -euo pipefail
-          RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq ".[] | select(.tag_name == \"${TAG}\") | .id" | head -n 1)"
-          if [ -z "${RELEASE_ID}" ]; then
-            echo "::error::Could not resolve GitHub Release ID for ${TAG}"
-            exit 1
-          fi
-          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false >/dev/null
-          echo "Published ${TAG}"
