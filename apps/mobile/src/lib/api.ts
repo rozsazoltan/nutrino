@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult } from '../types';
 import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeFood, normalizeIngredient, resolveCatalogId } from './storage';
 
-export const APP_VERSION = '0.11.17';
+export const APP_VERSION = '0.11.18';
 const APP_CHANNEL = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
 const DEVICE_ID_STORAGE_KEY = `nutrino.mobile.${APP_CHANNEL}.device_id.v1`;
 
