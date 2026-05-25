@@ -44,7 +44,7 @@ const foodSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const recipeQuery = ref('');
 const recipeSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const settings = ref<DesktopSettings | null>(null);
-const appVersion = '0.11.18';
+const appVersion = '0.12.11';
 const appChannel = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
 const appName = appChannel === 'dev' ? 'Nutrino Dev' : 'Nutrino';
 document.title = appName;
@@ -6757,7 +6757,7 @@ onBeforeUnmount(() => {
                     <p class="mt-2 text-xs font-bold uppercase tracking-wide text-nutri-700">{{ t('ui.code_ca0db') }} {{ activity.code }} · MET {{ round(activity.met) }} · {{ round(activity.kcal_per_min) }} kcal/min</p>
                   </div>
                 </div>
-                <div class="mt-3 flex gap-2">
+                <div class="activity-card-actions">
                   <button class="link-button icon-only-label" @click="openActivityModal(activity)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
                   <button class="link-button icon-only-label" @click="mergeCatalogInto('activity', activity.id, localizedName(activity))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button><button class="link-button icon-only-label" @click="showCatalogQr('activity', activity, localizedName(activity))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
                   <button class="link-button danger icon-only-label" @click="removeActivity(activity)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>

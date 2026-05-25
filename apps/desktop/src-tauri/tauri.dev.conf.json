@@ -1,0 +1,11 @@
+{
+  "productName": "Nutrino Dev",
+  "identifier": "net.datarose.nutrino.desktop.dev",
+  "app": {
+    "windows": [
+      {
+        "title": "Nutrino Dev"
+      }
+    ]
+  }
+}

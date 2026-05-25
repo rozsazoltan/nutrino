@@ -255,6 +255,17 @@ export interface AppSettings {
   show_meal_macros: boolean;
   show_micronutrients: boolean;
   daily_reminder: boolean;
+  weekly_weight_average_enabled: boolean;
+  daily_weight_reminder_enabled: boolean;
+  daily_weight_reminder_time: string;
+  meal_reminders_enabled: boolean;
+  meal_reminder_morning_time: string;
+  meal_reminder_noon_time: string;
+  meal_reminder_afternoon_time: string;
+  calorie_deficit_enabled: boolean;
+  target_deficit_kcal: number;
+  calorie_limit_warning_enabled: boolean;
+  exercise_kcal_eatback_percent: number;
   kcal_adjustment: number;
   macro_carbs_percent: number;
   macro_protein_percent: number;

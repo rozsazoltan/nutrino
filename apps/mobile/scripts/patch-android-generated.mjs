@@ -99,6 +99,9 @@ function patchManifest(config) {
   if (!xml.includes('android.permission.CAMERA')) {
     xml = xml.replace(/<manifest([^>]*)>/, '<manifest$1>\n    <uses-permission android:name="android.permission.CAMERA" />');
   }
+  if (!xml.includes('android.permission.POST_NOTIFICATIONS')) {
+    xml = xml.replace(/<manifest([^>]*)>/, '<manifest$1>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />');
+  }
   if (xml.includes('<activity') && !xml.includes('android:windowSoftInputMode=')) {
     xml = xml.replace(/<activity\s/, '<activity android:windowSoftInputMode="adjustResize" ');
   }
@@ -365,10 +368,23 @@ function currentNativeIdentityHash(config) {
   return hash.digest('hex');
 }
 
-function removePathIfExists(targetPath) {
+function removePathIfExists(targetPath, options = {}) {
+  const { optional = false } = options;
   if (!fs.existsSync(targetPath)) return false;
-  fs.rmSync(targetPath, { recursive: true, force: true });
-  return true;
+
+  try {
+    fs.rmSync(targetPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+    return true;
+  } catch (error) {
+    const code = error?.code ? String(error.code) : '';
+    const isLockedPath = code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY';
+    if (optional && isLockedPath) {
+      console.warn(`Warning: could not remove optional Android cache path: ${targetPath}`);
+      console.warn('Close running Gradle/Java processes if Android dev keeps using stale generated state.');
+      return false;
+    }
+    throw error;
+  }
 }
 
 function cleanStaleAndroidNativeState(config) {
@@ -412,7 +428,7 @@ function cleanStaleAndroidNativeState(config) {
   removePathIfExists(path.join(androidDir, 'app', 'src', 'main', 'jniLibs'));
   removePathIfExists(path.join(androidDir, 'app', 'build'));
   removePathIfExists(path.join(androidDir, 'build'));
-  removePathIfExists(path.join(androidDir, '.gradle'));
+  removePathIfExists(path.join(androidDir, '.gradle'), { optional: true });
 
   fs.writeFileSync(statePath, `${JSON.stringify(nextState, null, 2)}\n`);
   return true;
@@ -674,8 +690,8 @@ function normalizeBuildSrcRustPluginResources() {
 
   if (changed) {
     removePathIfExists(path.join(buildSrcDir, 'build'));
-    removePathIfExists(path.join(buildSrcDir, '.gradle'));
-    removePathIfExists(path.join(androidDir, '.gradle'));
+    removePathIfExists(path.join(buildSrcDir, '.gradle'), { optional: true });
+    removePathIfExists(path.join(androidDir, '.gradle'), { optional: true });
   }
 
   return changed;

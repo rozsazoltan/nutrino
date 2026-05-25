@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version without a leading v, for example 0.11.18"
+        description: "Release version without a leading v, for example 0.12.4"
         required: true
         type: string
       ref:
@@ -51,7 +51,7 @@ jobs:
           VERSION="${RAW_VERSION#v}"
 
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Release version must be a full semantic version, for example 0.11.18"
+            echo "::error::Release version must be a full semantic version, for example 0.12.4"
             exit 1
           fi
 
@@ -482,101 +482,49 @@ jobs:
         with:
           path: dist/release-artifacts
 
-      - name: Prepare clean release upload assets
+      - name: Prepare release upload assets
         shell: bash
         run: |
           set -euo pipefail
 
           python3 <<'PY'
-          import hashlib
-          import os
-          import re
-          import shutil
           from pathlib import Path
+          import shutil
 
           source = Path('dist/release-artifacts')
           target = Path('dist/release-upload')
-          version = os.environ['VERSION']
           target.mkdir(parents=True, exist_ok=True)
 
           if not source.exists():
               raise SystemExit('No downloaded release artifacts found')
-
-          group_prefixes = {
-              'nutrino-desktop-linux': 'nutrino-desktop-linux',
-              'nutrino-desktop-windows': 'nutrino-desktop-windows',
-              'nutrino-desktop-macos': 'nutrino-desktop-macos',
-              'nutrino-mobile-android': 'nutrino-mobile-android',
-              'nutrino-mobile-ios': 'nutrino-mobile-ios',
-          }
-
-          release_extensions = (
-              '.appimage',
-              '.deb',
-              '.rpm',
-              '.dmg',
-              '.exe',
-              '.msi',
-              '.apk',
-              '.aab',
-              '.ipa',
-          )
-
-          def clean_token(value):
-              value = re.sub(r'[^A-Za-z0-9._-]+', '-', value).strip('-')
-              return value.lower() or 'artifact'
-
-          def artifact_extension(name):
-              lower = name.lower()
-              for extension in release_extensions:
-                  if lower.endswith(extension):
-                      if extension == '.appimage':
-                          return '.AppImage'
-                      return name[-len(extension):]
-              return None
-
-          def checksum(path):
-              hasher = hashlib.sha256()
-              with path.open('rb') as handle:
-                  for chunk in iter(lambda: handle.read(1024 * 1024), b''):
-                      hasher.update(chunk)
-              return hasher.hexdigest()
 
           copied = 0
           for file in sorted(source.rglob('*')):
               if not file.is_file():
                   continue
 
-              if file.name == 'release-manifest.json' or file.name.endswith('.sha256'):
-                  continue
-
-              extension = artifact_extension(file.name)
-              if extension is None:
-                  continue
-
               relative = file.relative_to(source)
               group = relative.parts[0] if len(relative.parts) > 1 else 'artifact'
-              prefix = group_prefixes.get(group, clean_token(group))
-              destination = target / f'{prefix}-{version}{extension}'
+              base = file.name
 
+              if base == 'release-manifest.json':
+                  name = f'{group}-release-manifest.json'
+              else:
+                  name = base
+
+              destination = target / name
               if destination.exists():
-                  stem = clean_token(Path(file.name).stem)
-                  destination = target / f'{prefix}-{version}-{stem}{extension}'
+                  destination = target / f'{group}-{base}'
               if destination.exists():
                   raise SystemExit(f'Artifact collision while staging {file}: {destination} already exists')
 
               shutil.copy2(file, destination)
-              digest = checksum(destination)
-              destination.with_name(destination.name + '.sha256').write_text(
-                  f'{digest}  {destination.name}\n',
-                  encoding='utf-8',
-              )
               copied += 1
 
           if copied == 0:
               raise SystemExit('No release files were staged for upload')
 
-          print(f'Staged {copied} release asset(s) with clean release filenames')
+          print(f'Staged {copied} release asset(s)')
           PY
 
           find dist/release-upload -maxdepth 1 -type f -print | sort
