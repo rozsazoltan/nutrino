@@ -106,6 +106,7 @@ export function defaultSettings(): AppSettings {
     include_inactive_catalog_items: false,
     micronutrient_limits: { ...DEFAULT_MICRONUTRIENT_LIMITS },
     daily_reminder: false,
+    daily_reminder_time: '20:00',
     weekly_weight_average_enabled: false,
     daily_weight_reminder_enabled: false,
     daily_weight_reminder_time: '07:30',
@@ -181,6 +182,8 @@ export function loadState(): AppState {
     const mergedSettings: AppSettings = {
       ...defaults.settings,
       ...storedSettings,
+      daily_reminder: storedSettings.daily_reminder === true,
+      daily_reminder_time: typeof storedSettings.daily_reminder_time === 'string' ? storedSettings.daily_reminder_time : defaults.settings.daily_reminder_time,
       weekly_weight_average_enabled: storedSettings.weekly_weight_average_enabled === true,
       daily_weight_reminder_enabled: storedSettings.daily_weight_reminder_enabled === true,
       meal_reminders_enabled: storedSettings.meal_reminders_enabled === true,

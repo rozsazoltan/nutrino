@@ -271,6 +271,7 @@ export interface AppSettings {
   include_inactive_catalog_items: boolean;
   micronutrient_limits: Record<string, number>;
   daily_reminder: boolean;
+  daily_reminder_time: string;
   weekly_weight_average_enabled: boolean;
   daily_weight_reminder_enabled: boolean;
   daily_weight_reminder_time: string;
