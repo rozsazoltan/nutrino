@@ -1208,6 +1208,22 @@ const selectedCalorieChartRow = computed(() => analysisDailyRows.value.find((row
 const selectedWeightChartRow = computed(() => analysisWeightRows.value.find((row) => row.key === selectedWeightRowKey.value) || analysisWeightRows.value.find((row) => row.selected) || analysisWeightRows.value.at(-1) || null);
 const weightChartScale = computed(() => buildWeightChartScale(analysisWeightRows.value));
 
+function selectAnalysisRowsForSelectedDate() {
+  selectedCalorieRowKey.value = analysisDailyRows.value.some((row) => row.key === selectedDate.value)
+    ? selectedDate.value
+    : null;
+  selectedWeightRowKey.value = analysisWeightRows.value.find((row) => row.selected)?.key || null;
+}
+
+function openAnalysis() {
+  selectAnalysisRowsForSelectedDate();
+  analysisOpen.value = true;
+}
+
+watch(analysisOpen, (open) => {
+  if (open) selectAnalysisRowsForSelectedDate();
+});
+
 watch(analysisDailyRows, (rows) => {
   if (!rows.some((row) => row.key === selectedCalorieRowKey.value)) selectedCalorieRowKey.value = selectedDate.value;
 }, { immediate: true });
@@ -9779,7 +9795,7 @@ function setTab(tab: Tab) {
         </div>
         <div class="diary-date-sticky-actions">
           <button v-if="state.settings.show_micronutrients" class="icon-button analysis-open-button" type="button" :aria-label="t('dayMicronutrients')" :title="t('dayMicronutrients')" @click="openDayMicronutrients" v-html="lucideSvg('flaskConical')"></button>
-          <button class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="analysisOpen = true" v-html="lucideSvg('chartPie')"></button>
+          <button class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="openAnalysis" v-html="lucideSvg('chartPie')"></button>
           <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('next')" :title="t('next')" @click="moveSelectedDate(1)" v-html="lucideSvg('chevronRight')"></button>
         </div>
       </div>
