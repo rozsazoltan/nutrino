@@ -13,6 +13,28 @@ type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 type RecipeCatalogItem = Food & { catalog_source: 'ingredient' | 'food' | 'recipe' };
 type ModalKind = CatalogKind | null;
 
+type OptionalNutrientDefinition = {
+  key: string;
+  labelKey: string;
+  unit: 'g' | 'mg' | 'mcg';
+  field?: 'sugars_per_100g' | 'fiber_per_100g' | 'salt_per_100g';
+};
+
+const optionalNutrientDefinitions: OptionalNutrientDefinition[] = [
+  { key: 'sugars_per_100g', field: 'sugars_per_100g', labelKey: 'ui.sugars' , unit: 'g' },
+  { key: 'fiber_per_100g', field: 'fiber_per_100g', labelKey: 'ui.fiber', unit: 'g' },
+  { key: 'salt_per_100g', field: 'salt_per_100g', labelKey: 'ui.salt_99834', unit: 'g' },
+  { key: 'saturated_fat_per_100g', labelKey: 'ui.saturatedFat', unit: 'g' },
+  { key: 'sodium_mg_per_100g', labelKey: 'ui.sodium', unit: 'mg' },
+  { key: 'calcium_mg_per_100g', labelKey: 'ui.calcium', unit: 'mg' },
+  { key: 'iron_mg_per_100g', labelKey: 'ui.iron', unit: 'mg' },
+  { key: 'potassium_mg_per_100g', labelKey: 'ui.potassium', unit: 'mg' },
+  { key: 'vitamin_d_mcg_per_100g', labelKey: 'ui.vitaminD', unit: 'mcg' },
+  { key: 'vitamin_b12_mcg_per_100g', labelKey: 'ui.vitaminB12', unit: 'mcg' },
+  { key: 'magnesium_mg_per_100g', labelKey: 'ui.magnesium', unit: 'mg' },
+];
+
+
 const tab = ref<Tab>('dashboard');
 const modal = ref<ModalKind>(null);
 const status = ref<ServerStatus | null>(null);
@@ -4315,6 +4337,42 @@ for (const [language, values] of Object.entries(desktopV0119TranslationPatches))
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
 }
 
+const desktopNutrientTranslations: Record<string, Record<string, string>> = {
+  en: {
+    'ui.importantNutrients': 'Important nutrients',
+    'ui.optionalNutrients': 'Optional nutrients',
+    'ui.optionalNutrientsHint': 'Optional per-100g values can be left empty.',
+    'ui.sugars': 'Sugars',
+    'ui.fiber': 'Fiber',
+    'ui.saturatedFat': 'Saturated fat',
+    'ui.sodium': 'Sodium',
+    'ui.calcium': 'Calcium',
+    'ui.iron': 'Iron',
+    'ui.potassium': 'Potassium',
+    'ui.vitaminD': 'Vitamin D',
+    'ui.vitaminB12': 'Vitamin B12',
+    'ui.magnesium': 'Magnesium',
+  },
+  hu: {
+    'ui.importantNutrients': 'Fontos tápanyagok',
+    'ui.optionalNutrients': 'Opcionális tápanyagok',
+    'ui.optionalNutrientsHint': 'Az opcionális /100g értékek üresen hagyhatók.',
+    'ui.sugars': 'Cukor',
+    'ui.fiber': 'Rost',
+    'ui.saturatedFat': 'Telített zsír',
+    'ui.sodium': 'Nátrium',
+    'ui.calcium': 'Kalcium',
+    'ui.iron': 'Vas',
+    'ui.potassium': 'Kálium',
+    'ui.vitaminD': 'D-vitamin',
+    'ui.vitaminB12': 'B12-vitamin',
+    'ui.magnesium': 'Magnézium',
+  },
+};
+for (const [language, values] of Object.entries(desktopNutrientTranslations)) {
+  translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
+}
+
 const effectiveLanguage = computed<Exclude<AppLanguage, 'system'>>(() => {
   if (desktopLanguage.value !== 'system') return desktopLanguage.value;
   const detected = String(navigator.language || 'en').slice(0, 2).toLowerCase() as Exclude<AppLanguage, 'system'>;
@@ -4334,6 +4392,36 @@ function t(key: string): string {
 function setDesktopLanguage(code: AppLanguage) {
   desktopLanguage.value = code;
   localStorage.setItem(desktopLanguageKey, code);
+}
+
+
+function localFormOptionalNutrients(kind: 'ingredient' | 'food'): Record<string, number | null | undefined> {
+  const form = kind === 'ingredient' ? ingredientForm.value : foodForm.value;
+  if (!form.optional_nutrients) form.optional_nutrients = {};
+  return form.optional_nutrients;
+}
+
+function localOptionalNutrientValue(kind: 'ingredient' | 'food', nutrient: OptionalNutrientDefinition): number | null {
+  const form = kind === 'ingredient' ? ingredientForm.value : foodForm.value;
+  if (nutrient.field) return Number((form as any)[nutrient.field] || 0);
+  return localFormOptionalNutrients(kind)[nutrient.key] as number | null ?? null;
+}
+
+function setOptionalNutrientValue(kind: 'ingredient' | 'food', nutrient: OptionalNutrientDefinition, event: Event) {
+  const form = kind === 'ingredient' ? ingredientForm.value : foodForm.value;
+  const raw = String((event.target as HTMLInputElement | null)?.value ?? '').trim();
+  if (!raw) {
+    if (nutrient.field) (form as any)[nutrient.field] = 0;
+    else delete localFormOptionalNutrients(kind)[nutrient.key];
+    return;
+  }
+  const value = Number(raw);
+  const normalized = Number.isFinite(value) ? Math.max(0, value) : null;
+  if (nutrient.field) {
+    (form as any)[nutrient.field] = normalized ?? 0;
+    return;
+  }
+  if (normalized !== null) localFormOptionalNutrients(kind)[nutrient.key] = normalized;
 }
 
 function currentLocale(): string {
@@ -4398,8 +4486,8 @@ function availableTranslationLanguages(kind: CatalogKind) {
 const repositoryUrl = 'https://github.com/rozsazoltan/nutrino';
 const issueUrl = 'https://github.com/rozsazoltan/nutrino/issues/new/choose';
 const starUrl = 'https://github.com/rozsazoltan/nutrino/stargazers';
-const ingredientCsvHeader = 'id,name,name_i18n_json,note,default_unit,serving_size_g,kcal_per_100g,carbs_per_100g,fat_per_100g,protein_per_100g,sugars_per_100g,fiber_per_100g,salt_per_100g';
-const foodCsvHeader = 'id,name,name_i18n_json,brand,note,barcode,default_unit,serving_size_g,kcal_per_100g,carbs_per_100g,fat_per_100g,protein_per_100g,sugars_per_100g,fiber_per_100g,salt_per_100g';
+const ingredientCsvHeader = 'id,name,name_i18n_json,note,default_unit,serving_size_g,kcal_per_100g,carbs_per_100g,fat_per_100g,protein_per_100g,sugars_per_100g,fiber_per_100g,salt_per_100g,optional_nutrients_json,saturated_fat_per_100g,sodium_mg_per_100g,calcium_mg_per_100g,iron_mg_per_100g,potassium_mg_per_100g,vitamin_d_mcg_per_100g,vitamin_b12_mcg_per_100g,magnesium_mg_per_100g';
+const foodCsvHeader = 'id,name,name_i18n_json,brand,note,barcode,default_unit,serving_size_g,kcal_per_100g,carbs_per_100g,fat_per_100g,protein_per_100g,sugars_per_100g,fiber_per_100g,salt_per_100g,optional_nutrients_json,saturated_fat_per_100g,sodium_mg_per_100g,calcium_mg_per_100g,iron_mg_per_100g,potassium_mg_per_100g,vitamin_d_mcg_per_100g,vitamin_b12_mcg_per_100g,magnesium_mg_per_100g';
 const recipeCsvHeader = 'recipe_id,name,name_i18n_json,description,note,extra_kcal,servings_count,ingredients_json';
 const activityCsvHeader = 'id,code,name,name_i18n_json,description,activity_type,met,kcal_per_min';
 const csvImportNotes = [
@@ -4461,6 +4549,7 @@ const emptyIngredientForm = (): IngredientInput => ({
   sugars_per_100g: 0,
   fiber_per_100g: 0,
   salt_per_100g: 0,
+  optional_nutrients: {},
 });
 
 const emptyFoodForm = (): FoodInput => ({
@@ -4479,6 +4568,7 @@ const emptyFoodForm = (): FoodInput => ({
   sugars_per_100g: 0,
   fiber_per_100g: 0,
   salt_per_100g: 0,
+  optional_nutrients: {},
 });
 
 const emptyActivityForm = (): ActivityInput => ({
@@ -4585,6 +4675,7 @@ function ingredientAsRecipeCatalogItem(ingredient: Ingredient): RecipeCatalogIte
     sugars_per_100g: ingredient.sugars_per_100g,
     fiber_per_100g: ingredient.fiber_per_100g,
     salt_per_100g: ingredient.salt_per_100g,
+    optional_nutrients: { ...(ingredient.optional_nutrients ?? {}) },
     updated_at: ingredient.updated_at,
     deleted_at: ingredient.deleted_at,
     catalog_source: 'ingredient',
@@ -5543,6 +5634,7 @@ function openIngredientModal(ingredient?: Ingredient) {
       sugars_per_100g: ingredient.sugars_per_100g,
       fiber_per_100g: ingredient.fiber_per_100g,
       salt_per_100g: ingredient.salt_per_100g,
+      optional_nutrients: { ...(ingredient.optional_nutrients ?? {}) },
     };
   } else {
     ingredientForm.value = emptyIngredientForm();
@@ -5569,6 +5661,7 @@ function openFoodModal(food?: Food) {
       sugars_per_100g: food.sugars_per_100g,
       fiber_per_100g: food.fiber_per_100g,
       salt_per_100g: food.salt_per_100g,
+      optional_nutrients: { ...(food.optional_nutrients ?? {}) },
     };
   } else {
     foodForm.value = emptyFoodForm();
@@ -5683,6 +5776,7 @@ async function moveFoodToIngredient(food: Food) {
       sugars_per_100g: food.sugars_per_100g,
       fiber_per_100g: food.fiber_per_100g,
       salt_per_100g: food.salt_per_100g,
+      optional_nutrients: { ...(food.optional_nutrients ?? {}) },
     });
     await commands.deleteFood(food.id);
     setMessage('Moved to ingredients.');
@@ -5713,6 +5807,7 @@ async function moveIngredientToFood(ingredient: Ingredient) {
       sugars_per_100g: ingredient.sugars_per_100g,
       fiber_per_100g: ingredient.fiber_per_100g,
       salt_per_100g: ingredient.salt_per_100g,
+      optional_nutrients: { ...(ingredient.optional_nutrients ?? {}) },
     });
     await commands.deleteIngredient(ingredient.id);
     setMessage('Moved to foods.');
@@ -6037,6 +6132,7 @@ function recipeDetailAsCatalogItem(detail: RecipeDetail): RecipeCatalogItem {
     sugars_per_100g: 0,
     fiber_per_100g: 0,
     salt_per_100g: 0,
+    optional_nutrients: {},
     updated_at: detail.recipe.updated_at,
     deleted_at: detail.recipe.deleted_at,
     catalog_source: 'recipe',
@@ -7275,7 +7371,14 @@ onBeforeUnmount(() => {
             <details class="i18n-extra-panel"><summary>{{ t('translations') }}</summary><p class="muted">{{ t('translationHint') }}</p><div v-if="!translationEntries('ingredient').length" class="empty-state compact-empty">{{ t('noTranslation') }}</div><div v-for="[code] in translationEntries('ingredient')" :key="code" class="i18n-row"><span>{{ translationLanguageLabel(code) }}</span><input v-model="ensureNameI18n(ingredientForm)[code]" class="input" :placeholder="t('nameInLanguage')" /><button type="button" class="link-button danger" @click="removeNameTranslation('ingredient', code)">{{ t('remove') }}</button></div><select class="input" @change="addNameTranslationFromEvent('ingredient', $event)"><option value="">{{ t('addTranslation') }}</option><option v-for="language in availableTranslationLanguages('ingredient')" :key="language.code" :value="language.code">{{ language.englishName }} · {{ language.nativeName }} ({{ language.code }})</option></select></details>
             <label class="field-label">{{ t('ui.note_3b064') }}</label><textarea v-model="ingredientForm.note" class="input textarea-input" rows="3" :placeholder="t('ui.optionalNoteSourceOrMeasurementHint_0b79d')"></textarea>
             <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">{{ t('ui.defaultUnit_81471') }}</label><input v-model="ingredientForm.default_unit" class="input mt-1" /></div><div><label class="field-label">{{ t('ui.servingSizeG_8fd02') }}</label><input v-model.number="ingredientForm.serving_size_g" class="input mt-1" type="number" min="0" step="0.1" /></div></div>
-            <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">{{ t('ui.kcal100g_bb877') }}</label><input v-model.number="ingredientForm.kcal_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.carbs100g_77af9') }}</label><input v-model.number="ingredientForm.carbs_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.fat100g_6709a') }}</label><input v-model.number="ingredientForm.fat_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.protein100g_bf529') }}</label><input v-model.number="ingredientForm.protein_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.sugars100g_7ebdd') }}</label><input v-model.number="ingredientForm.sugars_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.fiber100g_31731') }}</label><input v-model.number="ingredientForm.fiber_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.salt100g_1473d') }}</label><input v-model.number="ingredientForm.salt_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div></div>
+            <div class="nutrient-form-section">
+              <b>{{ t('ui.importantNutrients') }}</b>
+              <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">{{ t('ui.kcal100g_bb877') }}</label><input v-model.number="ingredientForm.kcal_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.carbs100g_77af9') }}</label><input v-model.number="ingredientForm.carbs_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.fat100g_6709a') }}</label><input v-model.number="ingredientForm.fat_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.protein100g_bf529') }}</label><input v-model.number="ingredientForm.protein_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div></div>
+            </div>
+            <details class="optional-nutrients-panel" open>
+              <summary><span>{{ t('ui.optionalNutrients') }}</span><small>{{ t('ui.optionalNutrientsHint') }}</small></summary>
+              <div class="grid gap-3 sm:grid-cols-2"><div v-for="nutrient in optionalNutrientDefinitions" :key="`ingredient-${nutrient.key}`"><label class="field-label">{{ t(nutrient.labelKey) }} / 100g</label><input :value="localOptionalNutrientValue('ingredient', nutrient)" class="input mt-1" type="number" min="0" step="0.01" @input="setOptionalNutrientValue('ingredient', nutrient, $event)" /></div></div>
+            </details>
             <button class="btn-primary mt-2" :disabled="loading" @click="saveIngredient">{{ editingIngredientId ? 'Save changes' : 'Create ingredient' }}</button>
           </div>
 
@@ -7285,7 +7388,14 @@ onBeforeUnmount(() => {
             <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">{{ t('ui.brandSourceLabel_07afa') }}</label><input v-model="foodForm.brand" class="input mt-1" :placeholder="t('ui.brandRestaurantShopOrSource_21f1e')" /></div><div><label class="field-label">{{ t('ui.barcodeEanUpc_1335e') }}</label><input v-model="foodForm.barcode" class="input mt-1" :placeholder="t('ui.optional_ebb06')" /></div></div>
             <label class="field-label">{{ t('ui.note_3b064') }}</label><textarea v-model="foodForm.note" class="input textarea-input" rows="3" :placeholder="t('ui.optionalNoteSourcePortionHintOr_88ebb')"></textarea>
             <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">{{ t('ui.defaultUnit_81471') }}</label><input v-model="foodForm.default_unit" class="input mt-1" /></div><div><label class="field-label">{{ t('ui.servingSizeG_8fd02') }}</label><input v-model.number="foodForm.serving_size_g" class="input mt-1" type="number" min="0" step="0.1" /></div></div>
-            <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">{{ t('ui.kcal100g_bb877') }}</label><input v-model.number="foodForm.kcal_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.carbs100g_77af9') }}</label><input v-model.number="foodForm.carbs_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.fat100g_6709a') }}</label><input v-model.number="foodForm.fat_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.protein100g_bf529') }}</label><input v-model.number="foodForm.protein_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.sugars100g_7ebdd') }}</label><input v-model.number="foodForm.sugars_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.fiber100g_31731') }}</label><input v-model.number="foodForm.fiber_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.salt100g_1473d') }}</label><input v-model.number="foodForm.salt_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div></div>
+            <div class="nutrient-form-section">
+              <b>{{ t('ui.importantNutrients') }}</b>
+              <div class="grid gap-3 sm:grid-cols-2"><div><label class="field-label">{{ t('ui.kcal100g_bb877') }}</label><input v-model.number="foodForm.kcal_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.carbs100g_77af9') }}</label><input v-model.number="foodForm.carbs_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.fat100g_6709a') }}</label><input v-model.number="foodForm.fat_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div><div><label class="field-label">{{ t('ui.protein100g_bf529') }}</label><input v-model.number="foodForm.protein_per_100g" class="input mt-1" type="number" min="0" step="0.1" /></div></div>
+            </div>
+            <details class="optional-nutrients-panel" open>
+              <summary><span>{{ t('ui.optionalNutrients') }}</span><small>{{ t('ui.optionalNutrientsHint') }}</small></summary>
+              <div class="grid gap-3 sm:grid-cols-2"><div v-for="nutrient in optionalNutrientDefinitions" :key="`food-${nutrient.key}`"><label class="field-label">{{ t(nutrient.labelKey) }} / 100g</label><input :value="localOptionalNutrientValue('food', nutrient)" class="input mt-1" type="number" min="0" step="0.01" @input="setOptionalNutrientValue('food', nutrient, $event)" /></div></div>
+            </details>
             <button class="btn-primary mt-2" :disabled="loading" @click="saveFood">{{ editingFoodId ? 'Save changes' : 'Create food' }}</button>
           </div>
 

@@ -2427,6 +2427,18 @@ select:focus {
 .tracking-dialog-title h2 {
   margin-bottom: 0;
 }
+.micronutrient-dialog-title {
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+.micronutrient-dialog-title h2 {
+  margin-bottom: 0;
+  padding-right: 12px;
+}
+.micronutrient-dialog-title .info-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
 .tracking-settings-panel {
   display: grid;
   gap: 14px;
@@ -2524,6 +2536,9 @@ select:focus {
   }
   .tracking-dialog-title .text-button {
     justify-self: start;
+  }
+  .micronutrient-dialog-title {
+    display: flex;
   }
   .tracking-settings-group {
     padding: 10px;
@@ -3024,4 +3039,324 @@ select:focus {
 .tracking-time-grid.disabled input {
   opacity: .42;
   pointer-events: none;
+}
+
+/* v0.12.15 nutrient cards, insight charts and compact rows */
+.diary-date-sticky-bar {
+  position: sticky;
+  top: calc(var(--statusbar-guard) + 4px);
+  z-index: 9;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 0;
+  padding: 8px 16px;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 74%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 20px color-mix(in srgb, #000 10%, transparent);
+}
+.diary-date-sticky-copy {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  line-height: 1.05;
+}
+.diary-date-sticky-copy small {
+  color: var(--on-surface-variant);
+  font-size: .68rem;
+  font-weight: 800;
+}
+.diary-date-sticky-copy b {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .88rem;
+}
+.diary-date-sticky-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.diary-date-nav-button,
+.diary-date-sticky-bar .analysis-open-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+}
+.today-nutrients-dropdown {
+  margin: 0 16px 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 0 14px;
+}
+.today-nutrients-dropdown > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 0 10px;
+  cursor: pointer;
+  list-style: none;
+}
+.today-nutrients-dropdown > summary::-webkit-details-marker { display: none; }
+.today-nutrients-summary-main,
+.today-nutrients-summary-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.today-nutrients-summary-main {
+  font-weight: 800;
+}
+.today-nutrients-summary-meta {
+  color: var(--on-surface-variant);
+}
+.today-nutrients-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  transition: transform .18s ease;
+}
+.today-nutrients-dropdown[open] .today-nutrients-chevron {
+  transform: rotate(180deg);
+}
+.today-nutrients-chevron svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+}
+.today-nutrients-dropdown small,
+.optional-nutrients-panel small,
+.nutrient-form-section small,
+.micronutrient-info-copy {
+  color: var(--on-surface-variant);
+  font-weight: 500;
+}
+.nutrient-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 20px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--error-container);
+  color: var(--on-error-container);
+  font-size: .76rem;
+  font-weight: 800;
+}
+.today-nutrient-list {
+  display: grid;
+  gap: 2px;
+  padding: 0 0 12px;
+}
+.today-nutrient-row,
+.nutrient-insight-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 0;
+}
+.today-nutrient-row-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .92rem;
+  font-weight: 500;
+}
+.today-nutrient-row-value,
+.nutrient-pie-legend-value {
+  white-space: nowrap;
+  font-weight: 500;
+}
+.nutrient-tone-good { color: #34c759; }
+.nutrient-tone-warn { color: #ffb020; }
+.nutrient-tone-danger { color: #ff5a5f; }
+.nutrient-row-alert {
+  color: #ff5a5f;
+  font-weight: 800;
+}
+.today-nutrient-empty {
+  margin: 0;
+  padding: 0 0 12px;
+  color: var(--on-surface-variant);
+  font-weight: 500;
+}
+.nutrient-form-section,
+.optional-nutrients-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 18px;
+  background: var(--surface-container);
+  padding: 12px;
+}
+.nutrient-form-section > b,
+.optional-nutrients-panel > summary span {
+  font-size: .95rem;
+  font-weight: 900;
+}
+.optional-nutrients-panel > summary {
+  display: grid;
+  gap: 3px;
+  cursor: pointer;
+  list-style: none;
+}
+.optional-nutrients-panel > summary::-webkit-details-marker { display: none; }
+.optional-nutrients-grid {
+  display: grid;
+  gap: 10px;
+}
+.meal-micro-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-container) 76%, transparent);
+  color: var(--on-primary-container);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
+}
+.meal-micro-button svg,
+.dialog-close-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+}
+.meal-micro-button:active {
+  transform: scale(.96);
+}
+.meal-micronutrients-dialog,
+.nutrient-insights-dialog {
+  display: grid;
+  gap: 12px;
+}
+.dialog-close-icon {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+}
+.nutrient-chart-toggle {
+  justify-self: start;
+}
+.nutrient-pie-card {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--surface-container-high);
+}
+.nutrient-pie-chart {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--outline-variant) 42%, transparent);
+}
+.nutrient-pie-chart::after {
+  content: '';
+  position: absolute;
+  inset: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--outline-variant) 32%, transparent);
+}
+.nutrient-pie-legend {
+  display: grid;
+  gap: 8px;
+}
+.nutrient-pie-legend-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: .86rem;
+}
+.nutrient-pie-legend-row small {
+  color: var(--on-surface-variant);
+  font-weight: 500;
+}
+.nutrient-pie-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.nutrient-pie-legend-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meal-micronutrient-list,
+.nutrient-insight-list {
+  padding-bottom: 0;
+}
+.micronutrient-limit-list {
+  display: grid;
+  gap: 10px;
+}
+.micronutrient-limit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 128px);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+}
+.micronutrient-limit-row span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.micronutrient-limit-row b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.micronutrient-limit-row .input {
+  margin: 0;
+  min-height: 42px;
+}
+@media (min-width: 520px) {
+  .optional-nutrients-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 420px) {
+  .diary-date-sticky-bar {
+    padding-inline: 12px;
+    gap: 6px;
+  }
+  .today-nutrient-row,
+  .nutrient-insight-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .today-nutrient-row small,
+  .nutrient-insight-row small,
+  .nutrient-pie-legend-row small {
+    display: none;
+  }
+  .meal-header {
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  }
+  .micronutrient-limit-row {
+    grid-template-columns: minmax(0, 1fr) 94px;
+  }
+  .nutrient-pie-card {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+  .nutrient-pie-legend {
+    width: 100%;
+  }
 }

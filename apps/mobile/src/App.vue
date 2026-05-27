@@ -40,6 +40,36 @@ type LocalEditorKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 type LocalRecipeDraftItem = { food_id: string; amount_g: number; unit: 'g' | 'serving'; query: string; pickerOpen: boolean };
 type MealNoteSuggestion = { key: string; title: string; description: string; kcal: number; lastUsedAt: number; count: number };
 
+type OptionalNutrientDefinition = {
+  key: string;
+  labelKey: string;
+  unit: 'g' | 'mg' | 'mcg';
+  dailyLimit: number;
+  limitKind: 'max' | 'target';
+  field?: 'sugars_per_100g' | 'fiber_per_100g' | 'salt_per_100g';
+};
+
+type NutrientInsightDialog = { kind: 'day' } | { kind: 'meal'; mealType: MealType };
+type NutrientChartMode = 'important' | 'optional';
+type NutrientChartSlice = { label: string; value: number; amount: string; note?: string; share: number; color: string };
+
+const nutrientChartPalette = ['#31c96f', '#e7b341', '#ef5350', '#5f82ff', '#26a69a', '#ab47bc', '#ff8a65', '#7cb342', '#26c6da', '#ec407a', '#9ccc65'];
+
+const optionalNutrientDefinitions: OptionalNutrientDefinition[] = [
+  { key: 'sugars_per_100g', field: 'sugars_per_100g', labelKey: 'sugars', unit: 'g', dailyLimit: 50, limitKind: 'max' },
+  { key: 'fiber_per_100g', field: 'fiber_per_100g', labelKey: 'fiber', unit: 'g', dailyLimit: 30, limitKind: 'target' },
+  { key: 'salt_per_100g', field: 'salt_per_100g', labelKey: 'salt', unit: 'g', dailyLimit: 5, limitKind: 'max' },
+  { key: 'saturated_fat_per_100g', labelKey: 'saturatedFat', unit: 'g', dailyLimit: 20, limitKind: 'max' },
+  { key: 'sodium_mg_per_100g', labelKey: 'sodium', unit: 'mg', dailyLimit: 2300, limitKind: 'max' },
+  { key: 'calcium_mg_per_100g', labelKey: 'calcium', unit: 'mg', dailyLimit: 1000, limitKind: 'target' },
+  { key: 'iron_mg_per_100g', labelKey: 'iron', unit: 'mg', dailyLimit: 18, limitKind: 'target' },
+  { key: 'potassium_mg_per_100g', labelKey: 'potassium', unit: 'mg', dailyLimit: 3500, limitKind: 'target' },
+  { key: 'vitamin_d_mcg_per_100g', labelKey: 'vitaminD', unit: 'mcg', dailyLimit: 20, limitKind: 'target' },
+  { key: 'vitamin_b12_mcg_per_100g', labelKey: 'vitaminB12', unit: 'mcg', dailyLimit: 2.4, limitKind: 'target' },
+  { key: 'magnesium_mg_per_100g', labelKey: 'magnesium', unit: 'mg', dailyLimit: 400, limitKind: 'target' },
+];
+
+
 type MealSection = {
   key: MealType | 'activity';
   label: string;
@@ -101,6 +131,7 @@ const localCatalogForm = reactive({
   name: '', name_i18n: {} as LocalizedNameMap, brand: '', note: '', barcode: '', default_unit: 'g', serving_size_g: null as number | null,
   kcal_per_100g: null as number | null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
   sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0,
+  optional_nutrients: {} as Record<string, number | null>,
   description: '', total_weight_g: null as number | null, extra_kcal: 0 as number | null, servings_count: null as number | null,
   code: '', activity_type: 'custom', met: 0, kcal_per_min: null as number | null,
 });
@@ -116,9 +147,12 @@ let todayRolloverTimer: number | undefined;
 const offlineToastShown = ref(false);
 const toast = ref('');
 const settingsOpen = ref(false);
-const settingsDialog = ref<'units' | 'calculations' | 'tracking' | 'language' | 'privacy' | 'about' | 'licenses' | null>(null);
+const settingsDialog = ref<'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'privacy' | 'about' | 'licenses' | null>(null);
 const analysisOpen = ref(false);
 const deficitInfoOpen = ref(false);
+const micronutrientInfoOpen = ref(false);
+const nutrientInsightsDialog = ref<NutrientInsightDialog | null>(null);
+const nutrientChartMode = ref<NutrientChartMode>('important');
 const weightTrendMode = ref<WeightTrendMode>('weekly');
 const notificationPermission = ref('unknown');
 const calorieLegendOpen = ref(false);
@@ -318,6 +352,12 @@ const mealIconSvg: Record<string, string> = {
 };
 
 watch(state, () => saveState(JSON.parse(JSON.stringify(state)) as AppState), { deep: true });
+watch(() => state.settings.show_micronutrients, (enabled) => {
+  if (enabled) return;
+  if (settingsDialog.value === 'micronutrients') settingsDialog.value = null;
+  micronutrientInfoOpen.value = false;
+  nutrientInsightsDialog.value = null;
+});
 watch(selectedDate, () => {
   editingDayWeight.value = false;
 });
@@ -547,6 +587,12 @@ function handleBackNavigation(event?: PopStateEvent) {
 
   if (localEditorOpen.value) {
     requestCloseLocalEditor();
+    keepBackInsideApp();
+    return;
+  }
+
+  if (nutrientInsightsDialog.value) {
+    closeNutrientInsights();
     keepBackInsideApp();
     return;
   }
@@ -1122,6 +1168,31 @@ const diaryKcalTone = computed(() => kcalTone(consumedKcal.value, dailyGoal.valu
 const homeShellToneClass = computed(() => activeTab.value === 'home' ? `home-${diaryKcalTone.value}` : '');
 const selectedDayAnalysis = computed(() => buildDailyAnalysis(selectedDate.value));
 const selectedDayMacroSummary = computed(() => dayMacroSummary(selectedDate.value));
+const selectedDayNutrientRows = computed(() => state.settings.show_micronutrients ? buildDailyNutrientRows(currentDayIntakes.value) : []);
+const exceededNutrientCount = computed(() => selectedDayNutrientRows.value.filter((row) => row.isOver).length);
+const activeNutrientInsightEntries = computed(() => {
+  const dialog = nutrientInsightsDialog.value;
+  if (!dialog || !state.settings.show_micronutrients) return [];
+  if (dialog.kind === 'day') return currentDayIntakes.value;
+  return currentDayIntakes.value.filter((entry) => entry.meal_type === dialog.mealType);
+});
+const nutrientInsightRows = computed(() => state.settings.show_micronutrients && nutrientInsightsDialog.value
+  ? buildDailyNutrientRows(activeNutrientInsightEntries.value, currentDayIntakes.value)
+  : []);
+const nutrientInsightExceededCount = computed(() => nutrientInsightRows.value.filter((row) => row.isOver).length);
+const nutrientInsightTitle = computed(() => {
+  if (!nutrientInsightsDialog.value) return '';
+  return nutrientInsightsDialog.value.kind === 'day'
+    ? `${t('todayNutrients')} · ${selectedDate.value}`
+    : `${t('mealMicronutrients')} · ${t(nutrientInsightsDialog.value.mealType)}`;
+});
+const nutrientChartSlices = computed(() => {
+  if (!nutrientInsightsDialog.value) return [];
+  return nutrientChartMode.value === 'important'
+    ? buildMacroChartSlices(activeNutrientInsightEntries.value)
+    : buildOptionalChartSlices(nutrientInsightRows.value);
+});
+const selectedDiaryDateLabel = computed(() => new Intl.DateTimeFormat(currentLocale(), { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(dayStartMs(selectedDate.value))));
 const currentDeficitStreak = computed(() => calculateDeficitStreak(selectedDate.value));
 const bestDeficitStreak = computed(() => calculateBestDeficitStreak(30));
 const analysisDailyRows = computed(() => buildDailyAnalysisRows(14, selectedDate.value));
@@ -6420,7 +6491,13 @@ for (const [language, values] of Object.entries(completeMobileLanguageTranslatio
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
 }
 const mobileVisibleTextTranslations: Record<string, Record<string, string>> = {
-  en: { version: 'Version' }, hu: { version: 'Verzió' }, de: { version: 'Version' }, fr: { version: 'Version' }, ru: { version: 'Версия' }, uk: { version: 'Версія' }, zh: { version: '版本' }, sk: { version: 'Verzia' }, ro: { version: 'Versiune' }, cs: { version: 'Verze' }, sl: { version: 'Različica' }, hr: { version: 'Verzija' }, pl: { version: 'Wersja' }, es: { version: 'Versión' }, pt: { version: 'Versão' }
+  en: {
+    version: 'Version', todayNutrients: "Today's nutrients", mealMicronutrients: 'Meal micronutrients', dayMicronutrients: 'Day nutrients', noChartData: 'No chart data yet.', micronutrientLimits: 'Micronutrient limits', micronutrientLimitsHint: 'Daily thresholds used by the diary warnings.', micronutrientDefaultsInfo: 'Default values are practical adult reference values based on widely used nutrition labels and public health guidance: FDA-style Daily Values for vitamins and minerals, common upper-limit guidance for sodium, saturated fat and added/free sugars, and a 5 g salt reference. They are starting points only; adjust them to your personal plan when needed.', defaultValue: 'default', resetMicronutrients: 'Reset micronutrients', importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber'
+  },
+  hu: {
+    version: 'Verzió', todayNutrients: 'Mai tápanyagok', mealMicronutrients: 'Étkezés mikrotápanyagai', dayMicronutrients: 'Napi tápanyagok', noChartData: 'Még nincs diagram adat.', micronutrientLimits: 'Mikrotápanyag határértékek', micronutrientLimitsHint: 'A napi figyelmeztetésekhez használt határértékek.', micronutrientDefaultsInfo: 'Az alapértékek gyakorlati felnőtt referenciaértékek: vitaminoknál és ásványi anyagoknál elterjedt tápértékjelölési napi értékek, nátriumnál, telített zsírnál és cukornál közegészségügyi felső határ jellegű ajánlások, sónál 5 g-os referencia. Kiindulási értékek, szükség esetén igazítsd a saját tervedhez.', defaultValue: 'alap', resetMicronutrients: 'Mikrotápanyagok visszaállítása', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost'
+  },
+  de: { version: 'Version' }, fr: { version: 'Version' }, ru: { version: 'Версия' }, uk: { version: 'Версія' }, zh: { version: '版本' }, sk: { version: 'Verzia' }, ro: { version: 'Versiune' }, cs: { version: 'Verze' }, sl: { version: 'Različica' }, hr: { version: 'Verzija' }, pl: { version: 'Wersja' }, es: { version: 'Versión' }, pt: { version: 'Versão' }
 };
 for (const [language, values] of Object.entries(mobileVisibleTextTranslations)) {
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
@@ -6518,6 +6595,166 @@ function macroForEntries(entries: Intake[]) {
   return { kcal: Math.round(kcal), carbs: Math.round(carbs), fat: Math.round(fat), protein: Math.round(protein) };
 }
 
+
+function optionalNutrientPer100g(item: Food | undefined, nutrient: OptionalNutrientDefinition): number {
+  if (!item) return 0;
+  if (nutrient.field) return Number(item[nutrient.field] || 0);
+  return Number(item.optional_nutrients?.[nutrient.key] || 0);
+}
+
+function setOptionalNutrientValue(nutrient: OptionalNutrientDefinition, value: unknown) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    if (nutrient.field) (localCatalogForm as any)[nutrient.field] = 0;
+    else delete localCatalogForm.optional_nutrients[nutrient.key];
+    return;
+  }
+  const numeric = Number(raw);
+  if (nutrient.field) {
+    (localCatalogForm as any)[nutrient.field] = Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+    return;
+  }
+  if (Number.isFinite(numeric)) localCatalogForm.optional_nutrients[nutrient.key] = Math.max(0, numeric);
+}
+
+function localOptionalNutrientValue(nutrient: OptionalNutrientDefinition): number | null {
+  if (nutrient.field) return Number((localCatalogForm as any)[nutrient.field] || 0);
+  return localCatalogForm.optional_nutrients[nutrient.key] ?? null;
+}
+
+function setOptionalNutrientValueFromEvent(nutrient: OptionalNutrientDefinition, event: Event) {
+  setOptionalNutrientValue(nutrient, (event.target as HTMLInputElement | null)?.value);
+}
+
+function formatNutrientAmount(value: number, unit: string): string {
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const rounded = safeValue >= 100 ? Math.round(safeValue) : Math.round(safeValue * 10) / 10;
+  return `${rounded}${unit}`;
+}
+
+function micronutrientLimit(nutrient: OptionalNutrientDefinition): number {
+  const value = Number(state.settings.micronutrient_limits?.[nutrient.key]);
+  return Number.isFinite(value) && value > 0 ? value : nutrient.dailyLimit;
+}
+
+function setMicronutrientLimit(nutrient: OptionalNutrientDefinition, value: unknown) {
+  const numeric = Number(value);
+  state.settings.micronutrient_limits = {
+    ...(state.settings.micronutrient_limits || {}),
+    [nutrient.key]: Number.isFinite(numeric) && numeric > 0 ? numeric : nutrient.dailyLimit,
+  };
+}
+
+function setMicronutrientLimitFromEvent(nutrient: OptionalNutrientDefinition, event: Event) {
+  setMicronutrientLimit(nutrient, (event.target as HTMLInputElement | null)?.value);
+}
+
+function resetMicronutrientLimits() {
+  state.settings.micronutrient_limits = Object.fromEntries(optionalNutrientDefinitions.map((nutrient) => [nutrient.key, nutrient.dailyLimit]));
+}
+
+function openMealMicronutrients(section: MealSection) {
+  if (!state.settings.show_micronutrients || section.key === 'activity') return;
+  nutrientChartMode.value = 'important';
+  nutrientInsightsDialog.value = { kind: 'meal', mealType: section.key };
+}
+
+function openDayMicronutrients() {
+  if (!state.settings.show_micronutrients) return;
+  nutrientChartMode.value = 'important';
+  nutrientInsightsDialog.value = { kind: 'day' };
+}
+
+function closeNutrientInsights() {
+  nutrientInsightsDialog.value = null;
+}
+
+function nutrientStatusTone(limitKind: 'max' | 'target', progress: number): 'good' | 'warn' | 'danger' {
+  if (limitKind === 'max') {
+    if (progress >= 1) return 'danger';
+    if (progress >= 0.7) return 'warn';
+    return 'good';
+  }
+  if (progress >= 1) return 'good';
+  if (progress >= 0.5) return 'warn';
+  return 'danger';
+}
+
+function buildDailyNutrientRows(entries: Intake[], dailyEntries: Intake[] = entries) {
+  return optionalNutrientDefinitions.map((nutrient) => {
+    const value = entries.reduce((sum, entry) => {
+      const food = foodFromIntake(entry);
+      return sum + optionalNutrientPer100g(food, nutrient) * Math.max(0, Number(entry.amount_g || 0)) / 100;
+    }, 0);
+    const dailyValue = dailyEntries.reduce((sum, entry) => {
+      const food = foodFromIntake(entry);
+      return sum + optionalNutrientPer100g(food, nutrient) * Math.max(0, Number(entry.amount_g || 0)) / 100;
+    }, 0);
+    const limit = micronutrientLimit(nutrient);
+    const progress = clamp(value / Math.max(1, limit));
+    return {
+      key: nutrient.key,
+      label: t(nutrient.labelKey),
+      value,
+      dailyValue,
+      limit,
+      unit: nutrient.unit,
+      progress,
+      limitKind: nutrient.limitKind,
+      isOver: value > limit,
+      tone: nutrientStatusTone(nutrient.limitKind, progress),
+    };
+  });
+}
+
+function buildMacroChartSlices(entries: Intake[]): NutrientChartSlice[] {
+  const summary = macroForEntries(entries);
+  const items = [
+    { label: t('carbs'), value: Math.max(0, summary.carbs), amount: `${Math.max(0, summary.carbs)}g` },
+    { label: t('fat'), value: Math.max(0, summary.fat), amount: `${Math.max(0, summary.fat)}g` },
+    { label: t('protein'), value: Math.max(0, summary.protein), amount: `${Math.max(0, summary.protein)}g` },
+  ].filter((item) => item.value > 0);
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  if (!total) return [];
+  return items.map((item, index) => ({
+    label: item.label,
+    value: item.value,
+    amount: item.amount,
+    note: `${Math.round((item.value / total) * 100)}%`,
+    share: item.value / total,
+    color: nutrientChartPalette[index % nutrientChartPalette.length],
+  }));
+}
+
+function buildOptionalChartSlices(rows: Array<{ label: string; value: number; unit: string; limit: number }>): NutrientChartSlice[] {
+  const items = rows
+    .filter((row) => row.value > 0)
+    .map((row, index) => ({
+      label: row.label,
+      value: row.limit > 0 ? row.value / row.limit : 0,
+      amount: formatNutrientAmount(row.value, row.unit),
+      note: row.limit > 0 ? `${Math.round((row.value / row.limit) * 100)}%` : '',
+      share: 0,
+      color: nutrientChartPalette[index % nutrientChartPalette.length],
+    }))
+    .filter((item) => item.value > 0);
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  if (!total) return [];
+  return items.map((item) => ({ ...item, share: item.value / total }));
+}
+
+function nutrientChartBackground(slices: NutrientChartSlice[]): string {
+  if (!slices.length) return 'conic-gradient(var(--surface-container-highest) 0 360deg)';
+  let start = 0;
+  const parts = slices.map((slice) => {
+    const end = start + slice.share * 360;
+    const part = `${slice.color} ${start}deg ${end}deg`;
+    start = end;
+    return part;
+  });
+  return `conic-gradient(${parts.join(', ')})`;
+}
+
 function sectionSummary(section: MealSection) {
   if (section.key === 'activity') {
     const kcal = currentDayActivities.value.reduce((sum, entry) => sum + entry.kcal, 0);
@@ -6579,7 +6816,7 @@ function resetLocalCatalogForm() {
   Object.assign(localCatalogForm, {
     name: '', name_i18n: {}, brand: '', note: '', barcode: '', default_unit: 'g', serving_size_g: null,
     kcal_per_100g: null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
-    sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0,
+    sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0, optional_nutrients: {},
     description: '', total_weight_g: null, extra_kcal: 0, servings_count: null,
     code: '', activity_type: 'custom', met: 0, kcal_per_min: null,
   });
@@ -6608,6 +6845,7 @@ function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient 
       sugars_per_100g: entry?.sugars_per_100g ?? 0,
       fiber_per_100g: entry?.fiber_per_100g ?? 0,
       salt_per_100g: entry?.salt_per_100g ?? 0,
+      optional_nutrients: { ...(entry?.optional_nutrients ?? {}) },
     });
   } else if (kind === 'recipe') {
     const recipe = item as Recipe | undefined;
@@ -6748,6 +6986,10 @@ const localRecipeNutritionPreview = computed(() => {
   let carbs = 0;
   let fat = 0;
   let protein = 0;
+  let sugars = 0;
+  let fiber = 0;
+  let salt = 0;
+  const optionalNutrients: Record<string, number> = {};
   for (const row of localRecipeItems.value) {
     const item = localRecipeRowItem(row);
     const amount = Math.max(0, Number(row.amount_g || 0));
@@ -6757,6 +6999,13 @@ const localRecipeNutritionPreview = computed(() => {
     carbs += Number(item.carbs_per_100g || 0) * amount / 100;
     fat += Number(item.fat_per_100g || 0) * amount / 100;
     protein += Number(item.protein_per_100g || 0) * amount / 100;
+    sugars += Number(item.sugars_per_100g || 0) * amount / 100;
+    fiber += Number(item.fiber_per_100g || 0) * amount / 100;
+    salt += Number(item.salt_per_100g || 0) * amount / 100;
+    for (const [key, rawValue] of Object.entries(item.optional_nutrients || {})) {
+      const value = Number(rawValue || 0);
+      if (Number.isFinite(value)) optionalNutrients[key] = (optionalNutrients[key] || 0) + value * amount / 100;
+    }
   }
   const extraKcal = Number(localCatalogForm.extra_kcal || 0);
   const finalWeight = weight;
@@ -6777,6 +7026,10 @@ const localRecipeNutritionPreview = computed(() => {
     carbsPer100g: roundOne(carbs * ratio),
     fatPer100g: roundOne(fat * ratio),
     proteinPer100g: roundOne(protein * ratio),
+    sugarsPer100g: roundOne(sugars * ratio),
+    fiberPer100g: roundOne(fiber * ratio),
+    saltPer100g: roundOne(salt * ratio),
+    optionalNutrients: Object.fromEntries(Object.entries(optionalNutrients).map(([key, value]) => [key, roundOne(value * ratio)])),
   };
 });
 
@@ -6822,6 +7075,7 @@ function saveLocalCatalogEditor() {
       sugars_per_100g: Number(localCatalogForm.sugars_per_100g || 0),
       fiber_per_100g: Number(localCatalogForm.fiber_per_100g || 0),
       salt_per_100g: Number(localCatalogForm.salt_per_100g || 0),
+      optional_nutrients: { ...localCatalogForm.optional_nutrients },
       updated_at: now, deleted_at: null, pending_sync: true,
     };
     state.ingredients = [...state.ingredients.filter((entry) => entry.id !== id), ingredient].sort((a, b) => localizedName(a).localeCompare(localizedName(b), currentLocale()));
@@ -6842,6 +7096,7 @@ function saveLocalCatalogEditor() {
       sugars_per_100g: Number(localCatalogForm.sugars_per_100g || 0),
       fiber_per_100g: Number(localCatalogForm.fiber_per_100g || 0),
       salt_per_100g: Number(localCatalogForm.salt_per_100g || 0),
+      optional_nutrients: { ...localCatalogForm.optional_nutrients },
       updated_at: now, deleted_at: null, pending_sync: true,
     };
     state.foods = [...state.foods.filter((entry) => entry.id !== id), food].sort((a, b) => localizedName(a).localeCompare(localizedName(b), currentLocale()));
@@ -6990,6 +7245,7 @@ function addMealNoteFromForm() {
     sugars_per_100g: 0,
     fiber_per_100g: 0,
     salt_per_100g: 0,
+    optional_nutrients: {},
     updated_at: now,
   };
   const payload = {
@@ -7365,6 +7621,10 @@ type CustomRecipeTotals = {
   carbs: number;
   fat: number;
   protein: number;
+  sugars: number;
+  fiber: number;
+  salt: number;
+  optionalNutrients: Record<string, number>;
   components: Array<{ key: string; food_id: string; amount_g: number; base_amount_g: number }>;
 };
 
@@ -7381,6 +7641,10 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
   let carbs = 0;
   let fat = 0;
   let protein = 0;
+  let sugars = 0;
+  let fiber = 0;
+  let salt = 0;
+  const optionalNutrients: Record<string, number> = {};
   const components: Array<{ key: string; food_id: string; amount_g: number; base_amount_g: number }> = [];
 
   for (const row of rows) {
@@ -7391,6 +7655,13 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
     carbs += Number(row.food.carbs_per_100g || 0) * amount / 100;
     fat += Number(row.food.fat_per_100g || 0) * amount / 100;
     protein += Number(row.food.protein_per_100g || 0) * amount / 100;
+    sugars += Number(row.food.sugars_per_100g || 0) * amount / 100;
+    fiber += Number(row.food.fiber_per_100g || 0) * amount / 100;
+    salt += Number(row.food.salt_per_100g || 0) * amount / 100;
+    for (const [key, rawValue] of Object.entries(row.food.optional_nutrients || {})) {
+      const value = Number(rawValue || 0);
+      if (Number.isFinite(value)) optionalNutrients[key] = (optionalNutrients[key] || 0) + value * amount / 100;
+    }
     components.push({ key: row.key, food_id: row.food.id, amount_g: amount, base_amount_g: row.baseAmount });
   }
 
@@ -7407,6 +7678,10 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
     carbs,
     fat,
     protein,
+    sugars,
+    fiber,
+    salt,
+    optionalNutrients,
     components,
   };
 }
@@ -7425,6 +7700,10 @@ function buildCustomRecipeSnapshot(base: Food): Food {
     carbs_per_100g: totals.carbs * ratio,
     fat_per_100g: totals.fat * ratio,
     protein_per_100g: totals.protein * ratio,
+    sugars_per_100g: totals.sugars * ratio,
+    fiber_per_100g: totals.fiber * ratio,
+    salt_per_100g: totals.salt * ratio,
+    optional_nutrients: Object.fromEntries(Object.entries(totals.optionalNutrients).map(([key, value]) => [key, value * ratio])),
     recipe_components: totals.components,
     recipe_extra_kcal: totals.extraKcal,
     recipe_ingredient_weight_g: totals.ingredientWeight,
@@ -7942,6 +8221,11 @@ function selectCalendarDate(key: string) {
   calendarMonth.value = new Date(dayStartMs(key));
 }
 
+function moveSelectedDate(delta: number) {
+  const date = new Date(dayStartMs(selectedDate.value));
+  date.setDate(date.getDate() + delta);
+  selectCalendarDate(dateKey(date));
+}
 
 async function refreshServerIfCatalogStale() {
   if (!state.pairing.baseUrl.trim()) return;
@@ -9414,6 +9698,7 @@ function setTab(tab: Tab) {
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
           <span><b>{{ t(section.key) }}</b><small>{{ sectionHint(section) }}</small></span>
           <span class="section-summary-text">{{ sectionSummaryText(section) }}</span>
+          <span v-if="state.settings.show_micronutrients && section.key !== 'activity'" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
           <span class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
@@ -9486,8 +9771,20 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
+      <div class="diary-date-sticky-bar">
+        <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('back')" :title="t('back')" @click="moveSelectedDate(-1)" v-html="lucideSvg('chevronLeft')"></button>
+        <div class="diary-date-sticky-copy">
+          <small>{{ selectedDate }}</small>
+          <b>{{ selectedDiaryDateLabel }}</b>
+        </div>
+        <div class="diary-date-sticky-actions">
+          <button v-if="state.settings.show_micronutrients" class="icon-button analysis-open-button" type="button" :aria-label="t('dayMicronutrients')" :title="t('dayMicronutrients')" @click="openDayMicronutrients" v-html="lucideSvg('flaskConical')"></button>
+          <button class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="analysisOpen = true" v-html="lucideSvg('chartPie')"></button>
+          <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('next')" :title="t('next')" @click="moveSelectedDate(1)" v-html="lucideSvg('chevronRight')"></button>
+        </div>
+      </div>
+
       <article class="card">
-        <div class="diary-title-row"><h2>{{ selectedDate }}</h2><button class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="analysisOpen = true" v-html="lucideSvg('chartPie')"></button></div>
         <div class="diary-stats">
           <div :class="['kcal-stat', diaryKcalTone]"><span>{{ t('supplied') }}</span><b>{{ consumedKcal }} / {{ dailyGoal }} kcal</b><small v-if="calorieDeficitEnabled">{{ t('effectiveLimit') }} {{ effectiveDailyGoal }} kcal</small></div>
           <div><span>{{ t('burned') }}</span><b>{{ burnedKcal }} kcal</b></div>
@@ -9499,6 +9796,26 @@ function setTab(tab: Tab) {
           <span><b>{{ selectedDayMacroSummary.fat }}</b>/<em>{{ selectedDayMacroSummary.fatGoal }}</em> {{ t('fat') }}</span>
           <span><b>{{ selectedDayMacroSummary.protein }}</b>/<em>{{ selectedDayMacroSummary.proteinGoal }}</em> {{ t('protein') }}</span>
         </div>
+        <details v-if="state.settings.show_micronutrients" class="today-nutrients-dropdown">
+          <summary>
+            <span class="today-nutrients-summary-main">
+              <span>{{ t('todayNutrients') }}</span>
+              <span v-if="exceededNutrientCount" class="nutrient-warning-badge">! {{ exceededNutrientCount }}</span>
+            </span>
+            <span class="today-nutrients-summary-meta">
+              <span class="today-nutrients-chevron" v-html="lucideSvg('chevronDown')"></span>
+            </span>
+          </summary>
+          <div v-if="selectedDayNutrientRows.length" class="today-nutrient-list">
+            <div v-for="row in selectedDayNutrientRows" :key="row.key" class="today-nutrient-row">
+              <span class="today-nutrient-row-label">{{ row.label }}</span>
+              <span class="today-nutrient-row-value" :class="`nutrient-tone-${row.tone}`">{{ formatNutrientAmount(row.value, row.unit) }}</span>
+              <small>{{ formatNutrientAmount(row.limit, row.unit) }}</small>
+              <span v-if="row.isOver" class="nutrient-row-alert">!</span>
+            </div>
+          </div>
+          <p v-else class="today-nutrient-empty">{{ t('noNutrientsLogged') }}</p>
+        </details>
         <div v-if="editingDayWeight" class="inline-form day-weight-form">
           <input v-model.number="weightInput" class="input" type="number" min="1" step="0.1" :placeholder="t('weightForThisDay')"  @focus="selectNumberInput"  @pointerdown="clearNumberInputOnDoubleTap"  inputmode="decimal" />
           <button class="filled-button" @click="recordWeight('manual')">{{ t('saveWeight') }}</button>
@@ -9522,6 +9839,7 @@ function setTab(tab: Tab) {
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
           <span><b>{{ t(section.key) }}</b><small>{{ section.key === 'activity' ? `${activitiesForSection().length} ${t('activities')}` : `${entriesForSection(section).length} ${t('entries')}` }}</small></span>
           <span class="section-summary-text">{{ sectionSummaryText(section) }}</span>
+          <span v-if="state.settings.show_micronutrients && section.key !== 'activity'" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
           <span v-if="selectedDayUnlocked" class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
@@ -9902,14 +10220,24 @@ function setTab(tab: Tab) {
             </div>
             <label class="field-label">{{ t('note') }}</label>
             <input v-model="localCatalogForm.note" class="input" :placeholder="t('optional')" />
-            <div class="form-grid-two">
-              <label class="field-label">{{ t('kcalPer100g') }}<input v-model.number="localCatalogForm.kcal_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
-              <label class="field-label">{{ t('servingSizeG') }}<input v-model.number="localCatalogForm.serving_size_g" class="input" type="number" min="0" step="0.1" inputmode="decimal" :placeholder="t('optional')" /></label>
-              <label class="field-label">{{ t('carbs') }}<input v-model.number="localCatalogForm.carbs_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
-              <label class="field-label">{{ t('fat') }}<input v-model.number="localCatalogForm.fat_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
-              <label class="field-label">{{ t('protein') }}<input v-model.number="localCatalogForm.protein_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
-              <label class="field-label">{{ t('salt') }}<input v-model.number="localCatalogForm.salt_per_100g" class="input" type="number" min="0" step="0.01" inputmode="decimal" /></label>
+            <div class="nutrient-form-section">
+              <b>{{ t('importantNutrients') }}</b>
+              <div class="form-grid-two">
+                <label class="field-label">{{ t('kcalPer100g') }}<input v-model.number="localCatalogForm.kcal_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+                <label class="field-label">{{ t('servingSizeG') }}<input v-model.number="localCatalogForm.serving_size_g" class="input" type="number" min="0" step="0.1" inputmode="decimal" :placeholder="t('optional')" /></label>
+                <label class="field-label">{{ t('carbs') }}<input v-model.number="localCatalogForm.carbs_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+                <label class="field-label">{{ t('fat') }}<input v-model.number="localCatalogForm.fat_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+                <label class="field-label">{{ t('protein') }}<input v-model.number="localCatalogForm.protein_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+              </div>
             </div>
+            <details v-if="state.settings.show_micronutrients" class="optional-nutrients-panel" open>
+              <summary><span>{{ t('optionalNutrients') }}</span><small>{{ t('optionalNutrientsHint') }}</small></summary>
+              <div class="form-grid-two">
+                <label v-for="nutrient in optionalNutrientDefinitions" :key="nutrient.key" class="field-label">{{ t(nutrient.labelKey) }} / 100g
+                  <input :value="localOptionalNutrientValue(nutrient)" class="input" type="number" min="0" step="0.01" inputmode="decimal" :placeholder="t('optional')" @input="setOptionalNutrientValueFromEvent(nutrient, $event)" />
+                </label>
+              </div>
+            </details>
           </template>
 
           <template v-else-if="localEditorKind === 'recipe'">
@@ -10056,6 +10384,49 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="nutrientInsightsDialog && state.settings.show_micronutrients" class="dialog-backdrop" @click.self="closeNutrientInsights">
+        <article class="settings-dialog meal-micronutrients-dialog nutrient-insights-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ nutrientInsightTitle }}</h2>
+            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="closeNutrientInsights" v-html="lucideSvg('x')"></button>
+          </div>
+          <div class="trend-mode-toggle nutrient-chart-toggle">
+            <button :class="{ active: nutrientChartMode === 'important' }" type="button" @click="nutrientChartMode = 'important'">{{ t('importantNutrients') }}</button>
+            <button :class="{ active: nutrientChartMode === 'optional' }" type="button" @click="nutrientChartMode = 'optional'">{{ t('optionalNutrients') }}</button>
+          </div>
+          <div v-if="nutrientChartSlices.length" class="nutrient-pie-card">
+            <div class="nutrient-pie-chart" :style="{ background: nutrientChartBackground(nutrientChartSlices) }"></div>
+            <div class="nutrient-pie-legend">
+              <div v-for="slice in nutrientChartSlices" :key="`slice-${slice.label}`" class="nutrient-pie-legend-row">
+                <span class="nutrient-pie-legend-dot" :style="{ background: slice.color }"></span>
+                <span class="nutrient-pie-legend-label">{{ slice.label }}</span>
+                <span class="nutrient-pie-legend-value">{{ slice.amount }}</span>
+                <small>{{ slice.note }}</small>
+              </div>
+            </div>
+          </div>
+          <p v-else class="today-nutrient-empty">{{ t('noChartData') }}</p>
+          <div v-if="nutrientInsightRows.length" class="today-nutrient-list meal-micronutrient-list nutrient-insight-list">
+            <div v-for="row in nutrientInsightRows" :key="`insight-nutrient-${row.key}`" class="today-nutrient-row nutrient-insight-row">
+              <span class="today-nutrient-row-label">{{ row.label }}</span>
+              <template v-if="nutrientInsightsDialog.kind === 'meal'">
+                <span class="today-nutrient-row-value" :class="`nutrient-tone-${row.tone}`">{{ formatNutrientAmount(row.value, row.unit) }}</span>
+                <small>({{ formatNutrientAmount(row.dailyValue, row.unit) }})</small>
+              </template>
+              <template v-else>
+                <span class="today-nutrient-row-value" :class="`nutrient-tone-${row.tone}`">{{ formatNutrientAmount(row.value, row.unit) }}</span>
+                <small>{{ formatNutrientAmount(row.limit, row.unit) }}</small>
+              </template>
+              <span v-if="row.isOver" class="nutrient-row-alert">!</span>
+            </div>
+          </div>
+          <p v-else class="today-nutrient-empty">{{ t('noNutrientsLogged') }}</p>
+          <p v-if="nutrientInsightExceededCount" class="helper big">! {{ nutrientInsightExceededCount }} {{ t('exceeded') }}</p>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <section v-if="settingsOpen" class="settings-screen app-overlay">
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
@@ -10065,6 +10436,7 @@ function setTab(tab: Tab) {
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('activity')"></span><b>{{ t('showActivity') }}</b><input v-model="state.settings.show_activity_tracking" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('macros')"></span><b>{{ t('showMacros') }}</b><input v-model="state.settings.show_meal_macros" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('showMicros') }}</b><input v-model="state.settings.show_micronutrients" type="checkbox" /></label>
+        <button v-if="state.settings.show_micronutrients" class="settings-row micronutrient-settings-row" @click="settingsDialog = 'micronutrients'"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('micronutrientLimits') }}</b><small>{{ t('micronutrientLimitsHint') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'language'"><span class="settings-row-icon" v-html="settingsIcon('language')"></span><b>{{ t('language') }}</b><small>{{ selectedLanguageLabel() }}</small></button>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('reminder')"></span><b>{{ t('dailyReminder') }}</b><input v-model="state.settings.daily_reminder" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
         <div class="settings-divider"></div>
@@ -10133,6 +10505,17 @@ function setTab(tab: Tab) {
               </section>
             </div>
             <div class="dialog-actions"><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></div>
+          </template>
+          <template v-else-if="settingsDialog === 'micronutrients'">
+            <div class="dialog-title-row micronutrient-dialog-title"><h2>{{ t('micronutrientLimits') }}</h2><button class="info-button" type="button" :aria-label="t('micronutrientLimits')" @click="micronutrientInfoOpen = !micronutrientInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button></div>
+            <p v-if="micronutrientInfoOpen" class="helper big micronutrient-info-copy">{{ t('micronutrientDefaultsInfo') }}</p>
+            <div class="micronutrient-limit-list">
+              <label v-for="nutrient in optionalNutrientDefinitions" :key="`limit-${nutrient.key}`" class="micronutrient-limit-row">
+                <span><b>{{ t(nutrient.labelKey) }}</b><small>{{ t(nutrient.limitKind === 'max' ? 'dailyLimit' : 'dailyTarget') }} · {{ t('defaultValue') }} {{ formatNutrientAmount(nutrient.dailyLimit, nutrient.unit) }}</small></span>
+                <input :value="micronutrientLimit(nutrient)" class="input" type="number" min="0" step="0.1" inputmode="decimal" @input="setMicronutrientLimitFromEvent(nutrient, $event)" />
+              </label>
+            </div>
+            <div class="dialog-actions"><button class="text-button" @click="resetMicronutrientLimits">{{ t('resetMicronutrients') }}</button><button class="filled-button" @click="settingsDialog = null">{{ t('ok') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'privacy'"><h2>{{ t('privacy') }}</h2><p class="helper big">{{ t('privacyBody') }}</p><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></template>
           <template v-else-if="settingsDialog === 'licenses'">

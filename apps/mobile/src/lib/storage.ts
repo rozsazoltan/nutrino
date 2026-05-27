@@ -78,6 +78,21 @@ export function defaultPairing(): PairingConfig {
 }
 
 
+
+export const DEFAULT_MICRONUTRIENT_LIMITS: Record<string, number> = {
+  sugars_per_100g: 50,
+  fiber_per_100g: 30,
+  salt_per_100g: 5,
+  saturated_fat_per_100g: 20,
+  sodium_mg_per_100g: 2300,
+  calcium_mg_per_100g: 1000,
+  iron_mg_per_100g: 18,
+  potassium_mg_per_100g: 3500,
+  vitamin_d_mcg_per_100g: 20,
+  vitamin_b12_mcg_per_100g: 2.4,
+  magnesium_mg_per_100g: 400,
+};
+
 export function defaultSettings(): AppSettings {
   return {
     language: 'system',
@@ -86,6 +101,7 @@ export function defaultSettings(): AppSettings {
     show_activity_tracking: true,
     show_meal_macros: true,
     show_micronutrients: false,
+    micronutrient_limits: { ...DEFAULT_MICRONUTRIENT_LIMITS },
     daily_reminder: false,
     weekly_weight_average_enabled: false,
     daily_weight_reminder_enabled: false,
@@ -169,6 +185,10 @@ export function loadState(): AppState {
       calorie_limit_warning_enabled: storedSettings.calorie_limit_warning_enabled === true,
       target_deficit_kcal: Number.isFinite(Number(storedSettings.target_deficit_kcal)) ? Number(storedSettings.target_deficit_kcal) : defaults.settings.target_deficit_kcal,
       exercise_kcal_eatback_percent: Number.isFinite(Number(storedSettings.exercise_kcal_eatback_percent)) ? Number(storedSettings.exercise_kcal_eatback_percent) : defaults.settings.exercise_kcal_eatback_percent,
+      micronutrient_limits: {
+        ...DEFAULT_MICRONUTRIENT_LIMITS,
+        ...(storedSettings.micronutrient_limits && typeof storedSettings.micronutrient_limits === 'object' ? Object.fromEntries(Object.entries(storedSettings.micronutrient_limits).filter(([, value]) => Number.isFinite(Number(value))).map(([key, value]) => [key, Math.max(0, Number(value))])) : {}),
+      },
     };
 
     return {
@@ -267,6 +287,32 @@ export function normalizeGitHubSource(source: Partial<GitHubCsvSource> | null | 
 }
 
 
+
+function normalizeOptionalNutrients(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object') return {};
+  const result: Record<string, number> = {};
+  for (const [rawKey, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const key = String(rawKey || '').trim();
+    const numberValue = Number(rawValue);
+    if (!key || !Number.isFinite(numberValue)) continue;
+    result[key] = Math.max(0, numberValue);
+  }
+  return result;
+}
+
+function addScaledOptionalNutrients(target: Record<string, number>, source: unknown, amountG: number) {
+  const scale = Math.max(0, Number(amountG || 0)) / 100;
+  if (!scale) return;
+  for (const [key, value] of Object.entries(normalizeOptionalNutrients(source))) {
+    target[key] = (target[key] || 0) + value * scale;
+  }
+}
+
+function scaleOptionalNutrients(source: Record<string, number>, ratio: number): Record<string, number> {
+  const safeRatio = Number.isFinite(ratio) ? ratio : 0;
+  return Object.fromEntries(Object.entries(source).map(([key, value]) => [key, value * safeRatio]));
+}
+
 function normalizeNameI18n(value: unknown): LocalizedNameMap {
   if (!value || typeof value !== 'object') return {};
   const result: LocalizedNameMap = {};
@@ -291,6 +337,7 @@ export function normalizeFood(food: Food): Food {
     sugars_per_100g: food.sugars_per_100g ?? 0,
     fiber_per_100g: food.fiber_per_100g ?? 0,
     salt_per_100g: food.salt_per_100g ?? 0,
+    optional_nutrients: normalizeOptionalNutrients(food.optional_nutrients),
     barcode: food.barcode ?? null,
   };
 }
@@ -305,6 +352,7 @@ export function normalizeIngredient(ingredient: Ingredient): Ingredient {
     sugars_per_100g: ingredient.sugars_per_100g ?? 0,
     fiber_per_100g: ingredient.fiber_per_100g ?? 0,
     salt_per_100g: ingredient.salt_per_100g ?? 0,
+    optional_nutrients: normalizeOptionalNutrients(ingredient.optional_nutrients),
   };
 }
 
@@ -326,6 +374,7 @@ export function ingredientAsFood(ingredient: Ingredient): Food {
     sugars_per_100g: ingredient.sugars_per_100g ?? 0,
     fiber_per_100g: ingredient.fiber_per_100g ?? 0,
     salt_per_100g: ingredient.salt_per_100g ?? 0,
+    optional_nutrients: normalizeOptionalNutrients(ingredient.optional_nutrients),
     barcode: null,
     updated_at: ingredient.updated_at,
     deleted_at: ingredient.deleted_at,
@@ -349,6 +398,7 @@ function foodToIngredient(food: Food): Ingredient {
     sugars_per_100g: food.sugars_per_100g ?? 0,
     fiber_per_100g: food.fiber_per_100g ?? 0,
     salt_per_100g: food.salt_per_100g ?? 0,
+    optional_nutrients: normalizeOptionalNutrients(food.optional_nutrients),
     updated_at: food.updated_at,
     deleted_at: food.deleted_at,
     pending_sync: food.pending_sync,
@@ -383,6 +433,7 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
       sugars_per_100g: 0,
       fiber_per_100g: 0,
       salt_per_100g: 0,
+      optional_nutrients: {},
       updated_at: recipe.updated_at,
       deleted_at: recipe.deleted_at,
     };
@@ -395,6 +446,10 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
   let carbs = 0;
   let fat = 0;
   let protein = 0;
+  let sugars = 0;
+  let fiber = 0;
+  let salt = 0;
+  const optionalNutrients: Record<string, number> = {};
 
   for (const item of items) {
     const recipeRef = item.food_id.startsWith('recipe:') ? item.food_id.slice('recipe:'.length) : '';
@@ -423,6 +478,10 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
     carbs += food.carbs_per_100g * item.amount_g / 100;
     fat += food.fat_per_100g * item.amount_g / 100;
     protein += food.protein_per_100g * item.amount_g / 100;
+    sugars += Number(food.sugars_per_100g || 0) * item.amount_g / 100;
+    fiber += Number(food.fiber_per_100g || 0) * item.amount_g / 100;
+    salt += Number(food.salt_per_100g || 0) * item.amount_g / 100;
+    addScaledOptionalNutrients(optionalNutrients, food.optional_nutrients, item.amount_g);
   }
 
   visited.delete(recipe.id);
@@ -446,9 +505,10 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
     carbs_per_100g: carbs * ratio,
     fat_per_100g: fat * ratio,
     protein_per_100g: protein * ratio,
-    sugars_per_100g: 0,
-    fiber_per_100g: 0,
-    salt_per_100g: 0,
+    sugars_per_100g: sugars * ratio,
+    fiber_per_100g: fiber * ratio,
+    salt_per_100g: salt * ratio,
+    optional_nutrients: scaleOptionalNutrients(optionalNutrients, ratio),
     updated_at: recipe.updated_at,
     deleted_at: recipe.deleted_at,
   };

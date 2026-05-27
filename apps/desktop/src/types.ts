@@ -1,4 +1,5 @@
 export type LocalizedNameMap = Record<string, string>;
+export type OptionalNutrientMap = Record<string, number | null | undefined>;
 
 export interface ServerStatus {
   running: boolean;
@@ -50,6 +51,7 @@ export interface Food {
   sugars_per_100g: number;
   fiber_per_100g: number;
   salt_per_100g: number;
+  optional_nutrients?: OptionalNutrientMap | null;
   updated_at: number;
   deleted_at?: number | null;
 }
@@ -69,6 +71,7 @@ export interface Ingredient {
   sugars_per_100g: number;
   fiber_per_100g: number;
   salt_per_100g: number;
+  optional_nutrients?: OptionalNutrientMap | null;
   updated_at: number;
   deleted_at?: number | null;
 }
@@ -89,6 +92,7 @@ export interface FoodInput {
   sugars_per_100g?: number | null;
   fiber_per_100g?: number | null;
   salt_per_100g?: number | null;
+  optional_nutrients?: OptionalNutrientMap | null;
 }
 
 export interface IngredientInput {
@@ -105,6 +109,7 @@ export interface IngredientInput {
   sugars_per_100g?: number | null;
   fiber_per_100g?: number | null;
   salt_per_100g?: number | null;
+  optional_nutrients?: OptionalNutrientMap | null;
 }
 
 export interface ImportPreviewRow {
