@@ -179,7 +179,7 @@ const localEditorDuplicate = ref(false);
 const localCatalogForm = reactive({
   name: '', name_i18n: {} as LocalizedNameMap, brand: '', note: '', barcode: '', default_unit: 'g', serving_size_g: null as number | null,
   kcal_per_100g: null as number | null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
-  sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0,
+  sugars_per_100g: null as number | null, fiber_per_100g: null as number | null, salt_per_100g: null as number | null,
   optional_nutrients: {} as Record<string, number | null>,
   description: '', total_weight_g: null as number | null, extra_kcal: 0 as number | null, servings_count: null as number | null,
   code: '', activity_type: 'custom', met: 0, kcal_per_min: null as number | null, inactive: false,
@@ -6814,24 +6814,30 @@ function optionalNutrientPer100g(item: Food | undefined, nutrient: OptionalNutri
   return Number(item.optional_nutrients?.[nutrient.key] || 0);
 }
 
-function setOptionalNutrientValue(nutrient: OptionalNutrientDefinition, value: unknown) {
+function nullableNonNegativeNumber(value: unknown): number | null {
   const raw = String(value ?? '').trim();
-  if (!raw) {
-    if (nutrient.field) (localCatalogForm as any)[nutrient.field] = 0;
-    else delete localCatalogForm.optional_nutrients[nutrient.key];
-    return;
-  }
+  if (!raw) return null;
   const numeric = Number(raw);
+  return Number.isFinite(numeric) ? Math.max(0, numeric) : null;
+}
+
+function setOptionalNutrientValue(nutrient: OptionalNutrientDefinition, value: unknown) {
+  const numeric = nullableNonNegativeNumber(value);
   if (nutrient.field) {
-    (localCatalogForm as any)[nutrient.field] = Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+    (localCatalogForm as any)[nutrient.field] = numeric;
     return;
   }
-  if (Number.isFinite(numeric)) localCatalogForm.optional_nutrients[nutrient.key] = Math.max(0, numeric);
+  if (numeric === null) delete localCatalogForm.optional_nutrients[nutrient.key];
+  else localCatalogForm.optional_nutrients[nutrient.key] = numeric;
 }
 
 function localOptionalNutrientValue(nutrient: OptionalNutrientDefinition): number | null {
-  if (nutrient.field) return Number((localCatalogForm as any)[nutrient.field] || 0);
-  return localCatalogForm.optional_nutrients[nutrient.key] ?? null;
+  if (nutrient.field) {
+    const value = (localCatalogForm as any)[nutrient.field];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+  const value = localCatalogForm.optional_nutrients[nutrient.key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function setOptionalNutrientValueFromEvent(nutrient: OptionalNutrientDefinition, event: Event) {
@@ -7028,7 +7034,7 @@ function resetLocalCatalogForm() {
   Object.assign(localCatalogForm, {
     name: '', name_i18n: {}, brand: '', note: '', barcode: '', default_unit: 'g', serving_size_g: null,
     kcal_per_100g: null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
-    sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0, optional_nutrients: {},
+    sugars_per_100g: null, fiber_per_100g: null, salt_per_100g: null, optional_nutrients: {},
     description: '', total_weight_g: null, extra_kcal: 0, servings_count: null,
     code: '', activity_type: 'custom', met: 0, kcal_per_min: null, inactive: false,
   });
@@ -7056,9 +7062,9 @@ function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient 
       carbs_per_100g: entry?.carbs_per_100g ?? 0,
       fat_per_100g: entry?.fat_per_100g ?? 0,
       protein_per_100g: entry?.protein_per_100g ?? 0,
-      sugars_per_100g: entry?.sugars_per_100g ?? 0,
-      fiber_per_100g: entry?.fiber_per_100g ?? 0,
-      salt_per_100g: entry?.salt_per_100g ?? 0,
+      sugars_per_100g: entry?.sugars_per_100g ?? null,
+      fiber_per_100g: entry?.fiber_per_100g ?? null,
+      salt_per_100g: entry?.salt_per_100g ?? null,
       optional_nutrients: { ...(entry?.optional_nutrients ?? {}) },
       inactive: duplicate ? false : entry?.inactive === true,
     });
@@ -7301,9 +7307,9 @@ function saveLocalCatalogEditor() {
       carbs_per_100g: Number(localCatalogForm.carbs_per_100g || 0),
       fat_per_100g: Number(localCatalogForm.fat_per_100g || 0),
       protein_per_100g: Number(localCatalogForm.protein_per_100g || 0),
-      sugars_per_100g: Number(localCatalogForm.sugars_per_100g || 0),
-      fiber_per_100g: Number(localCatalogForm.fiber_per_100g || 0),
-      salt_per_100g: Number(localCatalogForm.salt_per_100g || 0),
+      sugars_per_100g: nullableNonNegativeNumber(localCatalogForm.sugars_per_100g),
+      fiber_per_100g: nullableNonNegativeNumber(localCatalogForm.fiber_per_100g),
+      salt_per_100g: nullableNonNegativeNumber(localCatalogForm.salt_per_100g),
       optional_nutrients: { ...localCatalogForm.optional_nutrients },
       updated_at: now, deleted_at: null, pending_sync: true,
     };
@@ -7323,9 +7329,9 @@ function saveLocalCatalogEditor() {
       carbs_per_100g: Number(localCatalogForm.carbs_per_100g || 0),
       fat_per_100g: Number(localCatalogForm.fat_per_100g || 0),
       protein_per_100g: Number(localCatalogForm.protein_per_100g || 0),
-      sugars_per_100g: Number(localCatalogForm.sugars_per_100g || 0),
-      fiber_per_100g: Number(localCatalogForm.fiber_per_100g || 0),
-      salt_per_100g: Number(localCatalogForm.salt_per_100g || 0),
+      sugars_per_100g: nullableNonNegativeNumber(localCatalogForm.sugars_per_100g),
+      fiber_per_100g: nullableNonNegativeNumber(localCatalogForm.fiber_per_100g),
+      salt_per_100g: nullableNonNegativeNumber(localCatalogForm.salt_per_100g),
       optional_nutrients: { ...localCatalogForm.optional_nutrients },
       updated_at: now, deleted_at: null, pending_sync: true,
     };
@@ -7520,9 +7526,9 @@ function addMealNoteFromForm() {
     carbs_per_100g: 0,
     fat_per_100g: 0,
     protein_per_100g: 0,
-    sugars_per_100g: 0,
-    fiber_per_100g: 0,
-    salt_per_100g: 0,
+    sugars_per_100g: null,
+    fiber_per_100g: null,
+    salt_per_100g: null,
     optional_nutrients: {},
     updated_at: now,
   };
@@ -8519,9 +8525,7 @@ function advancedExportHintText(): string {
 }
 
 function shouldAttachNativeNotificationActions(): boolean {
-  // Android currently renders Tauri notification action buttons without labels on affected SystemUI/plugin versions.
-  // Keep notification taps interactive there, but avoid blank action rows.
-  return isTauriRuntime() && isMobileRuntime() && !isAndroidRuntime();
+  return isTauriRuntime() && isMobileRuntime();
 }
 
 function notificationVisualOptions(): Partial<NotificationOptions> {
@@ -9606,9 +9610,9 @@ function upsertScannedIngredient(item: any, now = Date.now()) {
     carbs_per_100g: Number(item.carbs_per_100g || 0),
     fat_per_100g: Number(item.fat_per_100g || 0),
     protein_per_100g: Number(item.protein_per_100g || 0),
-    sugars_per_100g: Number(item.sugars_per_100g || 0),
-    fiber_per_100g: Number(item.fiber_per_100g || 0),
-    salt_per_100g: Number(item.salt_per_100g || 0),
+    sugars_per_100g: nullableNonNegativeNumber(item.sugars_per_100g),
+    fiber_per_100g: nullableNonNegativeNumber(item.fiber_per_100g),
+    salt_per_100g: nullableNonNegativeNumber(item.salt_per_100g),
     optional_nutrients: { ...(item.optional_nutrients ?? {}) },
     updated_at: now,
     deleted_at: null,
@@ -9633,9 +9637,9 @@ function upsertScannedFood(item: any, now = Date.now()) {
     carbs_per_100g: Number(item.carbs_per_100g || 0),
     fat_per_100g: Number(item.fat_per_100g || 0),
     protein_per_100g: Number(item.protein_per_100g || 0),
-    sugars_per_100g: Number(item.sugars_per_100g || 0),
-    fiber_per_100g: Number(item.fiber_per_100g || 0),
-    salt_per_100g: Number(item.salt_per_100g || 0),
+    sugars_per_100g: nullableNonNegativeNumber(item.sugars_per_100g),
+    fiber_per_100g: nullableNonNegativeNumber(item.fiber_per_100g),
+    salt_per_100g: nullableNonNegativeNumber(item.salt_per_100g),
     optional_nutrients: { ...(item.optional_nutrients ?? {}) },
     barcode: item.barcode ?? null,
     updated_at: now,

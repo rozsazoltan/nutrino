@@ -16,7 +16,7 @@ const androidAppGradlePaths = [
   path.join(androidDir, 'app', 'build.gradle.kts'),
   path.join(androidDir, 'app', 'build.gradle'),
 ];
-const NATIVE_STATE_VERSION = 10;
+const NATIVE_STATE_VERSION = 11;
 const forceNativeClean = process.argv.includes('--force-native-clean')
   || process.env.NUTRINO_FORCE_ANDROID_NATIVE_CLEAN === '1';
 
@@ -294,6 +294,56 @@ function ensureBuildConfigFeature(source) {
   const androidBlockRegex = /android\s*\{/;
   if (!androidBlockRegex.test(source)) return source;
   return source.replace(androidBlockRegex, 'android {\n    buildFeatures {\n        buildConfig = true\n    }');
+}
+
+
+function patchNotificationStorageActionKeys() {
+  if (!fs.existsSync(androidDir)) return false;
+
+  let changed = false;
+  for (const file of walk(androidDir)) {
+    if (path.basename(file) !== 'NotificationStorage.kt') continue;
+    let source = fs.readFileSync(file, 'utf8');
+    if (!source.includes('class NotificationStorage') || !source.includes('fun writeActionGroup')) continue;
+    const original = source;
+
+    // tauri-plugin-notification 2.3.x stores Android action ids/titles under
+    // keys suffixed with the action type id, while getActionGroup reads keys
+    // suffixed with the numeric action index. The result is visible but blank
+    // notification action buttons whose action id also comes back empty.
+    source = source.replace(
+      /fun writeActionGroup\(actions: List<ActionType>\) \{\n\s*for \(type in actions\) \{\n\s*val i = type\.id\n\s*val editor = getStorage\(ACTION_TYPES_ID \+ type\.id\)\.edit\(\)\n\s*editor\.clear\(\)\n\s*editor\.putInt\("count", type\.actions\.size\)\n\s*for \(action in type\.actions\) \{\n\s*editor\.putString\("id\$i", action\.id\)\n\s*editor\.putString\("title\$i", action\.title\)\n\s*editor\.putBoolean\("input\$i", action\.input \?: false\)\n\s*}\n\s*editor\.apply\(\)\n\s*}\n\s*}/m,
+      `fun writeActionGroup(actions: List<ActionType>) {
+    for (type in actions) {
+      val editor = getStorage(ACTION_TYPES_ID + type.id).edit()
+      editor.clear()
+      editor.putInt("count", type.actions.size)
+      type.actions.forEachIndexed { index, action ->
+        editor.putString("id$index", action.id)
+        editor.putString("title$index", action.title ?: action.id)
+        editor.putBoolean("input$index", action.input ?: false)
+      }
+      editor.apply()
+    }
+  }`
+    );
+
+    source = source.replace(
+      /val title = storage\.getString\("title\$i", ""\)\n\s*val input = storage\.getBoolean\("input\$i", false\)\n\s*val action = NotificationAction\(\)\n\s*action\.id = id \?: ""\n\s*action\.title = title/m,
+      `val title = storage.getString("title$i", "")
+      val input = storage.getBoolean("input$i", false)
+      val action = NotificationAction()
+      action.id = id ?: ""
+      action.title = if (title.isNullOrBlank()) action.id else title`
+    );
+
+    if (source !== original) {
+      fs.writeFileSync(file, source);
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 function patchAndroidApplicationId(config) {
@@ -803,7 +853,8 @@ const networkSecurityPatched = ensureNetworkSecurityConfig();
 const labelResourcesPatched = patchAndroidLabelResources(config);
 const manifestPatched = patchManifest(config);
 const buildSrcRustPluginPatched = normalizeBuildSrcRustPluginResources();
+const notificationStoragePatched = patchNotificationStorageActionKeys();
 const nativeStateCleaned = cleanStaleAndroidNativeState(config);
 const generatedKotlinCleaned = cleanGeneratedKotlinPackages();
 const activityPackagePatched = patchMainActivityPackage(config);
-console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, networkSecurity=${networkSecurityPatched ? 'yes' : 'already ok'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);
+console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, networkSecurity=${networkSecurityPatched ? 'yes' : 'already ok'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, notificationStorage=${notificationStoragePatched ? 'patched' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);
