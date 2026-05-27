@@ -2427,6 +2427,18 @@ select:focus {
 .tracking-dialog-title h2 {
   margin-bottom: 0;
 }
+.micronutrient-dialog-title {
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+.micronutrient-dialog-title h2 {
+  margin-bottom: 0;
+  padding-right: 12px;
+}
+.micronutrient-dialog-title .info-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
 .tracking-settings-panel {
   display: grid;
   gap: 14px;
@@ -2524,6 +2536,9 @@ select:focus {
   }
   .tracking-dialog-title .text-button {
     justify-self: start;
+  }
+  .micronutrient-dialog-title {
+    display: flex;
   }
   .tracking-settings-group {
     padding: 10px;

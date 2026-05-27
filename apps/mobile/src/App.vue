@@ -352,6 +352,12 @@ const mealIconSvg: Record<string, string> = {
 };
 
 watch(state, () => saveState(JSON.parse(JSON.stringify(state)) as AppState), { deep: true });
+watch(() => state.settings.show_micronutrients, (enabled) => {
+  if (enabled) return;
+  if (settingsDialog.value === 'micronutrients') settingsDialog.value = null;
+  micronutrientInfoOpen.value = false;
+  nutrientInsightsDialog.value = null;
+});
 watch(selectedDate, () => {
   editingDayWeight.value = false;
 });
@@ -10430,7 +10436,7 @@ function setTab(tab: Tab) {
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('activity')"></span><b>{{ t('showActivity') }}</b><input v-model="state.settings.show_activity_tracking" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('macros')"></span><b>{{ t('showMacros') }}</b><input v-model="state.settings.show_meal_macros" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('showMicros') }}</b><input v-model="state.settings.show_micronutrients" type="checkbox" /></label>
-        <button v-if="state.settings.show_micronutrients" class="settings-row" @click="settingsDialog = 'micronutrients'"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('micronutrientLimits') }}</b><small>{{ t('micronutrientLimitsHint') }}</small></button>
+        <button v-if="state.settings.show_micronutrients" class="settings-row micronutrient-settings-row" @click="settingsDialog = 'micronutrients'"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('micronutrientLimits') }}</b><small>{{ t('micronutrientLimitsHint') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'language'"><span class="settings-row-icon" v-html="settingsIcon('language')"></span><b>{{ t('language') }}</b><small>{{ selectedLanguageLabel() }}</small></button>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('reminder')"></span><b>{{ t('dailyReminder') }}</b><input v-model="state.settings.daily_reminder" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
         <div class="settings-divider"></div>
@@ -10501,7 +10507,7 @@ function setTab(tab: Tab) {
             <div class="dialog-actions"><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'micronutrients'">
-            <div class="dialog-title-row tracking-dialog-title"><h2>{{ t('micronutrientLimits') }}</h2><button class="info-button" type="button" :aria-label="t('micronutrientLimits')" @click="micronutrientInfoOpen = !micronutrientInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button></div>
+            <div class="dialog-title-row micronutrient-dialog-title"><h2>{{ t('micronutrientLimits') }}</h2><button class="info-button" type="button" :aria-label="t('micronutrientLimits')" @click="micronutrientInfoOpen = !micronutrientInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button></div>
             <p v-if="micronutrientInfoOpen" class="helper big micronutrient-info-copy">{{ t('micronutrientDefaultsInfo') }}</p>
             <div class="micronutrient-limit-list">
               <label v-for="nutrient in optionalNutrientDefinitions" :key="`limit-${nutrient.key}`" class="micronutrient-limit-row">
