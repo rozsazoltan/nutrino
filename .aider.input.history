@@ -1,0 +1,17 @@
+
+# 2026-05-27T12:18:59.163Z
++Make https://github.com/rozsazoltan/nutrino/issues/13 feature.
+
+# 2026-05-27T12:32:53.186Z
++Improve notification appearance, actions, and scheduling #13
++Open
++@rozsazoltan
++Description
++rozsazoltan
++opened yesterday
++Owner
++Notifications should display the app icon.
++
++Notifications should also support action buttons where applicable, so users can interact with them directly from the notification.
++
++Notification delivery should no longer happen at random times. Instead, notifications should be sent at the times configured in the user's settings.

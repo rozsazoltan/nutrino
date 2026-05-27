@@ -57,10 +57,16 @@ type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-break
 type NutrinoNotificationExtra = { nutrino: true; kind: NutrinoNotificationKind; mealType?: MealType; scheduledTime?: string };
 type NutrinoNotificationEvent = {
   actionId?: string;
+  action?: string;
+  userAction?: string;
+  notificationUserAction?: string;
   inputValue?: string | null;
-  notificationId?: number;
-  notification?: (NotificationOptions & { id?: number; extra?: Record<string, unknown> }) | null;
+  notificationId?: number | string;
+  id?: number | string;
+  notification?: (NotificationOptions & { id?: number | string; extra?: Record<string, unknown>; data?: Record<string, unknown>; sourceJson?: string }) | null;
   extra?: Record<string, unknown>;
+  data?: Record<string, unknown>;
+  sourceJson?: string;
 };
 type ReminderClockTime = { hour: number; minute: number };
 type ScheduledReminderConfig = {
@@ -8445,6 +8451,55 @@ function currentTimeMatchesReminderMinute(timeValue: string, now = new Date()): 
   return Boolean(time && now.getHours() === time.hour && now.getMinutes() === time.minute);
 }
 
+function dailyReminderSchedule(time: ReminderClockTime): Schedule {
+  return Schedule.interval({ hour: time.hour, minute: time.minute, second: 0 }, true);
+}
+
+function notificationActionTitle(key: string, fallback: string): string {
+  const value = String(t(key) || '').trim();
+  return value || fallback;
+}
+
+function notificationPermissionStatusLabel(): string {
+  if (notificationPermissionGranted.value) return t('notificationsEnabled');
+  if (notificationPermission.value === 'unsupported') return t('notificationsUnsupported');
+  return t('notificationsNotEnabled');
+}
+
+function notificationPermissionStatusBody(): string {
+  if (notificationPermissionGranted.value) {
+    return activeLanguage.value === 'hu'
+      ? 'A beállított emlékeztetők értesítésként is megjelenhetnek.'
+      : 'Configured reminders can be delivered as notifications.';
+  }
+  if (notificationPermission.value === 'unsupported') {
+    return activeLanguage.value === 'hu'
+      ? 'Ez a környezet nem támogatja a rendszerértesítéseket.'
+      : 'This environment does not support system notifications.';
+  }
+  return activeLanguage.value === 'hu'
+    ? 'Engedélyezd az értesítéseket, hogy az emlékeztetők a beállított időpontokban érkezzenek.'
+    : 'Enable notifications so reminders can arrive at the configured times.';
+}
+
+function advancedTransferWarningText(): string {
+  return activeLanguage.value === 'hu'
+    ? 'A csatornák közötti adatmozgatás felülírhat meglévő adatokat. Exportálás vagy importálás előtt ellenőrizd, hogy a megfelelő csatornát választottad.'
+    : 'Moving data between channels can overwrite existing data. Before importing or exporting, verify that you selected the correct channel.';
+}
+
+function advancedImportHintText(): string {
+  return activeLanguage.value === 'hu'
+    ? 'A másik csatorna mentéséből frissíti az aktuális csatorna adatait.'
+    : 'Updates the current channel from the backup of the other channel.';
+}
+
+function advancedExportHintText(): string {
+  return activeLanguage.value === 'hu'
+    ? 'Előkészíti az aktuális csatorna adatait a másik csatornára történő átvitelhez.'
+    : 'Prepares the current channel data so it can be transferred to the other channel.';
+}
+
 function notificationVisualOptions(): Partial<NotificationOptions> {
   if (isTauriRuntime() && isAndroidRuntime()) {
     return {
@@ -8502,6 +8557,13 @@ async function notifyUser(title: string, body: string, options: {
 } = {}) {
   try {
     if (await isPermissionGranted()) {
+      if (options.actionTypeId && isTauriRuntime() && isMobileRuntime()) {
+        try {
+          await registerNotificationActionTypes();
+        } catch {
+          // The notification can still be delivered; this only guards action labels.
+        }
+      }
       sendNotification(buildNotificationOptions({ title, body, ...options }));
       notificationPermission.value = 'granted';
       return;
@@ -8529,38 +8591,38 @@ async function registerNotificationActionTypes() {
     {
       id: NOTIFICATION_ACTION_TYPES.daily,
       actions: [
-        { id: 'open-home', title: t('notificationActionOpen'), foreground: true },
-        { id: 'log-breakfast', title: t('notificationActionLogMeal'), foreground: true },
+        { id: 'open-home', title: notificationActionTitle('notificationActionOpen', 'Open'), requiresAuthentication: false, foreground: true },
+        { id: 'log-breakfast', title: notificationActionTitle('notificationActionLogMeal', 'Log meal'), requiresAuthentication: false, foreground: true },
       ],
     },
     {
       id: NOTIFICATION_ACTION_TYPES.weight,
       actions: [
-        { id: 'log-weight', title: t('notificationActionLogWeight'), foreground: true },
+        { id: 'log-weight', title: notificationActionTitle('notificationActionLogWeight', 'Log weight'), requiresAuthentication: false, foreground: true },
       ],
     },
     {
       id: NOTIFICATION_ACTION_TYPES.mealBreakfast,
       actions: [
-        { id: 'log-breakfast', title: t('breakfast'), foreground: true },
+        { id: 'log-breakfast', title: notificationActionTitle('breakfast', 'Breakfast'), requiresAuthentication: false, foreground: true },
       ],
     },
     {
       id: NOTIFICATION_ACTION_TYPES.mealLunch,
       actions: [
-        { id: 'log-lunch', title: t('lunch'), foreground: true },
+        { id: 'log-lunch', title: notificationActionTitle('lunch', 'Lunch'), requiresAuthentication: false, foreground: true },
       ],
     },
     {
       id: NOTIFICATION_ACTION_TYPES.mealDinner,
       actions: [
-        { id: 'log-dinner', title: t('dinner'), foreground: true },
+        { id: 'log-dinner', title: notificationActionTitle('dinner', 'Dinner'), requiresAuthentication: false, foreground: true },
       ],
     },
     {
       id: NOTIFICATION_ACTION_TYPES.deficit,
       actions: [
-        { id: 'open-analysis', title: t('openAnalysis'), foreground: true },
+        { id: 'open-analysis', title: notificationActionTitle('openAnalysis', 'Open analysis'), requiresAuthentication: false, foreground: true },
       ],
     },
   ]);
@@ -8709,7 +8771,7 @@ async function reconcileScheduledReminderNotifications() {
         mealType: reminder.mealType,
         scheduledTime: reminder.time,
         actionTypeId: reminder.actionTypeId,
-        schedule: Schedule.interval({ hour: time.hour, minute: time.minute, second: 0 }, true),
+        schedule: dailyReminderSchedule(time),
       }));
     }
     nativeReminderSchedulesActive.value = reminders.length > 0;
@@ -8749,15 +8811,45 @@ function normalizeNotificationAction(action: unknown): NutrinoNotificationAction
     : 'tap';
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+}
+
+function numberFromNotificationValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function parseNotificationJson(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
 function normalizeNotificationExtra(extra: unknown): Partial<NutrinoNotificationExtra> {
-  if (!extra || typeof extra !== 'object') return {};
-  const record = extra as Record<string, unknown>;
-  return {
-    nutrino: record.nutrino === true ? true : undefined,
-    kind: ['daily', 'weight', 'meal', 'deficit'].includes(String(record.kind)) ? record.kind as NutrinoNotificationKind : undefined,
-    mealType: ['breakfast', 'lunch', 'dinner', 'snack'].includes(String(record.mealType)) ? record.mealType as MealType : undefined,
-    scheduledTime: typeof record.scheduledTime === 'string' ? record.scheduledTime : undefined,
+  const record = asRecord(extra);
+  if (!record) return {};
+  const nestedExtra = asRecord(record.extra) || asRecord(parseNotificationJson(record.extra));
+  const sourceJson = parseNotificationJson(record.sourceJson);
+  const sourceExtra = asRecord(sourceJson?.extra) || asRecord(parseNotificationJson(sourceJson?.extra));
+  const merged = {
+    ...sourceExtra,
+    ...nestedExtra,
+    ...record,
   };
+  const result: Partial<NutrinoNotificationExtra> = {};
+  if (merged.nutrino === true) result.nutrino = true;
+  if (['daily', 'weight', 'meal', 'deficit'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
+  if (['breakfast', 'lunch', 'dinner', 'snack'].includes(String(merged.mealType))) result.mealType = merged.mealType as MealType;
+  if (typeof merged.scheduledTime === 'string') result.scheduledTime = merged.scheduledTime;
+  return result;
 }
 
 function mealTypeFromNotificationAction(action: NutrinoNotificationAction, extra: Partial<NutrinoNotificationExtra>): MealType | null {
@@ -8829,12 +8921,30 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
 }
 
 function handleNotificationAction(payload: unknown) {
-  const event = payload as NutrinoNotificationEvent;
-  const action = normalizeNotificationAction(event.actionId);
-  const notificationId = event.notification?.id ?? event.notificationId;
+  const event = asRecord(payload) as NutrinoNotificationEvent | null;
+  if (!event) return;
+  const notification = asRecord(event.notification);
+  const sourceJson = parseNotificationJson(event.sourceJson) || parseNotificationJson(notification?.sourceJson);
+  const action = normalizeNotificationAction(
+    event.actionId
+    ?? event.action
+    ?? event.userAction
+    ?? event.notificationUserAction
+    ?? sourceJson?.actionId
+    ?? sourceJson?.action,
+  );
+  const notificationId = numberFromNotificationValue(
+    notification?.id
+    ?? event.notificationId
+    ?? event.id
+    ?? sourceJson?.id,
+  );
   const extra = {
     ...notificationExtraFromId(notificationId),
-    ...normalizeNotificationExtra(event.notification?.extra || event.extra),
+    ...normalizeNotificationExtra(sourceJson),
+    ...normalizeNotificationExtra(notification),
+    ...normalizeNotificationExtra(event.data),
+    ...normalizeNotificationExtra(event.extra),
   };
   const signature = `${notificationId ?? 'unknown'}:${action}:${extra.kind ?? 'unknown'}:${extra.mealType ?? ''}`;
   const now = Date.now();
@@ -11229,7 +11339,7 @@ function setTab(tab: Tab) {
       <section v-if="settingsOpen" class="settings-screen app-overlay">
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
-        <button class="settings-row" @click="openPermissionsSettings"><span class="settings-row-icon" v-html="settingsIcon('permissions')"></span><b>{{ t('appPermissions') }}</b><small>{{ notificationPermissionGranted ? t('notificationsEnabled') : t('notificationsNotEnabled') }}</small></button>
+        <button class="settings-row" @click="openPermissionsSettings"><span class="settings-row-icon" v-html="settingsIcon('permissions')"></span><b>{{ t('appPermissions') }}</b><small>{{ notificationPermissionStatusLabel() }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'units'"><span class="settings-row-icon" v-html="settingsIcon('units')"></span><b>{{ t('units') }}</b><small>{{ state.settings.units === 'metric' ? t('metric') : t('imperial') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'calculations'"><span class="settings-row-icon" v-html="settingsIcon('calculations')"></span><b>{{ t('calculations') }}</b><small>{{ t('iomEquationMacro') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'tracking'"><span class="settings-row-icon" v-html="settingsIcon('tracking')"></span><b>{{ t('trackingReminders') }}</b><small>{{ calorieDeficitEnabled ? `${state.settings.target_deficit_kcal} kcal ${t('targetDeficit')}` : t('deficitOffHint') }}</small></button>
@@ -11260,12 +11370,12 @@ function setTab(tab: Tab) {
       <div v-if="settingsDialog" class="dialog-backdrop" @click.self="settingsDialog = null">
         <article class="settings-dialog">
           <template v-if="settingsDialog === 'permissions'">
-            <h2>{{ t('appPermissions') }}</h2>
-            <button class="dialog-option permission-option" @click="requestReminderPermission">
-              <span><span class="permission-status" :class="{ granted: notificationPermissionGranted }">{{ notificationPermissionGranted ? '✓' : '×' }}</span>{{ t('requestNotifications') }}</span>
-              <small>{{ notificationPermissionGranted ? t('notificationsEnabled') : t('notificationsNotEnabled') }}</small>
-            </button>
-            <div class="dialog-actions"><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></div>
+            <div class="dialog-title-row"><h2>{{ t('appPermissions') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></div>
+            <article class="permission-status-card" :class="{ granted: notificationPermissionGranted }">
+              <span class="permission-status" :class="{ granted: notificationPermissionGranted }">{{ notificationPermissionGranted ? '✓' : '!' }}</span>
+              <span class="permission-copy"><b>{{ notificationPermissionStatusLabel() }}</b><small>{{ notificationPermissionStatusBody() }}</small></span>
+            </article>
+            <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button v-if="!notificationPermissionGranted && notificationPermission !== 'unsupported'" class="filled-button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'units'"><h2>{{ t('units') }}</h2><button class="dialog-option" @click="state.settings.units = 'metric'; settingsDialog = null">{{ t('metric') }}</button><button class="dialog-option" @click="state.settings.units = 'imperial'; settingsDialog = null">{{ t('imperial') }}</button></template>
           <template v-else-if="settingsDialog === 'language'"><h2>{{ t('language') }}</h2><input v-model="languageSearch" class="input" type="search" :placeholder="t('languageSearch')" /><button v-for="language in filteredLanguageOptions" :key="language.code" class="dialog-option language-dialog-option" @click="setLanguage(language.code); settingsDialog = null"><span>{{ language.englishName }}</span><small>{{ language.nativeName }} · {{ language.code }}</small></button></template>
@@ -11332,17 +11442,16 @@ function setTab(tab: Tab) {
             <div class="dialog-actions"><button class="text-button" @click="resetMicronutrientLimits">{{ t('resetMicronutrients') }}</button><button class="filled-button" @click="settingsDialog = null">{{ t('ok') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'advanced'">
-            <h2>{{ t('advanced') }}</h2>
-            <article class="channel-transfer-card">
-              <div>
-                <b>{{ t('channelDataTransfer') }}</b>
-                <small>{{ t('channelDataTransferBody') }}</small>
-              </div>
-              <div class="channel-transfer-actions">
-                <button class="outlined-button" type="button" @click="importDataFromOtherChannel">{{ appChannel === 'dev' ? t('updateDevFromStable') : t('updateStableFromDev') }}</button>
-                <button class="filled-button" type="button" @click="exportDataForOtherChannel">{{ appChannel === 'dev' ? t('exportDevForStable') : t('exportStableForDev') }}</button>
-              </div>
-            </article>
+            <div class="dialog-title-row"><h2>{{ t('advanced') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></div>
+            <p class="warning-callout"><span class="warning-callout-icon">!</span><span>{{ advancedTransferWarningText() }}</span></p>
+            <div class="advanced-transfer-list">
+              <button class="dialog-option advanced-transfer-option" type="button" @click="importDataFromOtherChannel">
+                <span><b>{{ appChannel === 'dev' ? t('updateDevFromStable') : t('updateStableFromDev') }}</b><small>{{ advancedImportHintText() }}</small></span>
+              </button>
+              <button class="dialog-option advanced-transfer-option" type="button" @click="exportDataForOtherChannel">
+                <span><b>{{ appChannel === 'dev' ? t('exportDevForStable') : t('exportStableForDev') }}</b><small>{{ advancedExportHintText() }}</small></span>
+              </button>
+            </div>
             <div class="dialog-actions"><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'privacy'"><h2>{{ t('privacy') }}</h2><p class="helper big">{{ t('privacyBody') }}</p><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></template>

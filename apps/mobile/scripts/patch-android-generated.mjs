@@ -556,19 +556,59 @@ class MainActivity : TauriActivity() {
 
     private fun buildNutrinoNotificationActionPayload(intent: Intent?): JSONObject? {
         if (intent == null) return null
-        val notificationId = intent.getIntExtra("NotificationId", Int.MIN_VALUE)
-        if (notificationId == Int.MIN_VALUE) return null
+        val notificationId = findFirstIntExtra(intent, listOf(
+            "NotificationId",
+            "notificationId",
+            "id"
+        ))
+        val actionId = findFirstStringExtra(intent, listOf(
+            "NotificationUserAction",
+            "notificationUserAction",
+            "actionId",
+            "action"
+        )) ?: "tap"
+        val notificationJson = findFirstStringExtra(intent, listOf(
+            "LocalNotficationObject",
+            "LocalNotificationObject",
+            "notification",
+            "notificationJson",
+            "sourceJson"
+        ))
+        if (notificationId == null && actionId == "tap" && notificationJson.isNullOrBlank()) return null
+
         val payload = JSONObject()
-        payload.put("notificationId", notificationId)
-        payload.put("actionId", intent.getStringExtra("NotificationUserAction") ?: "tap")
-        val notificationJson = intent.getStringExtra("LocalNotficationObject")
+        if (notificationId != null) payload.put("notificationId", notificationId)
+        payload.put("actionId", actionId)
         if (!notificationJson.isNullOrBlank()) {
+            payload.put("sourceJson", notificationJson)
             try {
                 payload.put("notification", JSONObject(notificationJson))
             } catch (_: Exception) {
             }
         }
         return payload
+    }
+
+    private fun findFirstIntExtra(intent: Intent, keys: List<String>): Int? {
+        for (key in keys) {
+            if (!intent.hasExtra(key)) continue
+            val intValue = intent.getIntExtra(key, Int.MIN_VALUE)
+            if (intValue != Int.MIN_VALUE) return intValue
+            val stringValue = intent.getStringExtra(key)
+            if (!stringValue.isNullOrBlank()) {
+                stringValue.toIntOrNull()?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun findFirstStringExtra(intent: Intent, keys: List<String>): String? {
+        for (key in keys) {
+            if (!intent.hasExtra(key)) continue
+            val value = intent.getStringExtra(key)
+            if (!value.isNullOrBlank()) return value
+        }
+        return null
     }
 
     private fun findWebView(view: View?): WebView? {

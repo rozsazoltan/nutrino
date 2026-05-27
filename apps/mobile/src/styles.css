@@ -1698,14 +1698,62 @@ select:focus {
 }
 
 /* v0.10.19 explicit dev/stable channel handoff */
-.channel-transfer-card {
-  margin: 10px 20px 12px;
-  padding: 16px;
-  border: 1px solid var(--outline-variant);
-  border-radius: 22px;
-  background: color-mix(in srgb, var(--surface-container), transparent 8%);
+.warning-callout {
   display: grid;
-  gap: 14px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, #ffb020 44%, var(--outline-variant));
+  border-radius: 18px;
+  background: color-mix(in srgb, #ffb020 12%, var(--surface));
+  color: var(--on-surface);
+  line-height: 1.45;
+  font-size: .94rem;
+}
+.warning-callout-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #ffb020 24%, var(--surface));
+  color: #8a5a00;
+  font-weight: 950;
+}
+.advanced-transfer-list {
+  display: grid;
+  gap: 10px;
+}
+.advanced-transfer-option {
+  padding: 14px 16px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 18px;
+  background: var(--surface-container);
+}
+.advanced-transfer-option:hover,
+.advanced-transfer-option:focus-visible {
+  background: color-mix(in srgb, var(--primary-container) 44%, var(--surface-container));
+}
+.advanced-transfer-option span,
+.advanced-transfer-option b,
+.advanced-transfer-option small {
+  display: block;
+}
+.advanced-transfer-option small {
+  margin-top: 4px;
+  color: var(--on-surface-variant);
+  line-height: 1.4;
+  font-size: .82rem;
+}
+.channel-transfer-card {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: grid;
+  gap: 10px;
 }
 .channel-transfer-card b,
 .channel-transfer-card small {
@@ -2598,6 +2646,30 @@ select:focus {
   align-items: center;
   gap: 10px;
 }
+.permission-status-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 20px;
+  background: var(--surface-container);
+}
+.permission-status-card.granted {
+  border-color: color-mix(in srgb, #34c759 36%, var(--outline-variant));
+  background: color-mix(in srgb, #34c759 9%, var(--surface-container));
+}
+.permission-copy b,
+.permission-copy small {
+  display: block;
+}
+.permission-copy small {
+  margin-top: 4px;
+  color: var(--on-surface-variant);
+  line-height: 1.4;
+  font-size: .86rem;
+}
 .permission-status {
   display: inline-grid;
   place-items: center;
@@ -2607,6 +2679,11 @@ select:focus {
   background: var(--error-container);
   color: var(--on-error-container);
   font-weight: 950;
+}
+.permission-status-card .permission-status {
+  width: 42px;
+  height: 42px;
+  font-size: 1.05rem;
 }
 .permission-status.granted {
   background: color-mix(in srgb, #34c759 22%, var(--surface));
