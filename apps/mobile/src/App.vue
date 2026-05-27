@@ -141,9 +141,11 @@ let todayRolloverTimer: number | undefined;
 const offlineToastShown = ref(false);
 const toast = ref('');
 const settingsOpen = ref(false);
-const settingsDialog = ref<'units' | 'calculations' | 'tracking' | 'language' | 'privacy' | 'about' | 'licenses' | null>(null);
+const settingsDialog = ref<'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'privacy' | 'about' | 'licenses' | null>(null);
 const analysisOpen = ref(false);
 const deficitInfoOpen = ref(false);
+const micronutrientInfoOpen = ref(false);
+const mealNutrientsDialog = ref<MealType | null>(null);
 const weightTrendMode = ref<WeightTrendMode>('weekly');
 const notificationPermission = ref('unknown');
 const calorieLegendOpen = ref(false);
@@ -1147,8 +1149,11 @@ const diaryKcalTone = computed(() => kcalTone(consumedKcal.value, dailyGoal.valu
 const homeShellToneClass = computed(() => activeTab.value === 'home' ? `home-${diaryKcalTone.value}` : '');
 const selectedDayAnalysis = computed(() => buildDailyAnalysis(selectedDate.value));
 const selectedDayMacroSummary = computed(() => dayMacroSummary(selectedDate.value));
-const selectedDayNutrientRows = computed(() => buildDailyNutrientRows(currentDayIntakes.value));
+const selectedDayNutrientRows = computed(() => state.settings.show_micronutrients ? buildDailyNutrientRows(currentDayIntakes.value) : []);
 const exceededNutrientCount = computed(() => selectedDayNutrientRows.value.filter((row) => row.isOver).length);
+const selectedMealNutrientRows = computed(() => mealNutrientsDialog.value && state.settings.show_micronutrients ? buildDailyNutrientRows(currentDayIntakes.value.filter((entry) => entry.meal_type === mealNutrientsDialog.value)) : []);
+const selectedMealNutrientExceededCount = computed(() => selectedMealNutrientRows.value.filter((row) => row.isOver).length);
+const selectedDiaryDateLabel = computed(() => new Intl.DateTimeFormat(currentLocale(), { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(dayStartMs(selectedDate.value))));
 const currentDeficitStreak = computed(() => calculateDeficitStreak(selectedDate.value));
 const bestDeficitStreak = computed(() => calculateBestDeficitStreak(30));
 const analysisDailyRows = computed(() => buildDailyAnalysisRows(14, selectedDate.value));
@@ -6448,10 +6453,10 @@ for (const [language, values] of Object.entries(completeMobileLanguageTranslatio
 }
 const mobileVisibleTextTranslations: Record<string, Record<string, string>> = {
   en: {
-    version: 'Version', todayNutrients: "Today's nutrients", importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber'
+    version: 'Version', todayNutrients: "Today's nutrients", mealMicronutrients: 'Meal micronutrients', micronutrientLimits: 'Micronutrient limits', micronutrientLimitsHint: 'Daily thresholds used by the diary warnings.', micronutrientDefaultsInfo: 'Default values are practical adult reference values based on widely used nutrition labels and public health guidance: FDA-style Daily Values for vitamins and minerals, common upper-limit guidance for sodium, saturated fat and added/free sugars, and a 5 g salt reference. They are starting points only; adjust them to your personal plan when needed.', defaultValue: 'default', resetMicronutrients: 'Reset micronutrients', importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber'
   },
   hu: {
-    version: 'Verzió', todayNutrients: 'Mai tápanyagok', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost'
+    version: 'Verzió', todayNutrients: 'Mai tápanyagok', mealMicronutrients: 'Étkezés mikrotápanyagai', micronutrientLimits: 'Mikrotápanyag határértékek', micronutrientLimitsHint: 'A napi figyelmeztetésekhez használt határértékek.', micronutrientDefaultsInfo: 'Az alapértékek gyakorlati felnőtt referenciaértékek: vitaminoknál és ásványi anyagoknál elterjedt tápértékjelölési napi értékek, nátriumnál, telített zsírnál és cukornál közegészségügyi felső határ jellegű ajánlások, sónál 5 g-os referencia. Kiindulási értékek, szükség esetén igazítsd a saját tervedhez.', defaultValue: 'alap', resetMicronutrients: 'Mikrotápanyagok visszaállítása', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost'
   },
   de: { version: 'Version' }, fr: { version: 'Version' }, ru: { version: 'Версия' }, uk: { version: 'Версія' }, zh: { version: '版本' }, sk: { version: 'Verzia' }, ro: { version: 'Versiune' }, cs: { version: 'Verze' }, sl: { version: 'Različica' }, hr: { version: 'Verzija' }, pl: { version: 'Wersja' }, es: { version: 'Versión' }, pt: { version: 'Versão' }
 };
@@ -6588,13 +6593,39 @@ function formatNutrientAmount(value: number, unit: string): string {
   return `${rounded}${unit}`;
 }
 
+function micronutrientLimit(nutrient: OptionalNutrientDefinition): number {
+  const value = Number(state.settings.micronutrient_limits?.[nutrient.key]);
+  return Number.isFinite(value) && value > 0 ? value : nutrient.dailyLimit;
+}
+
+function setMicronutrientLimit(nutrient: OptionalNutrientDefinition, value: unknown) {
+  const numeric = Number(value);
+  state.settings.micronutrient_limits = {
+    ...(state.settings.micronutrient_limits || {}),
+    [nutrient.key]: Number.isFinite(numeric) && numeric > 0 ? numeric : nutrient.dailyLimit,
+  };
+}
+
+function setMicronutrientLimitFromEvent(nutrient: OptionalNutrientDefinition, event: Event) {
+  setMicronutrientLimit(nutrient, (event.target as HTMLInputElement | null)?.value);
+}
+
+function resetMicronutrientLimits() {
+  state.settings.micronutrient_limits = Object.fromEntries(optionalNutrientDefinitions.map((nutrient) => [nutrient.key, nutrient.dailyLimit]));
+}
+
+function openMealMicronutrients(section: MealSection) {
+  if (!state.settings.show_micronutrients || section.key === 'activity') return;
+  mealNutrientsDialog.value = section.key;
+}
+
 function buildDailyNutrientRows(entries: Intake[]) {
   return optionalNutrientDefinitions.map((nutrient) => {
     const value = entries.reduce((sum, entry) => {
       const food = foodFromIntake(entry);
       return sum + optionalNutrientPer100g(food, nutrient) * Math.max(0, Number(entry.amount_g || 0)) / 100;
     }, 0);
-    const limit = nutrient.dailyLimit;
+    const limit = micronutrientLimit(nutrient);
     const progress = clamp(value / Math.max(1, limit));
     return {
       key: nutrient.key,
@@ -8075,6 +8106,11 @@ function selectCalendarDate(key: string) {
   calendarMonth.value = new Date(dayStartMs(key));
 }
 
+function moveSelectedDate(delta: number) {
+  const date = new Date(dayStartMs(selectedDate.value));
+  date.setDate(date.getDate() + delta);
+  selectCalendarDate(dateKey(date));
+}
 
 async function refreshServerIfCatalogStale() {
   if (!state.pairing.baseUrl.trim()) return;
@@ -9547,6 +9583,7 @@ function setTab(tab: Tab) {
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
           <span><b>{{ t(section.key) }}</b><small>{{ sectionHint(section) }}</small></span>
           <span class="section-summary-text">{{ sectionSummaryText(section) }}</span>
+          <span v-if="state.settings.show_micronutrients && section.key !== 'activity'" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
           <span class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
@@ -9619,8 +9656,19 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
+      <div class="diary-date-sticky-bar">
+        <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('back')" :title="t('back')" @click="moveSelectedDate(-1)" v-html="lucideSvg('chevronLeft')"></button>
+        <div class="diary-date-sticky-copy">
+          <small>{{ selectedDate }}</small>
+          <b>{{ selectedDiaryDateLabel }}</b>
+        </div>
+        <div class="diary-date-sticky-actions">
+          <button class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="analysisOpen = true" v-html="lucideSvg('chartPie')"></button>
+          <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('next')" :title="t('next')" @click="moveSelectedDate(1)" v-html="lucideSvg('chevronRight')"></button>
+        </div>
+      </div>
+
       <article class="card">
-        <div class="diary-title-row"><h2>{{ selectedDate }}</h2><button class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="analysisOpen = true" v-html="lucideSvg('chartPie')"></button></div>
         <div class="diary-stats">
           <div :class="['kcal-stat', diaryKcalTone]"><span>{{ t('supplied') }}</span><b>{{ consumedKcal }} / {{ dailyGoal }} kcal</b><small v-if="calorieDeficitEnabled">{{ t('effectiveLimit') }} {{ effectiveDailyGoal }} kcal</small></div>
           <div><span>{{ t('burned') }}</span><b>{{ burnedKcal }} kcal</b></div>
@@ -9632,21 +9680,25 @@ function setTab(tab: Tab) {
           <span><b>{{ selectedDayMacroSummary.fat }}</b>/<em>{{ selectedDayMacroSummary.fatGoal }}</em> {{ t('fat') }}</span>
           <span><b>{{ selectedDayMacroSummary.protein }}</b>/<em>{{ selectedDayMacroSummary.proteinGoal }}</em> {{ t('protein') }}</span>
         </div>
-        <details class="today-nutrients-dropdown">
+        <details v-if="state.settings.show_micronutrients" class="today-nutrients-dropdown">
           <summary>
-            <span>{{ t('todayNutrients') }}</span>
-            <b v-if="exceededNutrientCount" class="nutrient-warning-badge">! {{ exceededNutrientCount }}</b>
+            <span class="today-nutrients-summary-main">
+              <span>{{ t('todayNutrients') }}</span>
+              <b v-if="exceededNutrientCount" class="nutrient-warning-badge">! {{ exceededNutrientCount }}</b>
+            </span>
+            <span class="today-nutrients-summary-meta">
+              <span class="today-nutrients-chevron" v-html="lucideSvg('chevronDown')"></span>
+            </span>
           </summary>
-          <div class="today-nutrient-list">
+          <div v-if="selectedDayNutrientRows.length" class="today-nutrient-list">
             <div v-for="row in selectedDayNutrientRows" :key="row.key" class="today-nutrient-row" :class="{ over: row.isOver }">
-              <div class="today-nutrient-copy">
-                <b>{{ row.label }}</b>
-                <small>{{ formatNutrientAmount(row.value, row.unit) }} / {{ formatNutrientAmount(row.limit, row.unit) }} · {{ t(row.limitKind === 'max' ? 'dailyLimit' : 'dailyTarget') }}</small>
-              </div>
+              <b>{{ row.label }}</b>
+              <span class="today-nutrient-row-value">{{ formatNutrientAmount(row.value, row.unit) }} / {{ formatNutrientAmount(row.limit, row.unit) }}</span>
+              <small>{{ t(row.limitKind === 'max' ? 'dailyLimit' : 'dailyTarget') }}</small>
               <span v-if="row.isOver" class="nutrient-row-alert">!</span>
-              <div class="today-nutrient-meter"><span :style="{ width: `${Math.min(100, Math.round(row.progress * 100))}%` }"></span></div>
             </div>
           </div>
+          <p v-else class="today-nutrient-empty">{{ t('noNutrientsLogged') }}</p>
         </details>
         <div v-if="editingDayWeight" class="inline-form day-weight-form">
           <input v-model.number="weightInput" class="input" type="number" min="1" step="0.1" :placeholder="t('weightForThisDay')"  @focus="selectNumberInput"  @pointerdown="clearNumberInputOnDoubleTap"  inputmode="decimal" />
@@ -9671,6 +9723,7 @@ function setTab(tab: Tab) {
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
           <span><b>{{ t(section.key) }}</b><small>{{ section.key === 'activity' ? `${activitiesForSection().length} ${t('activities')}` : `${entriesForSection(section).length} ${t('entries')}` }}</small></span>
           <span class="section-summary-text">{{ sectionSummaryText(section) }}</span>
+          <span v-if="state.settings.show_micronutrients && section.key !== 'activity'" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
           <span v-if="selectedDayUnlocked" class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
@@ -10061,7 +10114,7 @@ function setTab(tab: Tab) {
                 <label class="field-label">{{ t('protein') }}<input v-model.number="localCatalogForm.protein_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
               </div>
             </div>
-            <details class="optional-nutrients-panel" open>
+            <details v-if="state.settings.show_micronutrients" class="optional-nutrients-panel" open>
               <summary><span>{{ t('optionalNutrients') }}</span><small>{{ t('optionalNutrientsHint') }}</small></summary>
               <div class="form-grid-two">
                 <label v-for="nutrient in optionalNutrientDefinitions" :key="nutrient.key" class="field-label">{{ t(nutrient.labelKey) }} / 100g
@@ -10215,6 +10268,24 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="mealNutrientsDialog && state.settings.show_micronutrients" class="dialog-backdrop" @click.self="mealNutrientsDialog = null">
+        <article class="settings-dialog meal-micronutrients-dialog">
+          <div class="dialog-title-row"><h2>{{ t('mealMicronutrients') }} · {{ t(mealNutrientsDialog) }}</h2><button class="text-button" @click="mealNutrientsDialog = null">{{ t('close') }}</button></div>
+          <div v-if="selectedMealNutrientRows.length" class="today-nutrient-list meal-micronutrient-list">
+            <div v-for="row in selectedMealNutrientRows" :key="`meal-nutrient-${row.key}`" class="today-nutrient-row" :class="{ over: row.isOver }">
+              <b>{{ row.label }}</b>
+              <span class="today-nutrient-row-value">{{ formatNutrientAmount(row.value, row.unit) }} / {{ formatNutrientAmount(row.limit, row.unit) }}</span>
+              <small>{{ t(row.limitKind === 'max' ? 'dailyLimit' : 'dailyTarget') }}</small>
+              <span v-if="row.isOver" class="nutrient-row-alert">!</span>
+            </div>
+          </div>
+          <p v-else class="today-nutrient-empty">{{ t('noNutrientsLogged') }}</p>
+          <p v-if="selectedMealNutrientExceededCount" class="helper big">! {{ selectedMealNutrientExceededCount }} {{ t('exceeded') }}</p>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <section v-if="settingsOpen" class="settings-screen app-overlay">
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
@@ -10224,6 +10295,7 @@ function setTab(tab: Tab) {
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('activity')"></span><b>{{ t('showActivity') }}</b><input v-model="state.settings.show_activity_tracking" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('macros')"></span><b>{{ t('showMacros') }}</b><input v-model="state.settings.show_meal_macros" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('showMicros') }}</b><input v-model="state.settings.show_micronutrients" type="checkbox" /></label>
+        <button v-if="state.settings.show_micronutrients" class="settings-row" @click="settingsDialog = 'micronutrients'"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('micronutrientLimits') }}</b><small>{{ t('micronutrientLimitsHint') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'language'"><span class="settings-row-icon" v-html="settingsIcon('language')"></span><b>{{ t('language') }}</b><small>{{ selectedLanguageLabel() }}</small></button>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('reminder')"></span><b>{{ t('dailyReminder') }}</b><input v-model="state.settings.daily_reminder" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
         <div class="settings-divider"></div>
@@ -10292,6 +10364,17 @@ function setTab(tab: Tab) {
               </section>
             </div>
             <div class="dialog-actions"><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></div>
+          </template>
+          <template v-else-if="settingsDialog === 'micronutrients'">
+            <div class="dialog-title-row tracking-dialog-title"><h2>{{ t('micronutrientLimits') }}</h2><button class="info-button" type="button" :aria-label="t('micronutrientLimits')" @click="micronutrientInfoOpen = !micronutrientInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button></div>
+            <p v-if="micronutrientInfoOpen" class="helper big micronutrient-info-copy">{{ t('micronutrientDefaultsInfo') }}</p>
+            <div class="micronutrient-limit-list">
+              <label v-for="nutrient in optionalNutrientDefinitions" :key="`limit-${nutrient.key}`" class="micronutrient-limit-row">
+                <span><b>{{ t(nutrient.labelKey) }}</b><small>{{ t(nutrient.limitKind === 'max' ? 'dailyLimit' : 'dailyTarget') }} · {{ t('defaultValue') }} {{ formatNutrientAmount(nutrient.dailyLimit, nutrient.unit) }}</small></span>
+                <input :value="micronutrientLimit(nutrient)" class="input" type="number" min="0" step="0.1" inputmode="decimal" @input="setMicronutrientLimitFromEvent(nutrient, $event)" />
+              </label>
+            </div>
+            <div class="dialog-actions"><button class="text-button" @click="resetMicronutrientLimits">{{ t('resetMicronutrients') }}</button><button class="filled-button" @click="settingsDialog = null">{{ t('ok') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'privacy'"><h2>{{ t('privacy') }}</h2><p class="helper big">{{ t('privacyBody') }}</p><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></template>
           <template v-else-if="settingsDialog === 'licenses'">

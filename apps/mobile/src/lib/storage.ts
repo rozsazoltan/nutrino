@@ -78,6 +78,21 @@ export function defaultPairing(): PairingConfig {
 }
 
 
+
+export const DEFAULT_MICRONUTRIENT_LIMITS: Record<string, number> = {
+  sugars_per_100g: 50,
+  fiber_per_100g: 30,
+  salt_per_100g: 5,
+  saturated_fat_per_100g: 20,
+  sodium_mg_per_100g: 2300,
+  calcium_mg_per_100g: 1000,
+  iron_mg_per_100g: 18,
+  potassium_mg_per_100g: 3500,
+  vitamin_d_mcg_per_100g: 20,
+  vitamin_b12_mcg_per_100g: 2.4,
+  magnesium_mg_per_100g: 400,
+};
+
 export function defaultSettings(): AppSettings {
   return {
     language: 'system',
@@ -86,6 +101,7 @@ export function defaultSettings(): AppSettings {
     show_activity_tracking: true,
     show_meal_macros: true,
     show_micronutrients: false,
+    micronutrient_limits: { ...DEFAULT_MICRONUTRIENT_LIMITS },
     daily_reminder: false,
     weekly_weight_average_enabled: false,
     daily_weight_reminder_enabled: false,
@@ -169,6 +185,10 @@ export function loadState(): AppState {
       calorie_limit_warning_enabled: storedSettings.calorie_limit_warning_enabled === true,
       target_deficit_kcal: Number.isFinite(Number(storedSettings.target_deficit_kcal)) ? Number(storedSettings.target_deficit_kcal) : defaults.settings.target_deficit_kcal,
       exercise_kcal_eatback_percent: Number.isFinite(Number(storedSettings.exercise_kcal_eatback_percent)) ? Number(storedSettings.exercise_kcal_eatback_percent) : defaults.settings.exercise_kcal_eatback_percent,
+      micronutrient_limits: {
+        ...DEFAULT_MICRONUTRIENT_LIMITS,
+        ...(storedSettings.micronutrient_limits && typeof storedSettings.micronutrient_limits === 'object' ? Object.fromEntries(Object.entries(storedSettings.micronutrient_limits).filter(([, value]) => Number.isFinite(Number(value))).map(([key, value]) => [key, Math.max(0, Number(value))])) : {}),
+      },
     };
 
     return {

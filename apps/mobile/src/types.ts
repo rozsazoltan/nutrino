@@ -257,6 +257,7 @@ export interface AppSettings {
   show_activity_tracking: boolean;
   show_meal_macros: boolean;
   show_micronutrients: boolean;
+  micronutrient_limits: Record<string, number>;
   daily_reminder: boolean;
   weekly_weight_average_enabled: boolean;
   daily_weight_reminder_enabled: boolean;

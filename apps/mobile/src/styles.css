@@ -3026,25 +3026,94 @@ select:focus {
   pointer-events: none;
 }
 
-/* v0.12.12 daily optional nutrient tracking */
+/* v0.12.13 compact nutrient dropdown and sticky diary day rail */
+.diary-date-sticky-bar {
+  position: sticky;
+  top: calc(var(--statusbar-guard) + 4px);
+  z-index: 9;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 0;
+  padding: 8px 16px;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 74%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 20px color-mix(in srgb, #000 10%, transparent);
+}
+.diary-date-sticky-copy {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  line-height: 1.05;
+}
+.diary-date-sticky-copy small {
+  color: var(--on-surface-variant);
+  font-size: .68rem;
+  font-weight: 900;
+}
+.diary-date-sticky-copy b {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .88rem;
+}
+.diary-date-sticky-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.diary-date-nav-button,
+.diary-date-sticky-bar .analysis-open-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+}
 .today-nutrients-dropdown {
   margin: 0 16px 14px;
-  border: 1px solid var(--outline-variant);
-  border-radius: 18px;
-  background: var(--surface-container-high);
-  overflow: hidden;
+  border-top: 1px solid var(--outline-variant);
+  border-bottom: 1px solid var(--outline-variant);
 }
 .today-nutrients-dropdown > summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 13px 14px;
+  padding: 10px 0;
   cursor: pointer;
   font-weight: 900;
   list-style: none;
 }
 .today-nutrients-dropdown > summary::-webkit-details-marker { display: none; }
+.today-nutrients-summary-main,
+.today-nutrients-summary-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.today-nutrients-summary-meta {
+  color: var(--on-surface-variant);
+}
+.today-nutrients-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  transition: transform .18s ease;
+}
+.today-nutrients-dropdown[open] .today-nutrients-chevron {
+  transform: rotate(180deg);
+}
+.today-nutrients-chevron svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+}
 .today-nutrients-dropdown small,
 .optional-nutrients-panel small,
 .nutrient-form-section small {
@@ -3055,55 +3124,49 @@ select:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 30px;
-  min-height: 26px;
-  padding: 3px 8px;
+  min-width: 26px;
+  min-height: 22px;
+  padding: 2px 7px;
   border-radius: 999px;
   background: var(--error-container);
   color: var(--on-error-container);
+  font-size: .78rem;
 }
 .today-nutrient-list {
   display: grid;
-  gap: 9px;
-  padding: 0 14px 14px;
+  padding-bottom: 8px;
 }
 .today-nutrient-row {
   display: grid;
-  gap: 7px;
-  border-radius: 14px;
-  background: var(--surface);
-  border: 1px solid var(--outline-variant);
-  padding: 10px;
-}
-.today-nutrient-row.over {
-  border-color: color-mix(in srgb, var(--error) 52%, var(--outline-variant));
-  background: color-mix(in srgb, var(--error-container) 42%, var(--surface));
-}
-.today-nutrient-line {
-  display: flex;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  min-height: 34px;
+  padding: 4px 0;
+  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 58%, transparent);
 }
-.today-nutrient-line b { font-size: .9rem; }
-.today-nutrient-line small { color: var(--on-surface-variant); font-weight: 900; }
-.today-nutrient-over { color: var(--error); font-weight: 1000; }
-.today-nutrient-meter {
-  height: 8px;
-  border-radius: 999px;
+.today-nutrient-row:first-child {
+  border-top: 0;
+}
+.today-nutrient-row b {
+  min-width: 0;
   overflow: hidden;
-  background: var(--surface-container-highest);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .9rem;
 }
-.today-nutrient-meter span {
-  display: block;
-  height: 100%;
-  width: var(--value, 0%);
-  border-radius: inherit;
-  background: var(--primary);
+.today-nutrient-row-value {
+  font-weight: 900;
+  white-space: nowrap;
 }
-.today-nutrient-row.over .today-nutrient-meter span { background: var(--error); }
+.today-nutrient-row.over b,
+.today-nutrient-row.over .today-nutrient-row-value,
+.today-nutrient-row.over .nutrient-row-alert {
+  color: var(--error);
+}
 .today-nutrient-empty {
   margin: 0;
+  padding: 0 0 10px;
   color: var(--on-surface-variant);
   font-weight: 800;
 }
@@ -3135,17 +3198,89 @@ select:focus {
 @media (min-width: 520px) {
   .optional-nutrients-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-.today-nutrient-copy {
-  display: grid;
-  gap: 3px;
-}
-.today-nutrient-copy b { font-size: .9rem; }
-.today-nutrient-copy small { color: var(--on-surface-variant); font-weight: 900; }
 .nutrient-row-alert {
-  position: absolute;
-  top: 10px;
-  right: 10px;
   color: var(--error);
   font-weight: 1000;
 }
-.today-nutrient-row { position: relative; }
+@media (max-width: 420px) {
+  .diary-date-sticky-bar {
+    padding-inline: 12px;
+    gap: 6px;
+  }
+  .today-nutrients-summary-meta small,
+  .today-nutrient-row small {
+    display: none;
+  }
+  .today-nutrient-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+}
+
+/* v0.12.14 mobile micronutrient settings and meal-level nutrient viewer */
+.meal-micro-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-container) 76%, transparent);
+  color: var(--on-primary-container);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
+}
+.meal-micro-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+}
+.meal-micro-button:active {
+  transform: scale(.96);
+}
+.meal-micronutrients-dialog {
+  display: grid;
+  gap: 12px;
+}
+.meal-micronutrient-list {
+  padding-bottom: 0;
+}
+.micronutrient-limit-list {
+  display: grid;
+  gap: 10px;
+}
+.micronutrient-limit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 128px);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 60%, transparent);
+}
+.micronutrient-limit-row:first-child {
+  border-top: 0;
+}
+.micronutrient-limit-row span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.micronutrient-limit-row b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.micronutrient-limit-row small,
+.micronutrient-info-copy {
+  color: var(--on-surface-variant);
+}
+.micronutrient-limit-row .input {
+  margin: 0;
+  min-height: 42px;
+}
+@media (max-width: 420px) {
+  .meal-header {
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  }
+  .micronutrient-limit-row {
+    grid-template-columns: minmax(0, 1fr) 94px;
+  }
+}
