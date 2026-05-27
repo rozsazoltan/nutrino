@@ -841,6 +841,8 @@ onMounted(() => {
   window.addEventListener('popstate', handleBackNavigation);
   window.addEventListener('nutrino:android-back', handleNativeAndroidBack);
   window.addEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
+  (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = true;
+  consumeNativePendingNotificationAction();
   void installWindowCloseGuard();
   void refreshNotificationPermissionStatus();
   void initializeNotifications();
@@ -859,6 +861,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('popstate', handleBackNavigation);
   window.removeEventListener('nutrino:android-back', handleNativeAndroidBack);
   window.removeEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
+  (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = false;
   uninstallWindowCloseGuard();
   if (healthTimer) window.clearInterval(healthTimer);
   if (reminderTimer) window.clearInterval(reminderTimer);
@@ -7212,6 +7215,9 @@ const localRecipeNutritionPreview = computed(() => {
   let sugars = 0;
   let fiber = 0;
   let salt = 0;
+  let hasSugars = false;
+  let hasFiber = false;
+  let hasSalt = false;
   const optionalNutrients: Record<string, number> = {};
   for (const row of localRecipeItems.value) {
     const item = localRecipeRowItem(row);
@@ -7222,9 +7228,21 @@ const localRecipeNutritionPreview = computed(() => {
     carbs += Number(item.carbs_per_100g || 0) * amount / 100;
     fat += Number(item.fat_per_100g || 0) * amount / 100;
     protein += Number(item.protein_per_100g || 0) * amount / 100;
-    sugars += Number(item.sugars_per_100g || 0) * amount / 100;
-    fiber += Number(item.fiber_per_100g || 0) * amount / 100;
-    salt += Number(item.salt_per_100g || 0) * amount / 100;
+    const sugarValue = nullableNonNegativeNumber(item.sugars_per_100g);
+    if (sugarValue !== null) {
+      sugars += sugarValue * amount / 100;
+      hasSugars = true;
+    }
+    const fiberValue = nullableNonNegativeNumber(item.fiber_per_100g);
+    if (fiberValue !== null) {
+      fiber += fiberValue * amount / 100;
+      hasFiber = true;
+    }
+    const saltValue = nullableNonNegativeNumber(item.salt_per_100g);
+    if (saltValue !== null) {
+      salt += saltValue * amount / 100;
+      hasSalt = true;
+    }
     for (const [key, rawValue] of Object.entries(item.optional_nutrients || {})) {
       const value = Number(rawValue || 0);
       if (Number.isFinite(value)) optionalNutrients[key] = (optionalNutrients[key] || 0) + value * amount / 100;
@@ -7249,9 +7267,9 @@ const localRecipeNutritionPreview = computed(() => {
     carbsPer100g: roundOne(carbs * ratio),
     fatPer100g: roundOne(fat * ratio),
     proteinPer100g: roundOne(protein * ratio),
-    sugarsPer100g: roundOne(sugars * ratio),
-    fiberPer100g: roundOne(fiber * ratio),
-    saltPer100g: roundOne(salt * ratio),
+    sugarsPer100g: hasSugars ? roundOne(sugars * ratio) : null,
+    fiberPer100g: hasFiber ? roundOne(fiber * ratio) : null,
+    saltPer100g: hasSalt ? roundOne(salt * ratio) : null,
     optionalNutrients: Object.fromEntries(Object.entries(optionalNutrients).map(([key, value]) => [key, roundOne(value * ratio)])),
   };
 });
@@ -7922,9 +7940,9 @@ type CustomRecipeTotals = {
   carbs: number;
   fat: number;
   protein: number;
-  sugars: number;
-  fiber: number;
-  salt: number;
+  sugars: number | null;
+  fiber: number | null;
+  salt: number | null;
   optionalNutrients: Record<string, number>;
   components: Array<{ key: string; food_id: string; amount_g: number; base_amount_g: number }>;
 };
@@ -7945,6 +7963,9 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
   let sugars = 0;
   let fiber = 0;
   let salt = 0;
+  let hasSugars = false;
+  let hasFiber = false;
+  let hasSalt = false;
   const optionalNutrients: Record<string, number> = {};
   const components: Array<{ key: string; food_id: string; amount_g: number; base_amount_g: number }> = [];
 
@@ -7956,9 +7977,21 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
     carbs += Number(row.food.carbs_per_100g || 0) * amount / 100;
     fat += Number(row.food.fat_per_100g || 0) * amount / 100;
     protein += Number(row.food.protein_per_100g || 0) * amount / 100;
-    sugars += Number(row.food.sugars_per_100g || 0) * amount / 100;
-    fiber += Number(row.food.fiber_per_100g || 0) * amount / 100;
-    salt += Number(row.food.salt_per_100g || 0) * amount / 100;
+    const sugarValue = nullableNonNegativeNumber(row.food.sugars_per_100g);
+    if (sugarValue !== null) {
+      sugars += sugarValue * amount / 100;
+      hasSugars = true;
+    }
+    const fiberValue = nullableNonNegativeNumber(row.food.fiber_per_100g);
+    if (fiberValue !== null) {
+      fiber += fiberValue * amount / 100;
+      hasFiber = true;
+    }
+    const saltValue = nullableNonNegativeNumber(row.food.salt_per_100g);
+    if (saltValue !== null) {
+      salt += saltValue * amount / 100;
+      hasSalt = true;
+    }
     for (const [key, rawValue] of Object.entries(row.food.optional_nutrients || {})) {
       const value = Number(rawValue || 0);
       if (Number.isFinite(value)) optionalNutrients[key] = (optionalNutrients[key] || 0) + value * amount / 100;
@@ -7979,9 +8012,9 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
     carbs,
     fat,
     protein,
-    sugars,
-    fiber,
-    salt,
+    sugars: hasSugars ? sugars : null,
+    fiber: hasFiber ? fiber : null,
+    salt: hasSalt ? salt : null,
     optionalNutrients,
     components,
   };
@@ -8001,9 +8034,9 @@ function buildCustomRecipeSnapshot(base: Food): Food {
     carbs_per_100g: totals.carbs * ratio,
     fat_per_100g: totals.fat * ratio,
     protein_per_100g: totals.protein * ratio,
-    sugars_per_100g: totals.sugars * ratio,
-    fiber_per_100g: totals.fiber * ratio,
-    salt_per_100g: totals.salt * ratio,
+    sugars_per_100g: totals.sugars === null ? null : totals.sugars * ratio,
+    fiber_per_100g: totals.fiber === null ? null : totals.fiber * ratio,
+    salt_per_100g: totals.salt === null ? null : totals.salt * ratio,
     optional_nutrients: Object.fromEntries(Object.entries(totals.optionalNutrients).map(([key, value]) => [key, value * ratio])),
     recipe_components: totals.components,
     recipe_extra_kcal: totals.extraKcal,
@@ -8562,12 +8595,14 @@ function buildNotificationOptions(options: {
   if (options.schedule) notification.schedule = options.schedule;
   if (isTauriRuntime() && isAndroidRuntime()) notification.channelId = NOTIFICATION_CHANNEL_ID;
   if (options.kind) {
+    const actionMetadata = notificationActionMetadata(options.kind, options.mealType);
     notification.extra = {
       nutrino: true,
       kind: options.kind,
       mealType: options.mealType,
       scheduledTime: options.scheduledTime,
-    } satisfies NutrinoNotificationExtra;
+      ...actionMetadata,
+    } satisfies NutrinoNotificationExtra & { actionId?: NutrinoNotificationAction; actionTitle?: string };
   }
   if (isTauriRuntime() && isAndroidRuntime()) {
     (notification as NotificationOptions & { sourceJson?: string }).sourceJson = JSON.stringify(notification);
@@ -8612,38 +8647,59 @@ function mealNotificationActionType(mealType: MealType): string {
   return NOTIFICATION_ACTION_TYPES.mealBreakfast;
 }
 
+function mealNotificationActionId(mealType: MealType): NutrinoNotificationAction {
+  if (mealType === 'lunch') return 'log-lunch';
+  if (mealType === 'dinner') return 'log-dinner';
+  return 'log-breakfast';
+}
+
+function mealNotificationActionLabel(mealType: MealType): string {
+  if (activeLanguage.value === 'hu') {
+    if (mealType === 'lunch') return 'Ebéd felvitele';
+    if (mealType === 'dinner') return 'Vacsora felvitele';
+    return 'Reggeli felvitele';
+  }
+  if (mealType === 'lunch') return 'Log lunch';
+  if (mealType === 'dinner') return 'Log dinner';
+  return 'Log breakfast';
+}
+
+function weightNotificationActionLabel(): string {
+  return activeLanguage.value === 'hu' ? 'Súly rögzítése' : 'Log weight';
+}
+
+function notificationActionMetadata(kind?: NutrinoNotificationKind, mealType?: MealType): { actionId?: NutrinoNotificationAction; actionTitle?: string } {
+  if (kind === 'weight') return { actionId: 'log-weight', actionTitle: weightNotificationActionLabel() };
+  if (kind === 'meal' && mealType) return { actionId: mealNotificationActionId(mealType), actionTitle: mealNotificationActionLabel(mealType) };
+  if (kind === 'deficit') return { actionId: 'open-analysis', actionTitle: notificationActionTitle('openAnalysis', 'Open analysis') };
+  return {};
+}
+
 async function registerNotificationActionTypes() {
   if (!shouldAttachNativeNotificationActions()) return;
   await registerActionTypes([
     {
-      id: NOTIFICATION_ACTION_TYPES.daily,
-      actions: [
-        { id: 'open-home', title: notificationActionTitle('notificationActionOpen', 'Open'), requiresAuthentication: false, foreground: true },
-        { id: 'log-breakfast', title: notificationActionTitle('notificationActionLogMeal', 'Log meal'), requiresAuthentication: false, foreground: true },
-      ],
-    },
-    {
       id: NOTIFICATION_ACTION_TYPES.weight,
       actions: [
-        { id: 'log-weight', title: notificationActionTitle('notificationActionLogWeight', 'Log weight'), requiresAuthentication: false, foreground: true },
+        { id: 'log-weight', title: weightNotificationActionLabel(), requiresAuthentication: false, foreground: true },
       ],
     },
     {
       id: NOTIFICATION_ACTION_TYPES.mealBreakfast,
       actions: [
-        { id: 'log-breakfast', title: notificationActionTitle('breakfast', 'Breakfast'), requiresAuthentication: false, foreground: true },
+        { id: 'log-breakfast', title: mealNotificationActionLabel('breakfast'), requiresAuthentication: false, foreground: true },
       ],
     },
     {
       id: NOTIFICATION_ACTION_TYPES.mealLunch,
       actions: [
-        { id: 'log-lunch', title: notificationActionTitle('lunch', 'Lunch'), requiresAuthentication: false, foreground: true },
+        { id: 'log-lunch', title: mealNotificationActionLabel('lunch'), requiresAuthentication: false, foreground: true },
       ],
     },
     {
       id: NOTIFICATION_ACTION_TYPES.mealDinner,
       actions: [
-        { id: 'log-dinner', title: notificationActionTitle('dinner', 'Dinner'), requiresAuthentication: false, foreground: true },
+        { id: 'log-dinner', title: mealNotificationActionLabel('dinner'), requiresAuthentication: false, foreground: true },
       ],
     },
     {
@@ -8952,14 +9008,15 @@ function handleNotificationAction(payload: unknown) {
   if (!event) return;
   const notification = asRecord(event.notification);
   const sourceJson = parseNotificationJson(event.sourceJson) || parseNotificationJson(notification?.sourceJson);
-  const action = normalizeNotificationAction(
-    event.actionId
+  const sourceExtraRecord = asRecord(sourceJson?.extra) || asRecord(parseNotificationJson(sourceJson?.extra));
+  const rawAction = event.actionId
     ?? event.action
     ?? event.userAction
     ?? event.notificationUserAction
     ?? sourceJson?.actionId
-    ?? sourceJson?.action,
-  );
+    ?? sourceJson?.action;
+  const extraAction = sourceExtraRecord?.actionId ?? sourceExtraRecord?.action;
+  const action = normalizeNotificationAction(rawAction && rawAction !== 'tap' ? rawAction : extraAction ?? rawAction);
   const notificationId = numberFromNotificationValue(
     notification?.id
     ?? event.notificationId
@@ -8975,7 +9032,7 @@ function handleNotificationAction(payload: unknown) {
   };
   const signature = `${notificationId ?? 'unknown'}:${action}:${extra.kind ?? 'unknown'}:${extra.mealType ?? ''}`;
   const now = Date.now();
-  if (signature === lastNotificationActionSignature && now - lastNotificationActionHandledAt < 1500) return;
+  if (signature === lastNotificationActionSignature && now - lastNotificationActionHandledAt < 10000) return;
   lastNotificationActionSignature = signature;
   lastNotificationActionHandledAt = now;
   void applyNotificationAction(action, extra);

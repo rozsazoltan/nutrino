@@ -436,6 +436,13 @@ function num(value: string | undefined, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function optionalNum(value: string | undefined): number | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const parsed = Number(raw.replace(',', '.'));
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+}
+
 
 function parseCsvOptionalNutrients(row: Record<string, string>): Record<string, number> {
   const keys = [
@@ -536,7 +543,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
               note: row.note || row.description || null,
               default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
               kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
-              sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g), optional_nutrients: parseCsvOptionalNutrients(row),
+              sugars_per_100g: optionalNum(row.sugars_per_100g), fiber_per_100g: optionalNum(row.fiber_per_100g), salt_per_100g: optionalNum(row.salt_per_100g), optional_nutrients: parseCsvOptionalNutrients(row),
               updated_at: now, deleted_at: null,
               ...githubMetadata(ingredientMap.get(id)),
             } as Ingredient));
@@ -552,7 +559,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
                 note: row.note || row.description || null,
                 default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
                 kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
-                sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g), optional_nutrients: parseCsvOptionalNutrients(row),
+                sugars_per_100g: optionalNum(row.sugars_per_100g), fiber_per_100g: optionalNum(row.fiber_per_100g), salt_per_100g: optionalNum(row.salt_per_100g), optional_nutrients: parseCsvOptionalNutrients(row),
                 updated_at: now, deleted_at: null,
                 ...githubMetadata(ingredientMap.get(id)),
               } as Ingredient));
@@ -566,7 +573,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
                 note: row.note || row.description || null,
                 default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
                 kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
-                sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g), optional_nutrients: parseCsvOptionalNutrients(row), barcode: row.barcode || row.ean || row.upc || null,
+                sugars_per_100g: optionalNum(row.sugars_per_100g), fiber_per_100g: optionalNum(row.fiber_per_100g), salt_per_100g: optionalNum(row.salt_per_100g), optional_nutrients: parseCsvOptionalNutrients(row), barcode: row.barcode || row.ean || row.upc || null,
                 updated_at: now, deleted_at: null,
                 ...githubMetadata(foodMap.get(id)),
               }));
