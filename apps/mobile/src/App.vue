@@ -6,7 +6,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { readFile, writeFile } from '@tauri-apps/plugin-fs';
 import { isPermissionGranted, requestPermission as requestNativeNotificationPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import JSZip from 'jszip';
-import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, Food, Ingredient, Intake, LocalizedNameMap, MealType, Recipe, RecipeItem, WeightLog, GitHubCsvSource } from './types';
+import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, Ingredient, Intake, LocalizedNameMap, MealType, Recipe, RecipeItem, WeightLog, GitHubCsvSource } from './types';
 import {
   ageFromBirthday,
   bmi,
@@ -127,18 +127,20 @@ const catalogMenuOpen = ref(false);
 const localEditorOpen = ref(false);
 const localEditorKind = ref<LocalEditorKind>('food');
 const localEditorId = ref<string | null>(null);
+const localEditorDuplicate = ref(false);
 const localCatalogForm = reactive({
   name: '', name_i18n: {} as LocalizedNameMap, brand: '', note: '', barcode: '', default_unit: 'g', serving_size_g: null as number | null,
   kcal_per_100g: null as number | null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
   sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0,
   optional_nutrients: {} as Record<string, number | null>,
   description: '', total_weight_g: null as number | null, extra_kcal: 0 as number | null, servings_count: null as number | null,
-  code: '', activity_type: 'custom', met: 0, kcal_per_min: null as number | null,
+  code: '', activity_type: 'custom', met: 0, kcal_per_min: null as number | null, inactive: false,
 });
 const localRecipeItems = ref<LocalRecipeDraftItem[]>([]);
-const localRecipeCatalogOptions = computed(() => catalogItems(state).filter((item) => item.id !== `recipe:${localEditorId.value}`));
+const localRecipeCatalogOptions = computed(() => catalogItems(state).filter((item) => catalogItemVisible(item) && item.id !== `recipe:${localEditorId.value}`));
 const contentScrolled = ref(false);
 const syncBusy = ref(false);
+const catalogSourceCheckBusyId = ref('');
 const serverOnline = ref(false);
 const githubCatalogAvailable = computed(() => (state.githubSources || []).some((source) => source.enabled));
 const serverChecking = ref(false);
@@ -272,6 +274,8 @@ const settingsIconMap: Record<string, IconName> = {
   activity: 'activity',
   macros: 'chartPie',
   micros: 'flaskConical',
+  catalogProtect: 'shield',
+  catalogInactive: 'archiveRestore',
   language: 'languages',
   reminder: 'bell',
   export: 'upload',
@@ -516,7 +520,7 @@ function hasLocalEditorDraft(): boolean {
     localCatalogForm.kcal_per_min,
   ].some((value) => Math.abs(Number(value || 0)) > 0);
   const recipeDirty = localRecipeItems.value.some((row) => row.food_id || row.query.trim() || Number(row.amount_g || 0) > 0);
-  return textDirty || numberDirty || recipeDirty;
+  return textDirty || numberDirty || recipeDirty || localCatalogForm.inactive === true;
 }
 
 function confirmDiscardDirty(isDirty: boolean): boolean {
@@ -884,7 +888,11 @@ const macros = computed(() => [
 ]);
 const pendingCount = computed(() => 0);
 const weightPromptDue = computed(() => (state.settings.daily_weight_reminder_enabled || state.settings.weekly_weight_average_enabled) ? !latestWeightForDay(state.weightLogs, todayKey.value) : needsWeightPrompt(state.profile, state.weightLogs));
-const allCatalogItems = computed(() => catalogItems(state));
+function catalogItemVisible(item: { inactive?: boolean | null }) {
+  return state.settings.include_inactive_catalog_items || item.inactive !== true;
+}
+
+const allCatalogItems = computed(() => catalogItems(state).filter(catalogItemVisible));
 
 const latestIngredientUpdatedAt = computed(() => latestUpdatedAt(state.ingredients));
 const latestFoodUpdatedAt = computed(() => latestUpdatedAt(state.foods));
@@ -905,6 +913,121 @@ function catalogKindLabel(item: Food): string {
   if (item.id.startsWith('recipe:')) return t('recipe');
   return item.catalog_kind === 'ingredient' ? t('ingredient') : t('food');
 }
+
+function catalogItemKind(item: Food): LocalEditorKind {
+  if (item.id.startsWith('recipe:')) return 'recipe';
+  if (item.id.startsWith('ingredient:')) return 'ingredient';
+  return 'food';
+}
+
+function catalogItemRawId(item: Food): string {
+  if (item.id.startsWith('recipe:')) return item.id.slice('recipe:'.length);
+  if (item.id.startsWith('ingredient:')) return item.id.slice('ingredient:'.length);
+  return item.id;
+}
+
+function catalogSourceKind(item: { catalog_source_kind?: CatalogSourceKind | null; source_id?: string | null }): CatalogSourceKind {
+  const kind = item.catalog_source_kind;
+  if (kind === 'desktop' || kind === 'github' || kind === 'custom' || kind === 'qr') return kind;
+  const sourceId = String(item.source_id || '').trim();
+  if (sourceId.startsWith('github:')) return 'github';
+  if (sourceId.startsWith('mobile')) return 'custom';
+  return sourceId ? 'desktop' : 'custom';
+}
+
+function catalogSourceTitle(item: { catalog_source_kind?: CatalogSourceKind | null; source_id?: string | null; source_label?: string | null }) {
+  const label = String(item.source_label || '').trim();
+  const sourceId = String(item.source_id || '').trim();
+  const kind = catalogSourceKind(item);
+  if (kind === 'github') return `${t('sourceGithub')}: ${label || sourceId.replace(/^github:/, '')}`;
+  if (kind === 'desktop') return `${t('sourceDesktop')}: ${label || sourceId || t('sourceDesktop')}`;
+  if (kind === 'qr') return t('sourceQr');
+  return label || t('sourceCustom');
+}
+
+function catalogSourceBadgeClass(item: { catalog_source_kind?: CatalogSourceKind | null; source_id?: string | null }) {
+  return `source-${catalogSourceKind(item)}`;
+}
+
+function catalogItemIsExternal(item: { catalog_source_kind?: CatalogSourceKind | null; source_id?: string | null }) {
+  return catalogSourceKind(item) !== 'custom';
+}
+
+function catalogItemIsLocked(item: { locked?: boolean | null; catalog_source_kind?: CatalogSourceKind | null; source_id?: string | null }) {
+  if (item.locked === true) return true;
+  if (item.locked === false) return false;
+  return state.settings.protect_external_catalog_items && catalogItemIsExternal(item);
+}
+
+function catalogItemRecord(item: Food | ActivityDefinition): { kind: LocalEditorKind; id: string; record: Food | Ingredient | Recipe | ActivityDefinition } | null {
+  if ('kcal_per_100g' in item) {
+    const kind = catalogItemKind(item);
+    const id = catalogItemRawId(item);
+    if (kind === 'ingredient') {
+      const record = state.ingredients.find((entry) => entry.id === id);
+      return record ? { kind, id, record } : null;
+    }
+    if (kind === 'recipe') {
+      const record = state.recipes.find((entry) => entry.id === id);
+      return record ? { kind, id, record } : null;
+    }
+    const record = state.foods.find((entry) => entry.id === id);
+    return record ? { kind, id, record } : null;
+  }
+  const record = state.activities.find((entry) => entry.id === item.id);
+  return record ? { kind: 'activity', id: item.id, record } : null;
+}
+
+function patchCatalogRecord(kind: LocalEditorKind, id: string, patch: Partial<Food & Ingredient & Recipe & ActivityDefinition>, options: { touch?: boolean } = {}) {
+  const now = Date.now();
+  const touch = options.touch !== false;
+  const decorate = <T extends { id: string; updated_at: number; source_id?: string; catalog_source_kind?: CatalogSourceKind | null; pending_sync?: boolean }>(entry: T): T => ({
+    ...entry,
+    ...patch,
+    updated_at: touch ? now : entry.updated_at,
+    pending_sync: touch && catalogSourceKind(entry) === 'custom' ? true : entry.pending_sync,
+  });
+  if (kind === 'ingredient') state.ingredients = state.ingredients.map((entry) => entry.id === id ? decorate(entry) : entry);
+  else if (kind === 'food') state.foods = state.foods.map((entry) => entry.id === id ? decorate(entry) : entry);
+  else if (kind === 'recipe') state.recipes = state.recipes.map((entry) => entry.id === id ? decorate(entry) : entry);
+  else state.activities = state.activities.map((entry) => entry.id === id ? decorate(entry) : entry);
+}
+
+function toggleCatalogItemLock(item: Food | ActivityDefinition) {
+  const target = catalogItemRecord(item);
+  if (!target) return;
+  const locked = catalogItemIsLocked(target.record);
+  patchCatalogRecord(target.kind, target.id, { locked: !locked });
+  showToast(locked ? t('catalogItemUnlocked') : t('catalogItemLocked'));
+}
+
+function toggleCatalogItemInactive(item: Food | ActivityDefinition) {
+  const target = catalogItemRecord(item);
+  if (!target) return;
+  const inactive = target.record.inactive === true;
+  patchCatalogRecord(target.kind, target.id, { inactive: !inactive });
+  showToast(inactive ? t('catalogItemActivated') : t('catalogItemInactive'));
+}
+
+function sourceCheckedText(item: { source_checked_at?: number | null }) {
+  return item.source_checked_at ? `${t('checked')}: ${new Date(item.source_checked_at).toLocaleString()}` : '';
+}
+
+function catalogSourceFingerprint(value: unknown): string {
+  const ignored = new Set(['updated_at', 'source_checked_at', 'pending_sync']);
+  const normalize = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(normalize);
+    if (entry && typeof entry === 'object') {
+      return Object.fromEntries(Object.entries(entry as Record<string, unknown>)
+        .filter(([key]) => !ignored.has(key))
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, nested]) => [key, normalize(nested)]));
+    }
+    return entry;
+  };
+  return JSON.stringify(normalize(value));
+}
+
 function selectedFirst(items: Food[]) {
   const selected = selectedCatalogId.value;
   return [...items].sort((a, b) => {
@@ -973,7 +1096,7 @@ type CatalogSearchMatch = {
 
 const catalogSearchScopeOptions: CatalogSearchScope[] = ['title', 'all', 'brand', 'category', 'description'];
 
-function catalogItemKind(item: Food): string {
+function catalogSearchKindLabel(item: Food): string {
   return catalogKindLabel(item);
 }
 
@@ -981,7 +1104,7 @@ function catalogSearchFields(item: Food): CatalogSearchField[] {
   return [
     { scope: 'title', value: searchableLocalizedName(item), rank: 0, allowCompactContains: true },
     { scope: 'brand', value: item.brand ?? '', rank: 8, allowCompactContains: true },
-    { scope: 'category', value: catalogItemKind(item), rank: 12, allowCompactContains: true },
+    { scope: 'category', value: catalogSearchKindLabel(item), rank: 12, allowCompactContains: true },
     { scope: 'description', value: item.note ?? '', rank: 24, allowCompactContains: false },
   ];
 }
@@ -1107,8 +1230,9 @@ const visibleIngredientItems = computed(() => visibleCatalogItems.value.filter((
 const visibleFoodItems = computed(() => visibleCatalogItems.value.filter((item) => !item.id.startsWith('recipe:') && !item.id.startsWith('ingredient:') && item.id !== selectedCatalogId.value));
 const visibleActivities = computed(() => {
   const q = search.value.trim();
-  if (!q) return state.activities;
-  return state.activities.filter((item) => matchesSearchQuery(q, searchableLocalizedName(item), item.description, item.code, item.type, item.activity_type, activityType(item)));
+  const source = state.activities.filter(catalogItemVisible);
+  if (!q) return source;
+  return source.filter((item) => matchesSearchQuery(q, searchableLocalizedName(item), item.description, item.code, item.type, item.activity_type, activityType(item)));
 });
 const selectedCatalog = computed(() => findCatalogItem(state, selectedCatalogId.value));
 const selectedRecipeComponents = computed(() => recipeComponentRows(selectedCatalogId.value));
@@ -6508,10 +6632,10 @@ for (const [language, values] of Object.entries(completeMobileLanguageTranslatio
 }
 const mobileVisibleTextTranslations: Record<string, Record<string, string>> = {
   en: {
-    version: 'Version', todayNutrients: "Today's nutrients", mealMicronutrients: 'Meal micronutrients', dayMicronutrients: 'Day nutrients', noChartData: 'No chart data yet.', micronutrientLimits: 'Micronutrient limits', micronutrientLimitsHint: 'Daily thresholds used by the diary warnings.', micronutrientDefaultsInfo: 'Default values are practical adult reference values based on widely used nutrition labels and public health guidance: FDA-style Daily Values for vitamins and minerals, common upper-limit guidance for sodium, saturated fat and added/free sugars, and a 5 g salt reference. They are starting points only; adjust them to your personal plan when needed.', defaultValue: 'default', resetMicronutrients: 'Reset micronutrients', importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber'
+    version: 'Version', todayNutrients: "Today's nutrients", mealMicronutrients: 'Meal micronutrients', dayMicronutrients: 'Day nutrients', noChartData: 'No chart data yet.', micronutrientLimits: 'Micronutrient limits', micronutrientLimitsHint: 'Daily thresholds used by the diary warnings.', micronutrientDefaultsInfo: 'Default values are practical adult reference values based on widely used nutrition labels and public health guidance: FDA-style Daily Values for vitamins and minerals, common upper-limit guidance for sodium, saturated fat and added/free sugars, and a 5 g salt reference. They are starting points only; adjust them to your personal plan when needed.', defaultValue: 'default', resetMicronutrients: 'Reset micronutrients', importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber', copy: 'copy', sourceDesktop: 'Desktop server', sourceGithub: 'GitHub', sourceCustom: 'Custom item', sourceQr: 'QR import', checkSource: 'Check source', checked: 'checked', lock: 'Lock', unlock: 'Unlock', locked: 'locked', inactive: 'inactive', activate: 'Activate', markInactive: 'Mark inactive', inactiveCatalogItem: 'Inactive item', inactiveCatalogItemHint: 'Inactive items are hidden from normal catalog lists unless enabled in settings.', protectExternalCatalogItems: 'Protect imported catalog items', protectExternalCatalogItemsHint: 'Desktop, GitHub and QR items open as locked by default; duplicate them to edit safely.', includeInactiveCatalogItems: 'Show inactive catalog items', includeInactiveCatalogItemsHint: 'Include archived foods, ingredients, recipes and activities in pickers and lists.', catalogItemLocked: 'Catalog item locked.', catalogItemUnlocked: 'Catalog item unlocked.', catalogItemInactive: 'Catalog item marked inactive.', catalogItemActivated: 'Catalog item activated.', lockedCatalogDuplicateHint: 'Imported or locked items are duplicated before editing.', sourceCheckNoChange: 'Source check complete: no change found.', sourceCheckChanged: 'Source check complete: item was updated.', sourceCheckLocalOnly: 'This item is local, so there is no external source to check.'
   },
   hu: {
-    version: 'Verzió', todayNutrients: 'Mai tápanyagok', mealMicronutrients: 'Étkezés mikrotápanyagai', dayMicronutrients: 'Napi tápanyagok', noChartData: 'Még nincs diagram adat.', micronutrientLimits: 'Mikrotápanyag határértékek', micronutrientLimitsHint: 'A napi figyelmeztetésekhez használt határértékek.', micronutrientDefaultsInfo: 'Az alapértékek gyakorlati felnőtt referenciaértékek: vitaminoknál és ásványi anyagoknál elterjedt tápértékjelölési napi értékek, nátriumnál, telített zsírnál és cukornál közegészségügyi felső határ jellegű ajánlások, sónál 5 g-os referencia. Kiindulási értékek, szükség esetén igazítsd a saját tervedhez.', defaultValue: 'alap', resetMicronutrients: 'Mikrotápanyagok visszaállítása', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost'
+    version: 'Verzió', todayNutrients: 'Mai tápanyagok', mealMicronutrients: 'Étkezés mikrotápanyagai', dayMicronutrients: 'Napi tápanyagok', noChartData: 'Még nincs diagram adat.', micronutrientLimits: 'Mikrotápanyag határértékek', micronutrientLimitsHint: 'A napi figyelmeztetésekhez használt határértékek.', micronutrientDefaultsInfo: 'Az alapértékek gyakorlati felnőtt referenciaértékek: vitaminoknál és ásványi anyagoknál elterjedt tápértékjelölési napi értékek, nátriumnál, telített zsírnál és cukornál közegészségügyi felső határ jellegű ajánlások, sónál 5 g-os referencia. Kiindulási értékek, szükség esetén igazítsd a saját tervedhez.', defaultValue: 'alap', resetMicronutrients: 'Mikrotápanyagok visszaállítása', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost', copy: 'másolat', sourceDesktop: 'Desktop szerver', sourceGithub: 'GitHub', sourceCustom: 'Saját tétel', sourceQr: 'QR import', checkSource: 'Forrás ellenőrzése', checked: 'ellenőrizve', lock: 'Zárolás', unlock: 'Feloldás', locked: 'zárolt', inactive: 'inaktív', activate: 'Aktiválás', markInactive: 'Inaktívvá tétel', inactiveCatalogItem: 'Inaktív tétel', inactiveCatalogItemHint: 'Az inaktív tételek eltűnnek a normál listákból, amíg a beállításban nem kéred őket.', protectExternalCatalogItems: 'Importált katalógustételek védelme', protectExternalCatalogItemsHint: 'Desktop, GitHub és QR tételek alapból zároltan nyílnak; szerkesztéshez készíts másolatot.', includeInactiveCatalogItems: 'Inaktív katalógustételek megjelenítése', includeInactiveCatalogItemsHint: 'Archív ételek, alapanyagok, receptek és aktivitások megjelenítése listákban és választókban.', catalogItemLocked: 'Katalógustétel zárolva.', catalogItemUnlocked: 'Katalógustétel feloldva.', catalogItemInactive: 'Katalógustétel inaktívvá téve.', catalogItemActivated: 'Katalógustétel aktiválva.', lockedCatalogDuplicateHint: 'Az importált vagy zárolt tételeket szerkesztés előtt lemásolom.', sourceCheckNoChange: 'Forrásellenőrzés kész: nincs változás.', sourceCheckChanged: 'Forrásellenőrzés kész: a tétel frissült.', sourceCheckLocalOnly: 'Ez helyi tétel, nincs külső forrása.'
   },
   de: { version: 'Version' }, fr: { version: 'Version' }, ru: { version: 'Версия' }, uk: { version: 'Версія' }, zh: { version: '版本' }, sk: { version: 'Verzia' }, ro: { version: 'Versiune' }, cs: { version: 'Verze' }, sl: { version: 'Različica' }, hr: { version: 'Verzija' }, pl: { version: 'Wersja' }, es: { version: 'Versión' }, pt: { version: 'Versão' }
 };
@@ -6834,15 +6958,17 @@ function resetLocalCatalogForm() {
     kcal_per_100g: null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
     sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0, optional_nutrients: {},
     description: '', total_weight_g: null, extra_kcal: 0, servings_count: null,
-    code: '', activity_type: 'custom', met: 0, kcal_per_min: null,
+    code: '', activity_type: 'custom', met: 0, kcal_per_min: null, inactive: false,
   });
   localRecipeItems.value = [];
 }
 
-function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient | Recipe | ActivityDefinition) {
+function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient | Recipe | ActivityDefinition, options: { duplicate?: boolean } = {}) {
   catalogMenuOpen.value = false;
+  const duplicate = options.duplicate === true;
   localEditorKind.value = kind;
-  localEditorId.value = item?.id ? String(item.id).replace(/^ingredient:/, '').replace(/^recipe:/, '') : null;
+  localEditorId.value = duplicate ? null : item?.id ? String(item.id).replace(/^ingredient:/, '').replace(/^recipe:/, '') : null;
+  localEditorDuplicate.value = duplicate;
   resetLocalCatalogForm();
   if (kind === 'ingredient' || kind === 'food') {
     const entry = item as Food | Ingredient | undefined;
@@ -6862,6 +6988,7 @@ function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient 
       fiber_per_100g: entry?.fiber_per_100g ?? 0,
       salt_per_100g: entry?.salt_per_100g ?? 0,
       optional_nutrients: { ...(entry?.optional_nutrients ?? {}) },
+      inactive: duplicate ? false : entry?.inactive === true,
     });
   } else if (kind === 'recipe') {
     const recipe = item as Recipe | undefined;
@@ -6873,6 +7000,7 @@ function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient 
       total_weight_g: null,
       extra_kcal: recipe?.extra_kcal ?? 0,
       servings_count: recipe?.servings_count ?? null,
+      inactive: duplicate ? false : recipe?.inactive === true,
     });
     localRecipeItems.value = recipe
       ? state.recipeItems.filter((entry) => entry.recipe_id === recipe.id && !entry.deleted_at).map((entry) => createLocalRecipeDraftItem(entry.food_id, Number(entry.amount_g || 0)))
@@ -6889,6 +7017,7 @@ function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient 
       activity_type: activity?.activity_type || activity?.type || 'custom',
       met: activity?.met ?? 0,
       kcal_per_min: activity?.kcal_per_min ?? null,
+      inactive: duplicate ? false : activity?.inactive === true,
     });
   }
   localEditorOpen.value = true;
@@ -7069,7 +7198,10 @@ function localRecipeItemLabel(foodId: string): string {
 
 function requestCloseLocalEditor(confirmDirty: boolean | Event = true) {
   const shouldConfirm = typeof confirmDirty === 'boolean' ? confirmDirty : true;
-  if (!shouldConfirm || confirmDiscardDirty(hasLocalEditorDraft())) localEditorOpen.value = false;
+  if (!shouldConfirm || confirmDiscardDirty(hasLocalEditorDraft())) {
+    localEditorOpen.value = false;
+    localEditorDuplicate.value = false;
+  }
 }
 
 function saveLocalCatalogEditor() {
@@ -7077,9 +7209,18 @@ function saveLocalCatalogEditor() {
   if (!name) return showToast('Name is required.');
   const now = Date.now();
   const id = localEditorId.value || generateId(`${localEditorKind.value}-local`);
+  const catalogMeta = {
+    catalog_source_kind: 'custom' as const,
+    source_label: 'Custom',
+    source_url: null,
+    source_checked_at: null,
+    locked: false,
+    inactive: localCatalogForm.inactive === true,
+  };
   if (localEditorKind.value === 'ingredient') {
     const ingredient: Ingredient = {
       id, source_id: state.pairing.sourceId, name,
+      ...catalogMeta,
       name_i18n: { ...ensureLocalNameI18n() },
       note: localCatalogForm.note.trim() || null,
       default_unit: localCatalogForm.default_unit || 'g',
@@ -7098,6 +7239,7 @@ function saveLocalCatalogEditor() {
   } else if (localEditorKind.value === 'food') {
     const food: Food = {
       id, source_id: state.pairing.sourceId, name,
+      ...catalogMeta,
       name_i18n: { ...ensureLocalNameI18n() },
       brand: localCatalogForm.brand.trim() || null,
       catalog_kind: 'food',
@@ -7119,6 +7261,7 @@ function saveLocalCatalogEditor() {
   } else if (localEditorKind.value === 'recipe') {
     const recipe: Recipe = {
       id, source_id: state.pairing.sourceId, name,
+      ...catalogMeta,
       name_i18n: { ...ensureLocalNameI18n() },
       description: localCatalogForm.description.trim() || null,
       note: localCatalogForm.note.trim() || null,
@@ -7145,6 +7288,7 @@ function saveLocalCatalogEditor() {
   } else {
     const activity: ActivityDefinition = {
       id, source_id: state.pairing.sourceId,
+      ...catalogMeta,
       code: localCatalogForm.code.trim() || id,
       name,
       name_i18n: { ...ensureLocalNameI18n() },
@@ -7158,10 +7302,16 @@ function saveLocalCatalogEditor() {
     state.activities = [...state.activities.filter((entry) => entry.id !== id), activity].sort((a, b) => localizedName(a).localeCompare(localizedName(b), currentLocale()));
   }
   localEditorOpen.value = false;
+  localEditorDuplicate.value = false;
   showToast(t('localItemCreated'));
 }
 
 function editCatalogItem(item: Food) {
+  if (catalogItemIsLocked(item)) {
+    showToast(t('lockedCatalogDuplicateHint'));
+    duplicateCatalogItem(item);
+    return;
+  }
   if (item.id.startsWith('recipe:')) {
     const recipe = state.recipes.find((entry) => `recipe:${entry.id}` === item.id || entry.id === item.id.replace(/^recipe:/, ''));
     if (recipe) openLocalCatalogEditor('recipe', recipe);
@@ -7174,6 +7324,46 @@ function editCatalogItem(item: Food) {
   }
   const food = state.foods.find((entry) => entry.id === item.id);
   if (food) openLocalCatalogEditor('food', food);
+}
+
+function duplicateName(name: string) {
+  return `${name} (${t('copy')})`;
+}
+
+function catalogDuplicateDraft<T extends { name: string; name_i18n?: LocalizedNameMap | null }>(item: T): T {
+  return {
+    ...item,
+    name: duplicateName(localizedName(item) || item.name),
+    name_i18n: {},
+  };
+}
+
+function duplicateCatalogItem(item: Food) {
+  if (item.id.startsWith('recipe:')) {
+    const recipe = state.recipes.find((entry) => `recipe:${entry.id}` === item.id || entry.id === item.id.replace(/^recipe:/, ''));
+    if (recipe) openLocalCatalogEditor('recipe', catalogDuplicateDraft(recipe), { duplicate: true });
+    return;
+  }
+  if (item.id.startsWith('ingredient:')) {
+    const ingredient = state.ingredients.find((entry) => `ingredient:${entry.id}` === item.id || entry.id === item.id.replace(/^ingredient:/, ''));
+    if (ingredient) openLocalCatalogEditor('ingredient', catalogDuplicateDraft(ingredient), { duplicate: true });
+    return;
+  }
+  const food = state.foods.find((entry) => entry.id === item.id);
+  if (food) openLocalCatalogEditor('food', catalogDuplicateDraft(food), { duplicate: true });
+}
+
+function editActivityCatalogItem(activity: ActivityDefinition) {
+  if (catalogItemIsLocked(activity)) {
+    showToast(t('lockedCatalogDuplicateHint'));
+    duplicateActivityCatalogItem(activity);
+    return;
+  }
+  openLocalCatalogEditor('activity', activity);
+}
+
+function duplicateActivityCatalogItem(activity: ActivityDefinition) {
+  openLocalCatalogEditor('activity', catalogDuplicateDraft(activity), { duplicate: true });
 }
 
 function resetMealNoteForm() {
@@ -8654,6 +8844,35 @@ async function syncGitHubNow(force = true) {
   }
 }
 
+async function requestCatalogSourceCheck(item: Food | ActivityDefinition) {
+  const target = catalogItemRecord(item);
+  if (!target) return;
+  const kind = catalogSourceKind(target.record);
+  const beforeFingerprint = catalogSourceFingerprint(target.record);
+  catalogSourceCheckBusyId.value = item.id;
+  try {
+    if (kind === 'github') {
+      await syncGitHubNow(true);
+    } else if (kind === 'desktop') {
+      await syncNow({ quiet: true });
+    } else {
+      patchCatalogRecord(target.kind, target.id, { source_checked_at: Date.now() }, { touch: false });
+      showToast(t('sourceCheckLocalOnly'));
+      return;
+    }
+
+    const refreshed = catalogItemRecord(item)?.record;
+    const changed = refreshed ? catalogSourceFingerprint(refreshed) !== beforeFingerprint : false;
+    const refreshedTarget = catalogItemRecord(item);
+    if (refreshedTarget) patchCatalogRecord(refreshedTarget.kind, refreshedTarget.id, { source_checked_at: Date.now() }, { touch: false });
+    showToast(changed ? t('sourceCheckChanged') : t('sourceCheckNoChange'));
+  } catch (error) {
+    showToast(String(error));
+  } finally {
+    catalogSourceCheckBusyId.value = '';
+  }
+}
+
 async function syncGitHubDailyIfDue() {
   if (!state.githubSources?.some((source) => source.enabled)) return;
   await syncGitHubNow(false);
@@ -8683,11 +8902,23 @@ function importedCatalogDuplicate(kind: 'ingredient' | 'food' | 'recipe' | 'acti
   return state.foods.some(sameName);
 }
 
+function qrCatalogMetadata(now = Date.now()) {
+  return {
+    catalog_source_kind: 'qr' as const,
+    source_label: 'QR code',
+    source_url: null,
+    source_checked_at: now,
+    locked: null,
+    inactive: false,
+  };
+}
+
 function upsertScannedIngredient(item: any, now = Date.now()) {
   if (!item?.name) return;
   const ingredient: Ingredient = {
     id: String(item.id || generateId('ingredient')),
     source_id: state.pairing.sourceId,
+    ...qrCatalogMetadata(now),
     name: String(item.name),
     name_i18n: { ...(item.name_i18n ?? {}) },
     note: item.note ?? null,
@@ -8700,6 +8931,7 @@ function upsertScannedIngredient(item: any, now = Date.now()) {
     sugars_per_100g: Number(item.sugars_per_100g || 0),
     fiber_per_100g: Number(item.fiber_per_100g || 0),
     salt_per_100g: Number(item.salt_per_100g || 0),
+    optional_nutrients: { ...(item.optional_nutrients ?? {}) },
     updated_at: now,
     deleted_at: null,
     pending_sync: true,
@@ -8712,6 +8944,7 @@ function upsertScannedFood(item: any, now = Date.now()) {
   const food: Food = {
     id: String(item.id || generateId('food')),
     source_id: state.pairing.sourceId,
+    ...qrCatalogMetadata(now),
     name: String(item.name),
     name_i18n: { ...(item.name_i18n ?? {}) },
     brand: item.brand ?? null,
@@ -8725,6 +8958,7 @@ function upsertScannedFood(item: any, now = Date.now()) {
     sugars_per_100g: Number(item.sugars_per_100g || 0),
     fiber_per_100g: Number(item.fiber_per_100g || 0),
     salt_per_100g: Number(item.salt_per_100g || 0),
+    optional_nutrients: { ...(item.optional_nutrients ?? {}) },
     barcode: item.barcode ?? null,
     updated_at: now,
     deleted_at: null,
@@ -8738,6 +8972,7 @@ function upsertScannedRecipe(item: any, now = Date.now()) {
   const recipe: Recipe = {
     id: String(item.id || generateId('recipe')),
     source_id: state.pairing.sourceId,
+    ...qrCatalogMetadata(now),
     name: String(item.name),
     name_i18n: { ...(item.name_i18n ?? {}) },
     description: item.description ?? null,
@@ -8758,6 +8993,7 @@ function upsertScannedActivity(item: any, now = Date.now()) {
   const activity: ActivityDefinition = {
     id: String(item.id || generateId('activity')),
     source_id: state.pairing.sourceId,
+    ...qrCatalogMetadata(now),
     code: item.code || String(item.id || generateId('activity')),
     name: String(item.name),
     name_i18n: { ...(item.name_i18n ?? {}) },
@@ -9756,7 +9992,7 @@ function setTab(tab: Tab) {
               </div>
               <div class="entry-actions">
                 <button class="text-button" @click="openMealNoteDay(entry)">{{ t('openDay') }}</button>
-                <button class="text-button" @click="openNoteConversion(entry)">{{ t('convertToCatalogItem') }}</button>
+                <button class="text-button note-convert-button" @click="openNoteConversion(entry)"><span v-html="lucideSvg('utensils')"></span>{{ t('convertToCatalogItem') }}</button>
                 <button class="text-button" @click="keepMealNoteAsFinal(entry)">{{ t('keepAsNote') }}</button>
               </div>
             </div>
@@ -9908,21 +10144,21 @@ function setTab(tab: Tab) {
       </article>
       <template v-if="catalogSearchActive">
         <div v-if="catalogExactItems.length" class="search-result-heading">{{ t('exactMatches') }}</div>
-        <article v-for="item in catalogExactItems" :key="`exact-${item.id}`" class="card catalog-card">
-          <div><b>{{ itemTitle(item) }}</b><small>{{ item.brand || catalogKindLabel(item) }} · {{ Math.round(item.kcal_per_100g) }} kcal / 100g</small><small v-if="item.note" class="catalog-note">{{ item.note }}</small></div>
-          <div class="catalog-card-actions"><span>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)} g / db` : 'g' }}</span><button class="text-button" @click="editCatalogItem(item)">{{ t('edit') }}</button></div>
+        <article v-for="item in catalogExactItems" :key="`exact-${item.id}`" class="card catalog-card" :class="{ inactive: item.inactive === true, locked: catalogItemIsLocked(item) }">
+          <div class="catalog-card-main"><div class="catalog-title-line"><b>{{ itemTitle(item) }}</b><span v-if="item.inactive" class="catalog-status-chip inactive">{{ t('inactive') }}</span><span v-if="catalogItemIsLocked(item)" class="catalog-status-chip locked">{{ t('locked') }}</span></div><small>{{ item.brand || catalogKindLabel(item) }} · {{ Math.round(item.kcal_per_100g) }} kcal / 100g</small><small v-if="item.note" class="catalog-note">{{ item.note }}</small><div class="catalog-meta-row"><span class="catalog-source-chip" :class="catalogSourceBadgeClass(item)">{{ catalogSourceTitle(item) }}</span><small v-if="sourceCheckedText(item)">{{ sourceCheckedText(item) }}</small></div></div>
+          <div class="catalog-card-actions"><span>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)} g / db` : 'g' }}</span><div class="catalog-icon-actions"><button class="entry-icon-button" type="button" :aria-label="t('duplicate')" :title="t('duplicate')" @click="duplicateCatalogItem(item)" v-html="lucideSvg('copy')"></button><button class="entry-icon-button" type="button" :disabled="catalogSourceCheckBusyId === item.id" :aria-label="t('checkSource')" :title="t('checkSource')" @click="requestCatalogSourceCheck(item)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" type="button" :aria-label="catalogItemIsLocked(item) ? t('unlock') : t('lock')" :title="catalogItemIsLocked(item) ? t('unlock') : t('lock')" @click="toggleCatalogItemLock(item)" v-html="lucideSvg(catalogItemIsLocked(item) ? 'lock' : 'lockOpen')"></button><button class="entry-icon-button" type="button" :aria-label="item.inactive ? t('activate') : t('markInactive')" :title="item.inactive ? t('activate') : t('markInactive')" @click="toggleCatalogItemInactive(item)" v-html="lucideSvg(item.inactive ? 'eye' : 'eyeOff')"></button></div><button class="text-button" @click="editCatalogItem(item)">{{ t('edit') }}</button></div>
         </article>
         <div v-if="catalogSuggestedItems.length" class="search-result-heading suggested">{{ t('maybeYouMean') }}</div>
-        <article v-for="item in catalogSuggestedItems" :key="`suggested-${item.id}`" class="card catalog-card">
-          <div><b>{{ itemTitle(item) }}</b><small>{{ item.brand || catalogKindLabel(item) }} · {{ Math.round(item.kcal_per_100g) }} kcal / 100g</small><small v-if="item.note" class="catalog-note">{{ item.note }}</small></div>
-          <div class="catalog-card-actions"><span>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)} g / db` : 'g' }}</span><button class="text-button" @click="editCatalogItem(item)">{{ t('edit') }}</button></div>
+        <article v-for="item in catalogSuggestedItems" :key="`suggested-${item.id}`" class="card catalog-card" :class="{ inactive: item.inactive === true, locked: catalogItemIsLocked(item) }">
+          <div class="catalog-card-main"><div class="catalog-title-line"><b>{{ itemTitle(item) }}</b><span v-if="item.inactive" class="catalog-status-chip inactive">{{ t('inactive') }}</span><span v-if="catalogItemIsLocked(item)" class="catalog-status-chip locked">{{ t('locked') }}</span></div><small>{{ item.brand || catalogKindLabel(item) }} · {{ Math.round(item.kcal_per_100g) }} kcal / 100g</small><small v-if="item.note" class="catalog-note">{{ item.note }}</small><div class="catalog-meta-row"><span class="catalog-source-chip" :class="catalogSourceBadgeClass(item)">{{ catalogSourceTitle(item) }}</span><small v-if="sourceCheckedText(item)">{{ sourceCheckedText(item) }}</small></div></div>
+          <div class="catalog-card-actions"><span>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)} g / db` : 'g' }}</span><div class="catalog-icon-actions"><button class="entry-icon-button" type="button" :aria-label="t('duplicate')" :title="t('duplicate')" @click="duplicateCatalogItem(item)" v-html="lucideSvg('copy')"></button><button class="entry-icon-button" type="button" :disabled="catalogSourceCheckBusyId === item.id" :aria-label="t('checkSource')" :title="t('checkSource')" @click="requestCatalogSourceCheck(item)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" type="button" :aria-label="catalogItemIsLocked(item) ? t('unlock') : t('lock')" :title="catalogItemIsLocked(item) ? t('unlock') : t('lock')" @click="toggleCatalogItemLock(item)" v-html="lucideSvg(catalogItemIsLocked(item) ? 'lock' : 'lockOpen')"></button><button class="entry-icon-button" type="button" :aria-label="item.inactive ? t('activate') : t('markInactive')" :title="item.inactive ? t('activate') : t('markInactive')" @click="toggleCatalogItemInactive(item)" v-html="lucideSvg(item.inactive ? 'eye' : 'eyeOff')"></button></div><button class="text-button" @click="editCatalogItem(item)">{{ t('edit') }}</button></div>
         </article>
         <p v-if="!catalogHasSearchResults" class="empty-card">{{ t('noSyncedItems') }}</p>
       </template>
       <template v-else>
-        <article v-for="item in visibleCatalogItems" :key="item.id" class="card catalog-card">
-          <div><b>{{ itemTitle(item) }}</b><small>{{ item.brand || catalogKindLabel(item) }} · {{ Math.round(item.kcal_per_100g) }} kcal / 100g</small><small v-if="item.note" class="catalog-note">{{ item.note }}</small></div>
-          <div class="catalog-card-actions"><span>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)} g / db` : 'g' }}</span><button class="text-button" @click="editCatalogItem(item)">{{ t('edit') }}</button></div>
+        <article v-for="item in visibleCatalogItems" :key="item.id" class="card catalog-card" :class="{ inactive: item.inactive === true, locked: catalogItemIsLocked(item) }">
+          <div class="catalog-card-main"><div class="catalog-title-line"><b>{{ itemTitle(item) }}</b><span v-if="item.inactive" class="catalog-status-chip inactive">{{ t('inactive') }}</span><span v-if="catalogItemIsLocked(item)" class="catalog-status-chip locked">{{ t('locked') }}</span></div><small>{{ item.brand || catalogKindLabel(item) }} · {{ Math.round(item.kcal_per_100g) }} kcal / 100g</small><small v-if="item.note" class="catalog-note">{{ item.note }}</small><div class="catalog-meta-row"><span class="catalog-source-chip" :class="catalogSourceBadgeClass(item)">{{ catalogSourceTitle(item) }}</span><small v-if="sourceCheckedText(item)">{{ sourceCheckedText(item) }}</small></div></div>
+          <div class="catalog-card-actions"><span>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)} g / db` : 'g' }}</span><div class="catalog-icon-actions"><button class="entry-icon-button" type="button" :aria-label="t('duplicate')" :title="t('duplicate')" @click="duplicateCatalogItem(item)" v-html="lucideSvg('copy')"></button><button class="entry-icon-button" type="button" :disabled="catalogSourceCheckBusyId === item.id" :aria-label="t('checkSource')" :title="t('checkSource')" @click="requestCatalogSourceCheck(item)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" type="button" :aria-label="catalogItemIsLocked(item) ? t('unlock') : t('lock')" :title="catalogItemIsLocked(item) ? t('unlock') : t('lock')" @click="toggleCatalogItemLock(item)" v-html="lucideSvg(catalogItemIsLocked(item) ? 'lock' : 'lockOpen')"></button><button class="entry-icon-button" type="button" :aria-label="item.inactive ? t('activate') : t('markInactive')" :title="item.inactive ? t('activate') : t('markInactive')" @click="toggleCatalogItemInactive(item)" v-html="lucideSvg(item.inactive ? 'eye' : 'eyeOff')"></button></div><button class="text-button" @click="editCatalogItem(item)">{{ t('edit') }}</button></div>
         </article>
         <p v-if="!visibleCatalogItems.length" class="empty-card">{{ t('noSyncedItems') }}</p>
       </template>
@@ -10176,10 +10412,18 @@ function setTab(tab: Tab) {
           </div>
           <article v-if="activitySource === 'activity_catalog' && selectedActivity" class="selected-item-card">
             <div class="selected-item-main">
-              <b>{{ activityDisplayName(selectedActivity) }}</b>
+              <div class="catalog-title-line"><b>{{ activityDisplayName(selectedActivity) }}</b><span v-if="selectedActivity.inactive" class="catalog-status-chip inactive">{{ t('inactive') }}</span><span v-if="catalogItemIsLocked(selectedActivity)" class="catalog-status-chip locked">{{ t('locked') }}</span></div>
               <small>{{ activityType(selectedActivity) }} · {{ selectedActivity.kcal_per_min }} kcal/min</small>
+              <div class="catalog-meta-row compact"><span class="catalog-source-chip" :class="catalogSourceBadgeClass(selectedActivity)">{{ catalogSourceTitle(selectedActivity) }}</span><small v-if="sourceCheckedText(selectedActivity)">{{ sourceCheckedText(selectedActivity) }}</small></div>
             </div>
-            <div class="selected-item-actions"><button class="selection-action-button change-action" :title="t('changeSelection')" :aria-label="t('changeSelection')" @click="clearSelectedActivityForChange" v-html="lucideSvg('refreshCw')"></button></div>
+            <div class="selected-item-actions selected-activity-actions">
+              <button class="entry-icon-button" type="button" :title="t('changeSelection')" :aria-label="t('changeSelection')" @click="clearSelectedActivityForChange" v-html="lucideSvg('refreshCw')"></button>
+              <button class="entry-icon-button" type="button" :title="t('duplicate')" :aria-label="t('duplicate')" @click="duplicateActivityCatalogItem(selectedActivity)" v-html="lucideSvg('copy')"></button>
+              <button class="entry-icon-button" type="button" :disabled="catalogSourceCheckBusyId === selectedActivity.id" :title="t('checkSource')" :aria-label="t('checkSource')" @click="requestCatalogSourceCheck(selectedActivity)" v-html="lucideSvg('refreshCw')"></button>
+              <button class="entry-icon-button" type="button" :title="catalogItemIsLocked(selectedActivity) ? t('unlock') : t('lock')" :aria-label="catalogItemIsLocked(selectedActivity) ? t('unlock') : t('lock')" @click="toggleCatalogItemLock(selectedActivity)" v-html="lucideSvg(catalogItemIsLocked(selectedActivity) ? 'lock' : 'lockOpen')"></button>
+              <button class="entry-icon-button" type="button" :title="selectedActivity.inactive ? t('activate') : t('markInactive')" :aria-label="selectedActivity.inactive ? t('activate') : t('markInactive')" @click="toggleCatalogItemInactive(selectedActivity)" v-html="lucideSvg(selectedActivity.inactive ? 'eye' : 'eyeOff')"></button>
+              <button class="entry-icon-button" type="button" :title="t('edit')" :aria-label="t('edit')" @click="editActivityCatalogItem(selectedActivity)" v-html="lucideSvg('pencil')"></button>
+            </div>
           </article>
           <div v-if="activitySelectionInProgress" class="sticky-picker-search">
             <input v-model="search" class="input" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" spellcheck="false" :placeholder="t('activitySearch')" @keydown.enter.prevent="hideKeyboard" />
@@ -10187,7 +10431,7 @@ function setTab(tab: Tab) {
           </div>
           <div v-if="activitySelectionInProgress" class="picker-list">
             <button v-for="activity in visibleActivities" :key="activity.id" class="picker-row" :class="activityId === activity.id ? 'selected' : ''" @click="chooseActivity(activity)">
-              <span><b>{{ activityDisplayName(activity) }}</b><small>{{ activityType(activity) }} · MET {{ activity.met }}</small></span>
+              <span class="picker-row-main"><span class="catalog-title-line"><b>{{ activityDisplayName(activity) }}</b><span v-if="activity.inactive" class="catalog-status-chip inactive">{{ t('inactive') }}</span><span v-if="catalogItemIsLocked(activity)" class="catalog-status-chip locked">{{ t('locked') }}</span></span><small>{{ activityType(activity) }} · MET {{ activity.met }}</small><span class="catalog-meta-row compact"><span class="catalog-source-chip" :class="catalogSourceBadgeClass(activity)">{{ catalogSourceTitle(activity) }}</span><small v-if="sourceCheckedText(activity)">{{ sourceCheckedText(activity) }}</small></span></span>
               <strong>{{ activity.kcal_per_min }} kcal/min</strong>
             </button>
           </div>
@@ -10206,7 +10450,7 @@ function setTab(tab: Tab) {
       <div v-if="localEditorOpen" class="dialog-backdrop" @click.self="requestCloseLocalEditor">
         <article class="settings-dialog local-editor-dialog">
           <div class="dialog-title-row">
-            <h2>{{ localEditorId ? t('edit') : t('add') }} {{ localEditorKind === 'ingredient' ? t('ingredient') : localEditorKind === 'food' ? t('food') : localEditorKind === 'recipe' ? t('recipe') : t('addActivity') }}</h2>
+            <h2>{{ localEditorDuplicate ? t('duplicate') : localEditorId ? t('edit') : t('add') }} {{ localEditorKind === 'ingredient' ? t('ingredient') : localEditorKind === 'food' ? t('food') : localEditorKind === 'recipe' ? t('recipe') : t('addActivity') }}</h2>
             <button class="text-button" @click="requestCloseLocalEditor">{{ t('cancel') }}</button>
           </div>
           <label class="field-label">{{ t('name') }}</label>
@@ -10225,6 +10469,10 @@ function setTab(tab: Tab) {
               <option v-for="language in availableLocalTranslationLanguages()" :key="language.code" :value="language.code">{{ language.englishName }} · {{ language.nativeName }} ({{ language.code }})</option>
             </select>
           </details>
+          <label class="tracking-toggle-card local-editor-toggle">
+            <span><b>{{ t('inactiveCatalogItem') }}</b><small>{{ t('inactiveCatalogItemHint') }}</small></span>
+            <input v-model="localCatalogForm.inactive" type="checkbox" />
+          </label>
 
           <template v-if="localEditorKind === 'ingredient' || localEditorKind === 'food'">
             <label v-if="localEditorKind === 'food'" class="field-label">{{ t('brandSource') }}</label>
@@ -10453,6 +10701,8 @@ function setTab(tab: Tab) {
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('macros')"></span><b>{{ t('showMacros') }}</b><input v-model="state.settings.show_meal_macros" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('showMicros') }}</b><input v-model="state.settings.show_micronutrients" type="checkbox" /></label>
         <button v-if="state.settings.show_micronutrients" class="settings-row micronutrient-settings-row" @click="settingsDialog = 'micronutrients'"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('micronutrientLimits') }}</b><small>{{ t('micronutrientLimitsHint') }}</small></button>
+        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogProtect')"></span><b>{{ t('protectExternalCatalogItems') }}</b><input v-model="state.settings.protect_external_catalog_items" type="checkbox" /><small>{{ t('protectExternalCatalogItemsHint') }}</small></label>
+        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogInactive')"></span><b>{{ t('includeInactiveCatalogItems') }}</b><input v-model="state.settings.include_inactive_catalog_items" type="checkbox" /><small>{{ t('includeInactiveCatalogItemsHint') }}</small></label>
         <button class="settings-row" @click="settingsDialog = 'language'"><span class="settings-row-icon" v-html="settingsIcon('language')"></span><b>{{ t('language') }}</b><small>{{ selectedLanguageLabel() }}</small></button>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('reminder')"></span><b>{{ t('dailyReminder') }}</b><input v-model="state.settings.daily_reminder" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
         <div class="settings-divider"></div>
@@ -10591,7 +10841,7 @@ function setTab(tab: Tab) {
           <template v-if="actionSheetIntake">
             <p class="helper big">{{ itemTitle(foodFromIntake(actionSheetIntake)) }}</p>
             <button class="dialog-option" @click="openDuplicateIntakeTarget(actionSheetIntake)"><span>{{ t('duplicate') }}</span><small>{{ t('duplicateMealTargetHint') }}</small></button>
-            <button v-if="actionSheetIntake.item_type === 'note'" class="dialog-option" @click="openNoteConversion(actionSheetIntake)"><span>{{ t('convertToCatalogItem') }}</span><small>{{ t('convertNoteToCatalogHint') }}</small></button>
+            <button v-if="actionSheetIntake.item_type === 'note'" class="dialog-option catalog-convert-option" @click="openNoteConversion(actionSheetIntake)"><span><span class="dialog-option-icon" v-html="lucideSvg('utensils')"></span>{{ t('convertToCatalogItem') }}</span><small>{{ t('convertNoteToCatalogHint') }}</small></button>
             <h3>{{ t('moveToMeal') }}</h3>
             <div class="meal-target-grid">
               <button v-for="section in mealTargetSections" :key="`move-${section.key}`" class="dialog-option meal-target-option" :disabled="actionSheetIntake.meal_type === section.key" @click="moveIntakeToMeal(actionSheetIntake.id, section.key)">
