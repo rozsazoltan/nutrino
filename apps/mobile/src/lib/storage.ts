@@ -12,6 +12,7 @@ import type {
   AppChannel,
   CatalogAlias,
   CatalogKind,
+  CatalogSourceKind,
   Recipe,
   RecipeItem,
   UserProfile,
@@ -24,11 +25,11 @@ const STORAGE_KEY = 'nutrino.mobile.v3.state';
 const KCAL_PER_KG_PER_WEEK_DAILY = 1100;
 
 const fallbackActivities: ActivityDefinition[] = [
-  { id: 'activity-walking', code: '17190', name: 'walking', description: 'general, moderate pace', type: 'conditioning', met: 3.5, kcal_per_min: 4.4, updated_at: 0 },
-  { id: 'activity-cycling', code: '01015', name: 'bicycling', description: 'general', type: 'bicycling', met: 7.5, kcal_per_min: 9.4, updated_at: 0 },
-  { id: 'activity-running', code: '12150', name: 'running', description: 'general', type: 'running', met: 8.3, kcal_per_min: 10.4, updated_at: 0 },
-  { id: 'activity-yoga', code: '02160', name: 'yoga', description: 'general, hatha', type: 'conditioning', met: 3.0, kcal_per_min: 3.8, updated_at: 0 },
-  { id: 'activity-strength', code: '02050', name: 'resistance training', description: 'weight lifting', type: 'conditioning', met: 6.0, kcal_per_min: 7.5, updated_at: 0 },
+  { id: 'activity-walking', code: '17190', name: 'walking', description: 'general, moderate pace', type: 'conditioning', met: 3.5, kcal_per_min: 4.4, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
+  { id: 'activity-cycling', code: '01015', name: 'bicycling', description: 'general', type: 'bicycling', met: 7.5, kcal_per_min: 9.4, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
+  { id: 'activity-running', code: '12150', name: 'running', description: 'general', type: 'running', met: 8.3, kcal_per_min: 10.4, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
+  { id: 'activity-yoga', code: '02160', name: 'yoga', description: 'general, hatha', type: 'conditioning', met: 3.0, kcal_per_min: 3.8, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
+  { id: 'activity-strength', code: '02050', name: 'resistance training', description: 'weight lifting', type: 'conditioning', met: 6.0, kcal_per_min: 7.5, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
 ];
 
 export function inferDevBaseUrl(): string {
@@ -101,6 +102,8 @@ export function defaultSettings(): AppSettings {
     show_activity_tracking: true,
     show_meal_macros: true,
     show_micronutrients: false,
+    protect_external_catalog_items: true,
+    include_inactive_catalog_items: false,
     micronutrient_limits: { ...DEFAULT_MICRONUTRIENT_LIMITS },
     daily_reminder: false,
     weekly_weight_average_enabled: false,
@@ -183,6 +186,8 @@ export function loadState(): AppState {
       meal_reminders_enabled: storedSettings.meal_reminders_enabled === true,
       calorie_deficit_enabled: storedSettings.calorie_deficit_enabled === true,
       calorie_limit_warning_enabled: storedSettings.calorie_limit_warning_enabled === true,
+      protect_external_catalog_items: storedSettings.protect_external_catalog_items !== false,
+      include_inactive_catalog_items: storedSettings.include_inactive_catalog_items === true,
       target_deficit_kcal: Number.isFinite(Number(storedSettings.target_deficit_kcal)) ? Number(storedSettings.target_deficit_kcal) : defaults.settings.target_deficit_kcal,
       exercise_kcal_eatback_percent: Number.isFinite(Number(storedSettings.exercise_kcal_eatback_percent)) ? Number(storedSettings.exercise_kcal_eatback_percent) : defaults.settings.exercise_kcal_eatback_percent,
       micronutrient_limits: {
@@ -210,9 +215,9 @@ export function loadState(): AppState {
       },
       foods,
       ingredients,
-      recipes: Array.isArray(parsed.recipes) ? parsed.recipes.map((recipe: Recipe) => ({ ...recipe, name_i18n: normalizeNameI18n(recipe.name_i18n), extra_kcal: recipe.extra_kcal ?? 0, total_weight_g: null })) : [],
+      recipes: Array.isArray(parsed.recipes) ? parsed.recipes.map((recipe: Recipe) => normalizeRecipe(recipe)) : [],
       recipeItems: Array.isArray(parsed.recipeItems) ? parsed.recipeItems : [],
-      activities: Array.isArray(parsed.activities) ? parsed.activities.map((activity) => ({ ...activity, name_i18n: normalizeNameI18n(activity.name_i18n) })) : defaults.activities,
+      activities: Array.isArray(parsed.activities) ? parsed.activities.map((activity) => normalizeActivity(activity)) : defaults.activities,
       intakes: Array.isArray(parsed.intakes) ? parsed.intakes : [],
       activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
       weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
@@ -325,8 +330,48 @@ function normalizeNameI18n(value: unknown): LocalizedNameMap {
   return result;
 }
 
-export function normalizeFood(food: Food): Food {
+function normalizeCatalogSourceKind(value: unknown, sourceId?: string | null): CatalogSourceKind {
+  const kind = String(value || '').trim().toLowerCase();
+  if (kind === 'desktop' || kind === 'github' || kind === 'custom' || kind === 'qr') return kind;
+  const source = String(sourceId || '').trim();
+  if (source.startsWith('github:')) return 'github';
+  if (source.startsWith('mobile')) return 'custom';
+  return source ? 'desktop' : 'custom';
+}
+
+function sourceLabelFromId(sourceId?: string | null): string | null {
+  const source = String(sourceId || '').trim();
+  if (!source) return null;
+  if (source.startsWith('github:')) return source.slice('github:'.length) || source;
+  return source;
+}
+
+function normalizeCatalogMetadata<T extends {
+  source_id?: string | null;
+  catalog_source_kind?: CatalogSourceKind | null;
+  source_label?: string | null;
+  source_url?: string | null;
+  source_checked_at?: number | null;
+  locked?: boolean | null;
+  inactive?: boolean | null;
+}>(item: T): T {
+  const sourceKind = normalizeCatalogSourceKind(item.catalog_source_kind, item.source_id);
+  const sourceLabel = String(item.source_label ?? '').trim() || sourceLabelFromId(item.source_id);
+  const sourceUrl = String(item.source_url ?? '').trim();
+  const checkedAt = Number(item.source_checked_at || 0);
   return {
+    ...item,
+    catalog_source_kind: sourceKind,
+    source_label: sourceLabel,
+    source_url: sourceUrl || null,
+    source_checked_at: checkedAt > 0 ? checkedAt : null,
+    locked: item.locked === true ? true : item.locked === false ? false : null,
+    inactive: item.inactive === true,
+  };
+}
+
+export function normalizeFood(food: Food): Food {
+  return normalizeCatalogMetadata({
     ...food,
     name_i18n: normalizeNameI18n(food.name_i18n),
     brand: food.brand ?? null,
@@ -339,11 +384,11 @@ export function normalizeFood(food: Food): Food {
     salt_per_100g: food.salt_per_100g ?? 0,
     optional_nutrients: normalizeOptionalNutrients(food.optional_nutrients),
     barcode: food.barcode ?? null,
-  };
+  });
 }
 
 export function normalizeIngredient(ingredient: Ingredient): Ingredient {
-  return {
+  return normalizeCatalogMetadata({
     ...ingredient,
     name_i18n: normalizeNameI18n(ingredient.name_i18n),
     note: ingredient.note ?? null,
@@ -353,11 +398,34 @@ export function normalizeIngredient(ingredient: Ingredient): Ingredient {
     fiber_per_100g: ingredient.fiber_per_100g ?? 0,
     salt_per_100g: ingredient.salt_per_100g ?? 0,
     optional_nutrients: normalizeOptionalNutrients(ingredient.optional_nutrients),
-  };
+  });
+}
+
+export function normalizeRecipe(recipe: Recipe): Recipe {
+  return normalizeCatalogMetadata({
+    ...recipe,
+    name_i18n: normalizeNameI18n(recipe.name_i18n),
+    description: recipe.description ?? null,
+    note: recipe.note ?? null,
+    extra_kcal: recipe.extra_kcal ?? 0,
+    total_weight_g: null,
+    servings_count: recipe.servings_count ?? null,
+  });
+}
+
+export function normalizeActivity(activity: ActivityDefinition): ActivityDefinition {
+  return normalizeCatalogMetadata({
+    ...activity,
+    source_id: activity.source_id ?? undefined,
+    name_i18n: normalizeNameI18n(activity.name_i18n),
+    description: activity.description ?? null,
+    activity_type: activity.activity_type || activity.type || 'custom',
+    type: activity.type || activity.activity_type || 'custom',
+  });
 }
 
 export function ingredientAsFood(ingredient: Ingredient): Food {
-  return {
+  return normalizeCatalogMetadata({
     id: `ingredient:${ingredient.id}`,
     source_id: ingredient.source_id,
     name: ingredient.name,
@@ -379,7 +447,13 @@ export function ingredientAsFood(ingredient: Ingredient): Food {
     updated_at: ingredient.updated_at,
     deleted_at: ingredient.deleted_at,
     pending_sync: ingredient.pending_sync,
-  };
+    catalog_source_kind: ingredient.catalog_source_kind,
+    source_label: ingredient.source_label,
+    source_url: ingredient.source_url,
+    source_checked_at: ingredient.source_checked_at,
+    locked: ingredient.locked,
+    inactive: ingredient.inactive,
+  });
 }
 
 function foodToIngredient(food: Food): Ingredient {
@@ -402,6 +476,12 @@ function foodToIngredient(food: Food): Ingredient {
     updated_at: food.updated_at,
     deleted_at: food.deleted_at,
     pending_sync: food.pending_sync,
+    catalog_source_kind: food.catalog_source_kind,
+    source_label: food.source_label,
+    source_url: food.source_url,
+    source_checked_at: food.source_checked_at,
+    locked: food.locked,
+    inactive: food.inactive,
   });
 }
 
@@ -436,6 +516,12 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
       optional_nutrients: {},
       updated_at: recipe.updated_at,
       deleted_at: recipe.deleted_at,
+      catalog_source_kind: recipe.catalog_source_kind,
+      source_label: recipe.source_label,
+      source_url: recipe.source_url,
+      source_checked_at: recipe.source_checked_at,
+      locked: recipe.locked,
+      inactive: recipe.inactive,
     };
   }
 
@@ -511,6 +597,12 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
     optional_nutrients: scaleOptionalNutrients(optionalNutrients, ratio),
     updated_at: recipe.updated_at,
     deleted_at: recipe.deleted_at,
+    catalog_source_kind: recipe.catalog_source_kind,
+    source_label: recipe.source_label,
+    source_url: recipe.source_url,
+    source_checked_at: recipe.source_checked_at,
+    locked: recipe.locked,
+    inactive: recipe.inactive,
   };
 }
 

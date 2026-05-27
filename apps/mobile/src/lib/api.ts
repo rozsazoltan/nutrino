@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult } from '../types';
-import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeFood, normalizeIngredient, resolveCatalogId } from './storage';
+import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeActivity, normalizeFood, normalizeIngredient, normalizeRecipe, resolveCatalogId } from './storage';
 
 export const APP_VERSION = '0.12.11';
 const APP_CHANNEL = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
@@ -230,7 +230,28 @@ function mergePulledCatalog(state: AppState, pulled: SyncPullResponse, serverTim
   );
 
   const aliases = mergeAliases(state.catalogAliases, pulled.aliases ?? []);
-  const keepPending = <T extends { id: string; pending_sync?: boolean }>(current: T[], merged: T[]) => {
+  const serverLabel = normalizeApiBaseUrl(state.pairing.baseUrl) || pulled.source_id || 'Desktop server';
+  const serverUrl = normalizeApiBaseUrl(state.pairing.baseUrl) || null;
+  const markDesktopSource = <T extends { source_id?: string; catalog_source_kind?: string | null; source_label?: string | null; source_url?: string | null }>(item: T): T => ({
+    ...item,
+    catalog_source_kind: item.catalog_source_kind ?? 'desktop',
+    source_label: item.source_label || serverLabel,
+    source_url: item.source_url || serverUrl,
+  });
+  const keepLocalCatalogFlags = <T extends { id: string; pending_sync?: boolean; locked?: boolean | null; inactive?: boolean | null; source_checked_at?: number | null }>(current: T[], merged: T[]) => {
+    const previous = new Map(current.map((item) => [item.id, item]));
+    return merged.map((item) => {
+      const existing = previous.get(item.id);
+      return {
+        ...item,
+        pending_sync: existing?.pending_sync ?? Boolean(item.pending_sync),
+        locked: existing?.locked ?? item.locked,
+        inactive: existing?.inactive ?? item.inactive,
+        source_checked_at: existing?.source_checked_at ?? item.source_checked_at,
+      };
+    });
+  };
+  const keepPendingRows = <T extends { id: string; pending_sync?: boolean }>(current: T[], merged: T[]) => {
     const pending = new Map(current.map((item) => [item.id, Boolean(item.pending_sync)]));
     return merged.map((item) => ({ ...item, pending_sync: pending.get(item.id) ?? Boolean(item.pending_sync) }));
   };
@@ -246,11 +267,11 @@ function mergePulledCatalog(state: AppState, pulled: SyncPullResponse, serverTim
       lastSyncError: undefined,
     },
     catalogAliases: aliases,
-    ingredients: keepPending(state.ingredients, mergeById(state.ingredients, (pulled.ingredients ?? []).map(normalizeIngredient))),
-    foods: keepPending(state.foods, mergeById(state.foods, (pulled.foods ?? []).map(normalizeFood))),
-    recipes: keepPending(state.recipes, mergeById(state.recipes, (pulled.recipes ?? []).map((recipe) => ({ ...recipe, extra_kcal: recipe.extra_kcal ?? 0, total_weight_g: null })))),
-    recipeItems: keepPending(state.recipeItems, mergeById(state.recipeItems, pulled.recipe_items ?? [])),
-    activities: keepPending(state.activities, mergeById(state.activities, pulled.activities ?? [])),
+    ingredients: keepLocalCatalogFlags(state.ingredients, mergeById(state.ingredients, (pulled.ingredients ?? []).map((item) => normalizeIngredient(markDesktopSource(item))))),
+    foods: keepLocalCatalogFlags(state.foods, mergeById(state.foods, (pulled.foods ?? []).map((item) => normalizeFood(markDesktopSource(item))))),
+    recipes: keepLocalCatalogFlags(state.recipes, mergeById(state.recipes, (pulled.recipes ?? []).map((item) => normalizeRecipe(markDesktopSource(item))))),
+    recipeItems: keepPendingRows(state.recipeItems, mergeById(state.recipeItems, pulled.recipe_items ?? [])),
+    activities: keepLocalCatalogFlags(state.activities, mergeById(state.activities, (pulled.activities ?? []).map((item) => normalizeActivity(markDesktopSource(item))))),
   };
 
   return canonicalizeStateReferences(nextState);
@@ -488,6 +509,17 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
   for (const source of next.githubSources.filter((entry) => entry.enabled)) {
     if (!force && source.lastSyncAt && now - source.lastSyncAt < 23 * 60 * 60 * 1000) continue;
     try {
+      const githubSourceId = `github:${source.owner}/${source.repo}`;
+      const githubSourceLabel = `${source.owner}/${source.repo}`;
+      const githubSourceUrl = `https://github.com/${source.owner}/${source.repo}`;
+      const githubMetadata = (existing?: { locked?: boolean | null; inactive?: boolean | null }) => ({
+        catalog_source_kind: 'github' as const,
+        source_label: githubSourceLabel,
+        source_url: githubSourceUrl,
+        source_checked_at: now,
+        locked: existing?.locked ?? null,
+        inactive: existing?.inactive === true,
+      });
       const files = await fetchGitHubCsvFiles(source);
       for (const file of files) {
         const rows = parseCsv(file.text);
@@ -499,13 +531,14 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
             if (!name) continue;
             const id = row.id || `github-ingredient-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
             ingredientMap.set(id, normalizeIngredient({
-              id, source_id: `github:${source.owner}/${source.repo}`, name,
+              id, source_id: githubSourceId, name,
               name_i18n: parseNameI18n(row),
               note: row.note || row.description || null,
               default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
               kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
               sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g), optional_nutrients: parseCsvOptionalNutrients(row),
               updated_at: now, deleted_at: null,
+              ...githubMetadata(ingredientMap.get(id)),
             } as Ingredient));
             imported++;
           } else if (kind === 'foods') {
@@ -514,18 +547,19 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
             if (row.catalog_kind === 'ingredient') {
               const id = row.id || `github-ingredient-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
               ingredientMap.set(id, normalizeIngredient({
-                id, source_id: `github:${source.owner}/${source.repo}`, name,
+                id, source_id: githubSourceId, name,
                 name_i18n: parseNameI18n(row),
                 note: row.note || row.description || null,
                 default_unit: row.default_unit || 'g', serving_size_g: row.serving_size_g ? num(row.serving_size_g, 0) : null,
                 kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
                 sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g), optional_nutrients: parseCsvOptionalNutrients(row),
                 updated_at: now, deleted_at: null,
+                ...githubMetadata(ingredientMap.get(id)),
               } as Ingredient));
             } else {
               const id = row.id || `github-food-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
               foodMap.set(id, normalizeFood({
-                id, source_id: `github:${source.owner}/${source.repo}`, name,
+                id, source_id: githubSourceId, name,
                 name_i18n: parseNameI18n(row),
                 brand: row.brand || null,
                 catalog_kind: 'food',
@@ -534,6 +568,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
                 kcal_per_100g: num(row.kcal_per_100g), carbs_per_100g: num(row.carbs_per_100g), fat_per_100g: num(row.fat_per_100g), protein_per_100g: num(row.protein_per_100g),
                 sugars_per_100g: num(row.sugars_per_100g), fiber_per_100g: num(row.fiber_per_100g), salt_per_100g: num(row.salt_per_100g), optional_nutrients: parseCsvOptionalNutrients(row), barcode: row.barcode || row.ean || row.upc || null,
                 updated_at: now, deleted_at: null,
+                ...githubMetadata(foodMap.get(id)),
               }));
             }
             imported++;
@@ -541,13 +576,13 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
             const name = row.name || row.title;
             if (!name) continue;
             const id = row.id || `github-activity-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-            activityMap.set(id, { id, source_id: `github:${source.owner}/${source.repo}`, code: row.code || id, name, name_i18n: parseNameI18n(row), description: row.description || null, activity_type: row.activity_type || row.type || 'custom', met: num(row.met, 1), kcal_per_min: num(row.kcal_per_min, 0), updated_at: now, deleted_at: null });
+            activityMap.set(id, normalizeActivity({ id, source_id: githubSourceId, code: row.code || id, name, name_i18n: parseNameI18n(row), description: row.description || null, activity_type: row.activity_type || row.type || 'custom', met: num(row.met, 1), kcal_per_min: num(row.kcal_per_min, 0), updated_at: now, deleted_at: null, ...githubMetadata(activityMap.get(id)) }));
             imported++;
           } else if (kind === 'recipes') {
             const name = row.name || row.title;
             if (!name) continue;
             const id = row.recipe_id || row.id || `github-recipe-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-            recipeMap.set(id, { id, source_id: `github:${source.owner}/${source.repo}`, name, name_i18n: parseNameI18n(row), description: row.description || null, note: row.note || null, servings_count: row.servings_count ? num(row.servings_count, 1) : null, total_weight_g: null, extra_kcal: row.extra_kcal ? num(row.extra_kcal, 0) : 0, updated_at: now, deleted_at: null });
+            recipeMap.set(id, normalizeRecipe({ id, source_id: githubSourceId, name, name_i18n: parseNameI18n(row), description: row.description || null, note: row.note || null, servings_count: row.servings_count ? num(row.servings_count, 1) : null, total_weight_g: null, extra_kcal: row.extra_kcal ? num(row.extra_kcal, 0) : 0, updated_at: now, deleted_at: null, ...githubMetadata(recipeMap.get(id)) }));
             if (row.ingredients_json) {
               try {
                 const ingredients = JSON.parse(row.ingredients_json) as Array<{ food_id: string; amount_g: number }>;

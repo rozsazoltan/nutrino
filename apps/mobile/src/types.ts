@@ -9,8 +9,18 @@ export type ThemeMode = 'system' | 'light' | 'dark';
 export type AppChannel = 'dev' | 'stable';
 export type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 export type FoodCatalogKind = 'food' | 'ingredient';
+export type CatalogSourceKind = 'desktop' | 'github' | 'custom' | 'qr';
 
-export interface Ingredient {
+export interface CatalogItemMetadata {
+  catalog_source_kind?: CatalogSourceKind | null;
+  source_label?: string | null;
+  source_url?: string | null;
+  source_checked_at?: number | null;
+  locked?: boolean | null;
+  inactive?: boolean | null;
+}
+
+export interface Ingredient extends CatalogItemMetadata {
   id: string;
   source_id: string;
   name: string;
@@ -77,7 +87,7 @@ export interface UserProfile {
   last_weight_prompt_at?: number;
 }
 
-export interface Food {
+export interface Food extends CatalogItemMetadata {
   id: string;
   source_id: string;
   name: string;
@@ -101,7 +111,7 @@ export interface Food {
   pending_sync?: boolean;
 }
 
-export interface Recipe {
+export interface Recipe extends CatalogItemMetadata {
   id: string;
   source_id: string;
   name: string;
@@ -126,7 +136,7 @@ export interface RecipeItem {
   pending_sync?: boolean;
 }
 
-export interface ActivityDefinition {
+export interface ActivityDefinition extends CatalogItemMetadata {
   id: string;
   source_id?: string;
   code: string;
@@ -257,6 +267,8 @@ export interface AppSettings {
   show_activity_tracking: boolean;
   show_meal_macros: boolean;
   show_micronutrients: boolean;
+  protect_external_catalog_items: boolean;
+  include_inactive_catalog_items: boolean;
   micronutrient_limits: Record<string, number>;
   daily_reminder: boolean;
   weekly_weight_average_enabled: boolean;
