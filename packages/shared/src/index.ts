@@ -1,4 +1,5 @@
 export type LocalizedNameMap = Record<string, string>;
+export type OptionalNutrientMap = Record<string, number | null | undefined>;
 
 export type NutrinoSource = {
   id: string;
@@ -20,6 +21,10 @@ export type NutrinoFood = {
   carbs_per_100g: number;
   fat_per_100g: number;
   protein_per_100g: number;
+  sugars_per_100g?: number | null;
+  fiber_per_100g?: number | null;
+  salt_per_100g?: number | null;
+  optional_nutrients?: OptionalNutrientMap | null;
 };
 
 export type NutrinoRecipeIngredient = {

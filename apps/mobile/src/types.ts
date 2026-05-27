@@ -1,4 +1,5 @@
 export type LocalizedNameMap = Record<string, string>;
+export type OptionalNutrientMap = Record<string, number | null | undefined>;
 
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 export type Gender = 'female' | 'male' | 'non_binary';
@@ -24,6 +25,7 @@ export interface Ingredient {
   sugars_per_100g?: number | null;
   fiber_per_100g?: number | null;
   salt_per_100g?: number | null;
+  optional_nutrients?: OptionalNutrientMap | null;
   updated_at: number;
   deleted_at?: number | null;
   pending_sync?: boolean;
@@ -92,6 +94,7 @@ export interface Food {
   sugars_per_100g?: number | null;
   fiber_per_100g?: number | null;
   salt_per_100g?: number | null;
+  optional_nutrients?: OptionalNutrientMap | null;
   barcode?: string | null;
   updated_at: number;
   deleted_at?: number | null;

@@ -206,6 +206,8 @@ struct Food {
     sugars_per_100g: f64,
     fiber_per_100g: f64,
     salt_per_100g: f64,
+    #[serde(default)]
+    optional_nutrients: HashMap<String, f64>,
     updated_at: i64,
     deleted_at: Option<i64>,
 }
@@ -227,6 +229,7 @@ struct FoodInput {
     sugars_per_100g: Option<f64>,
     fiber_per_100g: Option<f64>,
     salt_per_100g: Option<f64>,
+    optional_nutrients: Option<HashMap<String, f64>>,
 }
 
 
@@ -247,6 +250,8 @@ struct Ingredient {
     sugars_per_100g: f64,
     fiber_per_100g: f64,
     salt_per_100g: f64,
+    #[serde(default)]
+    optional_nutrients: HashMap<String, f64>,
     updated_at: i64,
     deleted_at: Option<i64>,
 }
@@ -266,6 +271,7 @@ struct IngredientInput {
     sugars_per_100g: Option<f64>,
     fiber_per_100g: Option<f64>,
     salt_per_100g: Option<f64>,
+    optional_nutrients: Option<HashMap<String, f64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -688,6 +694,65 @@ fn name_i18n_from_json(raw: Option<String>) -> HashMap<String, String> {
     clean_name_i18n(raw.and_then(|value| serde_json::from_str::<HashMap<String, String>>(&value).ok()))
 }
 
+
+fn clean_optional_nutrients(input: Option<HashMap<String, f64>>) -> HashMap<String, f64> {
+    input
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let clean_key = key.trim().to_string();
+            if clean_key.is_empty() || !value.is_finite() {
+                return None;
+            }
+            Some((clean_key, value.max(0.0)))
+        })
+        .collect()
+}
+
+fn optional_nutrients_to_json(map: &HashMap<String, f64>) -> String {
+    serde_json::to_string(map).unwrap_or_else(|_| "{}".into())
+}
+
+fn optional_nutrients_from_json(raw: Option<String>) -> HashMap<String, f64> {
+    clean_optional_nutrients(raw.and_then(|value| serde_json::from_str::<HashMap<String, f64>>(&value).ok()))
+}
+
+const CSV_OPTIONAL_NUTRIENT_COLUMNS: &[&str] = &[
+    "saturated_fat_per_100g",
+    "sodium_mg_per_100g",
+    "calcium_mg_per_100g",
+    "iron_mg_per_100g",
+    "potassium_mg_per_100g",
+    "vitamin_d_mcg_per_100g",
+    "vitamin_b12_mcg_per_100g",
+    "magnesium_mg_per_100g",
+];
+
+fn parse_optional_nutrients_csv(headers: &csv::StringRecord, record: &csv::StringRecord, errors: &mut Vec<String>) -> HashMap<String, f64> {
+    let mut values = HashMap::new();
+    if let Some(json) = get_csv(headers, record, "optional_nutrients_json")
+        .or_else(|| get_csv(headers, record, "optional_nutrients"))
+        .filter(|value| !value.trim().is_empty())
+    {
+        match serde_json::from_str::<HashMap<String, f64>>(&json) {
+            Ok(parsed) => values.extend(clean_optional_nutrients(Some(parsed))),
+            Err(err) => errors.push(format!("optional_nutrients_json is invalid: {err}")),
+        }
+    }
+    for column in CSV_OPTIONAL_NUTRIENT_COLUMNS {
+        if let Some(raw) = get_csv(headers, record, column).filter(|value| !value.trim().is_empty()) {
+            if let Some(value) = parse_f64(&raw, column, errors) {
+                values.insert((*column).to_string(), value.max(0.0));
+            }
+        }
+    }
+    values
+}
+
+fn optional_nutrient_csv_value(map: &HashMap<String, f64>, key: &str) -> String {
+    map.get(key).map(|value| value.to_string()).unwrap_or_default()
+}
+
 fn parse_name_i18n_csv(headers: &csv::StringRecord, record: &csv::StringRecord) -> HashMap<String, String> {
     let mut values = HashMap::new();
     if let Some(json) = get_csv(headers, record, "name_i18n_json")
@@ -739,6 +804,7 @@ fn init_database(path: &Path) -> Result<()> {
             sugars_per_100g REAL NOT NULL DEFAULT 0,
             fiber_per_100g REAL NOT NULL DEFAULT 0,
             salt_per_100g REAL NOT NULL DEFAULT 0,
+            optional_nutrients_json TEXT NOT NULL DEFAULT '{}',
             updated_at INTEGER NOT NULL,
             deleted_at INTEGER
         );
@@ -758,6 +824,7 @@ fn init_database(path: &Path) -> Result<()> {
             sugars_per_100g REAL NOT NULL DEFAULT 0,
             fiber_per_100g REAL NOT NULL DEFAULT 0,
             salt_per_100g REAL NOT NULL DEFAULT 0,
+            optional_nutrients_json TEXT NOT NULL DEFAULT '{}',
             updated_at INTEGER NOT NULL,
             deleted_at INTEGER
         );
@@ -868,6 +935,8 @@ fn init_database(path: &Path) -> Result<()> {
     let _ = conn.execute("ALTER TABLE foods ADD COLUMN barcode TEXT", []);
     let _ = conn.execute("ALTER TABLE foods ADD COLUMN name_i18n TEXT NOT NULL DEFAULT '{}'", []);
     let _ = conn.execute("ALTER TABLE ingredients ADD COLUMN name_i18n TEXT NOT NULL DEFAULT '{}'", []);
+    let _ = conn.execute("ALTER TABLE foods ADD COLUMN optional_nutrients_json TEXT NOT NULL DEFAULT '{}'", []);
+    let _ = conn.execute("ALTER TABLE ingredients ADD COLUMN optional_nutrients_json TEXT NOT NULL DEFAULT '{}'", []);
     migrate_catalog_kind_ingredients(&conn)?;
     let _ = conn.execute("ALTER TABLE recipes ADD COLUMN note TEXT", []);
     let _ = conn.execute("ALTER TABLE recipes ADD COLUMN name_i18n TEXT NOT NULL DEFAULT '{}'", []);
@@ -898,11 +967,11 @@ fn migrate_catalog_kind_ingredients(conn: &Connection) -> Result<()> {
         INSERT INTO ingredients (
             id, source_id, name, name_i18n, note, default_unit, serving_size_g,
             kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-            sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
+            sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
         )
         SELECT id, source_id, name, name_i18n, note, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-               sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
+               sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
         FROM foods
         WHERE catalog_kind = 'ingredient'
         ON CONFLICT(id) DO UPDATE SET
@@ -919,6 +988,7 @@ fn migrate_catalog_kind_ingredients(conn: &Connection) -> Result<()> {
             sugars_per_100g = excluded.sugars_per_100g,
             fiber_per_100g = excluded.fiber_per_100g,
             salt_per_100g = excluded.salt_per_100g,
+            optional_nutrients_json = excluded.optional_nutrients_json,
             updated_at = MAX(ingredients.updated_at, excluded.updated_at),
             deleted_at = excluded.deleted_at
         "#,
@@ -1238,7 +1308,7 @@ fn export_ingredients_csv(state: State<'_, AppState>) -> Result<String, String> 
     let mut writer = csv::Writer::from_writer(Vec::new());
     writer.write_record([
         "id", "name", "name_i18n_json", "note", "default_unit", "serving_size_g", "kcal_per_100g", "carbs_per_100g",
-        "fat_per_100g", "protein_per_100g", "sugars_per_100g", "fiber_per_100g", "salt_per_100g",
+        "fat_per_100g", "protein_per_100g", "sugars_per_100g", "fiber_per_100g", "salt_per_100g", "optional_nutrients_json", "saturated_fat_per_100g", "sodium_mg_per_100g", "calcium_mg_per_100g", "iron_mg_per_100g", "potassium_mg_per_100g", "vitamin_d_mcg_per_100g", "vitamin_b12_mcg_per_100g", "magnesium_mg_per_100g",
     ]).map_err(stringify_error)?;
     for ingredient in ingredients {
         writer.write_record([
@@ -1255,6 +1325,15 @@ fn export_ingredients_csv(state: State<'_, AppState>) -> Result<String, String> 
             ingredient.sugars_per_100g.to_string(),
             ingredient.fiber_per_100g.to_string(),
             ingredient.salt_per_100g.to_string(),
+            optional_nutrients_to_json(&ingredient.optional_nutrients),
+            optional_nutrient_csv_value(&ingredient.optional_nutrients, "saturated_fat_per_100g"),
+            optional_nutrient_csv_value(&ingredient.optional_nutrients, "sodium_mg_per_100g"),
+            optional_nutrient_csv_value(&ingredient.optional_nutrients, "calcium_mg_per_100g"),
+            optional_nutrient_csv_value(&ingredient.optional_nutrients, "iron_mg_per_100g"),
+            optional_nutrient_csv_value(&ingredient.optional_nutrients, "potassium_mg_per_100g"),
+            optional_nutrient_csv_value(&ingredient.optional_nutrients, "vitamin_d_mcg_per_100g"),
+            optional_nutrient_csv_value(&ingredient.optional_nutrients, "vitamin_b12_mcg_per_100g"),
+            optional_nutrient_csv_value(&ingredient.optional_nutrients, "magnesium_mg_per_100g"),
         ]).map_err(stringify_error)?;
     }
     let bytes = writer.into_inner().map_err(stringify_error)?;
@@ -1291,6 +1370,7 @@ fn import_ingredients_csv(state: State<'_, AppState>, csv_text: String, skip_dup
             sugars_per_100g: parse_number_default(&headers, &record, "sugars_per_100g", 0.0, &mut row_errors),
             fiber_per_100g: parse_number_default(&headers, &record, "fiber_per_100g", 0.0, &mut row_errors),
             salt_per_100g: parse_number_default(&headers, &record, "salt_per_100g", 0.0, &mut row_errors),
+            optional_nutrients: parse_optional_nutrients_csv(&headers, &record, &mut row_errors),
             updated_at: now_ms(),
             deleted_at: None,
         };
@@ -1322,6 +1402,15 @@ fn export_foods_csv(state: State<'_, AppState>) -> Result<String, String> {
             "sugars_per_100g",
             "fiber_per_100g",
             "salt_per_100g",
+            "optional_nutrients_json",
+            "saturated_fat_per_100g",
+            "sodium_mg_per_100g",
+            "calcium_mg_per_100g",
+            "iron_mg_per_100g",
+            "potassium_mg_per_100g",
+            "vitamin_d_mcg_per_100g",
+            "vitamin_b12_mcg_per_100g",
+            "magnesium_mg_per_100g",
         ])
         .map_err(stringify_error)?;
 
@@ -1343,6 +1432,15 @@ fn export_foods_csv(state: State<'_, AppState>) -> Result<String, String> {
                 food.sugars_per_100g.to_string(),
                 food.fiber_per_100g.to_string(),
                 food.salt_per_100g.to_string(),
+                optional_nutrients_to_json(&food.optional_nutrients),
+                optional_nutrient_csv_value(&food.optional_nutrients, "saturated_fat_per_100g"),
+                optional_nutrient_csv_value(&food.optional_nutrients, "sodium_mg_per_100g"),
+                optional_nutrient_csv_value(&food.optional_nutrients, "calcium_mg_per_100g"),
+                optional_nutrient_csv_value(&food.optional_nutrients, "iron_mg_per_100g"),
+                optional_nutrient_csv_value(&food.optional_nutrients, "potassium_mg_per_100g"),
+                optional_nutrient_csv_value(&food.optional_nutrients, "vitamin_d_mcg_per_100g"),
+                optional_nutrient_csv_value(&food.optional_nutrients, "vitamin_b12_mcg_per_100g"),
+                optional_nutrient_csv_value(&food.optional_nutrients, "magnesium_mg_per_100g"),
             ])
             .map_err(stringify_error)?;
     }
@@ -1807,13 +1905,13 @@ fn query_active_foods(conn: &Connection) -> Result<Vec<Food>> {
     let mut stmt = conn.prepare(
         r#"SELECT id, source_id, name, name_i18n, brand, note, barcode, default_unit, serving_size_g,
                  kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-                 sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
+                 sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
            FROM foods WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE"#,
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(Food {
             id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, name_i18n: name_i18n_from_json(row.get(3)?), brand: row.get(4)?, note: row.get(5)?, barcode: row.get(6)?, default_unit: row.get(7)?, serving_size_g: row.get(8)?,
-            kcal_per_100g: row.get(9)?, carbs_per_100g: row.get(10)?, fat_per_100g: row.get(11)?, protein_per_100g: row.get(12)?, sugars_per_100g: row.get(13)?, fiber_per_100g: row.get(14)?, salt_per_100g: row.get(15)?, updated_at: row.get(16)?, deleted_at: row.get(17)?,
+            kcal_per_100g: row.get(9)?, carbs_per_100g: row.get(10)?, fat_per_100g: row.get(11)?, protein_per_100g: row.get(12)?, sugars_per_100g: row.get(13)?, fiber_per_100g: row.get(14)?, salt_per_100g: row.get(15)?, optional_nutrients: optional_nutrients_from_json(row.get(16)?), updated_at: row.get(17)?, deleted_at: row.get(18)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1823,13 +1921,13 @@ fn query_active_ingredients(conn: &Connection) -> Result<Vec<Ingredient>> {
     let mut stmt = conn.prepare(
         r#"SELECT id, source_id, name, name_i18n, note, default_unit, serving_size_g,
                  kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-                 sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
+                 sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
            FROM ingredients WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE"#,
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(Ingredient {
             id: row.get(0)?, source_id: row.get(1)?, name: row.get(2)?, name_i18n: name_i18n_from_json(row.get(3)?), note: row.get(4)?, default_unit: row.get(5)?, serving_size_g: row.get(6)?,
-            kcal_per_100g: row.get(7)?, carbs_per_100g: row.get(8)?, fat_per_100g: row.get(9)?, protein_per_100g: row.get(10)?, sugars_per_100g: row.get(11)?, fiber_per_100g: row.get(12)?, salt_per_100g: row.get(13)?, updated_at: row.get(14)?, deleted_at: row.get(15)?,
+            kcal_per_100g: row.get(7)?, carbs_per_100g: row.get(8)?, fat_per_100g: row.get(9)?, protein_per_100g: row.get(10)?, sugars_per_100g: row.get(11)?, fiber_per_100g: row.get(12)?, salt_per_100g: row.get(13)?, optional_nutrients: optional_nutrients_from_json(row.get(14)?), updated_at: row.get(15)?, deleted_at: row.get(16)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1903,7 +2001,7 @@ fn optional_number_key(value: Option<f64>) -> i64 {
 
 fn food_signature(food: &Food) -> String {
     format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         normalize_text(&food.name),
         normalize_text(food.brand.as_deref().unwrap_or("")),
         normalize_text(food.note.as_deref().unwrap_or("")),
@@ -1917,12 +2015,13 @@ fn food_signature(food: &Food) -> String {
         number_key(food.sugars_per_100g),
         number_key(food.fiber_per_100g),
         number_key(food.salt_per_100g),
+        optional_nutrients_to_json(&food.optional_nutrients),
     )
 }
 
 fn ingredient_signature(ingredient: &Ingredient) -> String {
     format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         normalize_text(&ingredient.name),
         normalize_text(ingredient.note.as_deref().unwrap_or("")),
         normalize_text(&ingredient.default_unit),
@@ -1934,6 +2033,7 @@ fn ingredient_signature(ingredient: &Ingredient) -> String {
         number_key(ingredient.sugars_per_100g),
         number_key(ingredient.fiber_per_100g),
         number_key(ingredient.salt_per_100g),
+        optional_nutrients_to_json(&ingredient.optional_nutrients),
     )
 }
 
@@ -2905,6 +3005,7 @@ fn food_from_input(input: FoodInput, source_id: String) -> Result<Food> {
         sugars_per_100g: input.sugars_per_100g.unwrap_or(0.0),
         fiber_per_100g: input.fiber_per_100g.unwrap_or(0.0),
         salt_per_100g: input.salt_per_100g.unwrap_or(0.0),
+        optional_nutrients: clean_optional_nutrients(input.optional_nutrients),
         updated_at: now_ms(),
         deleted_at: None,
     })
@@ -2947,6 +3048,7 @@ fn ingredient_from_input(input: IngredientInput, source_id: String) -> Result<In
         sugars_per_100g: input.sugars_per_100g.unwrap_or(0.0),
         fiber_per_100g: input.fiber_per_100g.unwrap_or(0.0),
         salt_per_100g: input.salt_per_100g.unwrap_or(0.0),
+        optional_nutrients: clean_optional_nutrients(input.optional_nutrients),
         updated_at: now_ms(),
         deleted_at: None,
     })
@@ -3050,7 +3152,7 @@ fn db_query_foods(path: &Path, since: i64, active_only: bool) -> Result<Vec<Food
         r#"
         SELECT id, source_id, name, name_i18n, brand, note, barcode, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-               sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
+               sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
         FROM foods
         WHERE updated_at > ?1 AND deleted_at IS NULL
         ORDER BY name COLLATE NOCASE
@@ -3059,7 +3161,7 @@ fn db_query_foods(path: &Path, since: i64, active_only: bool) -> Result<Vec<Food
         r#"
         SELECT id, source_id, name, name_i18n, brand, note, barcode, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-               sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
+               sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
         FROM foods
         WHERE updated_at > ?1
         ORDER BY name COLLATE NOCASE
@@ -3084,8 +3186,9 @@ fn db_query_foods(path: &Path, since: i64, active_only: bool) -> Result<Vec<Food
             sugars_per_100g: row.get(13)?,
             fiber_per_100g: row.get(14)?,
             salt_per_100g: row.get(15)?,
-            updated_at: row.get(16)?,
-            deleted_at: row.get(17)?,
+            optional_nutrients: optional_nutrients_from_json(row.get(16)?),
+            updated_at: row.get(17)?,
+            deleted_at: row.get(18)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -3105,7 +3208,7 @@ fn db_query_ingredients(path: &Path, since: i64, active_only: bool) -> Result<Ve
         r#"
         SELECT id, source_id, name, name_i18n, note, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-               sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
+               sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
         FROM ingredients
         WHERE updated_at > ?1 AND deleted_at IS NULL
         ORDER BY name COLLATE NOCASE
@@ -3114,7 +3217,7 @@ fn db_query_ingredients(path: &Path, since: i64, active_only: bool) -> Result<Ve
         r#"
         SELECT id, source_id, name, name_i18n, note, default_unit, serving_size_g,
                kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-               sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
+               sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
         FROM ingredients
         WHERE updated_at > ?1
         ORDER BY name COLLATE NOCASE
@@ -3137,8 +3240,9 @@ fn db_query_ingredients(path: &Path, since: i64, active_only: bool) -> Result<Ve
             sugars_per_100g: row.get(11)?,
             fiber_per_100g: row.get(12)?,
             salt_per_100g: row.get(13)?,
-            updated_at: row.get(14)?,
-            deleted_at: row.get(15)?,
+            optional_nutrients: optional_nutrients_from_json(row.get(14)?),
+            updated_at: row.get(15)?,
+            deleted_at: row.get(16)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -3423,8 +3527,8 @@ fn upsert_food(conn: &Connection, food: &Food) -> Result<()> {
         INSERT INTO foods (
             id, source_id, name, name_i18n, brand, catalog_kind, note, barcode, default_unit, serving_size_g,
             kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-            sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, 'food', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 'food', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
         ON CONFLICT(id) DO UPDATE SET
             source_id = excluded.source_id,
             name = excluded.name,
@@ -3442,6 +3546,7 @@ fn upsert_food(conn: &Connection, food: &Food) -> Result<()> {
             sugars_per_100g = excluded.sugars_per_100g,
             fiber_per_100g = excluded.fiber_per_100g,
             salt_per_100g = excluded.salt_per_100g,
+            optional_nutrients_json = excluded.optional_nutrients_json,
             updated_at = excluded.updated_at,
             deleted_at = excluded.deleted_at
         "#,
@@ -3462,6 +3567,7 @@ fn upsert_food(conn: &Connection, food: &Food) -> Result<()> {
             food.sugars_per_100g,
             food.fiber_per_100g,
             food.salt_per_100g,
+            optional_nutrients_to_json(&food.optional_nutrients),
             food.updated_at,
             food.deleted_at
         ],
@@ -3478,8 +3584,8 @@ fn upsert_ingredient(conn: &Connection, ingredient: &Ingredient) -> Result<()> {
         INSERT INTO ingredients (
             id, source_id, name, name_i18n, note, default_unit, serving_size_g,
             kcal_per_100g, carbs_per_100g, fat_per_100g, protein_per_100g,
-            sugars_per_100g, fiber_per_100g, salt_per_100g, updated_at, deleted_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            sugars_per_100g, fiber_per_100g, salt_per_100g, optional_nutrients_json, updated_at, deleted_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
         ON CONFLICT(id) DO UPDATE SET
             source_id = excluded.source_id,
             name = excluded.name,
@@ -3494,6 +3600,7 @@ fn upsert_ingredient(conn: &Connection, ingredient: &Ingredient) -> Result<()> {
             sugars_per_100g = excluded.sugars_per_100g,
             fiber_per_100g = excluded.fiber_per_100g,
             salt_per_100g = excluded.salt_per_100g,
+            optional_nutrients_json = excluded.optional_nutrients_json,
             updated_at = excluded.updated_at,
             deleted_at = excluded.deleted_at
         "#,
@@ -3512,6 +3619,7 @@ fn upsert_ingredient(conn: &Connection, ingredient: &Ingredient) -> Result<()> {
             ingredient.sugars_per_100g,
             ingredient.fiber_per_100g,
             ingredient.salt_per_100g,
+            optional_nutrients_to_json(&ingredient.optional_nutrients),
             ingredient.updated_at,
             ingredient.deleted_at
         ],
@@ -3561,6 +3669,7 @@ fn parse_food_csv(db_path: &Path, csv_text: &str) -> Result<ImportPreview> {
             sugars_per_100g: parse_number_default(&headers, &record, "sugars_per_100g", 0.0, &mut errors),
             fiber_per_100g: parse_number_default(&headers, &record, "fiber_per_100g", 0.0, &mut errors),
             salt_per_100g: parse_number_default(&headers, &record, "salt_per_100g", 0.0, &mut errors),
+            optional_nutrients: parse_optional_nutrients_csv(&headers, &record, &mut errors),
             updated_at: now_ms(),
             deleted_at: None,
         };

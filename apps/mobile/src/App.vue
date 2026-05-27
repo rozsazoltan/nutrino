@@ -40,6 +40,30 @@ type LocalEditorKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 type LocalRecipeDraftItem = { food_id: string; amount_g: number; unit: 'g' | 'serving'; query: string; pickerOpen: boolean };
 type MealNoteSuggestion = { key: string; title: string; description: string; kcal: number; lastUsedAt: number; count: number };
 
+type OptionalNutrientDefinition = {
+  key: string;
+  labelKey: string;
+  unit: 'g' | 'mg' | 'mcg';
+  dailyLimit: number;
+  limitKind: 'max' | 'target';
+  field?: 'sugars_per_100g' | 'fiber_per_100g' | 'salt_per_100g';
+};
+
+const optionalNutrientDefinitions: OptionalNutrientDefinition[] = [
+  { key: 'sugars_per_100g', field: 'sugars_per_100g', labelKey: 'sugars', unit: 'g', dailyLimit: 50, limitKind: 'max' },
+  { key: 'fiber_per_100g', field: 'fiber_per_100g', labelKey: 'fiber', unit: 'g', dailyLimit: 30, limitKind: 'target' },
+  { key: 'salt_per_100g', field: 'salt_per_100g', labelKey: 'salt', unit: 'g', dailyLimit: 5, limitKind: 'max' },
+  { key: 'saturated_fat_per_100g', labelKey: 'saturatedFat', unit: 'g', dailyLimit: 20, limitKind: 'max' },
+  { key: 'sodium_mg_per_100g', labelKey: 'sodium', unit: 'mg', dailyLimit: 2300, limitKind: 'max' },
+  { key: 'calcium_mg_per_100g', labelKey: 'calcium', unit: 'mg', dailyLimit: 1000, limitKind: 'target' },
+  { key: 'iron_mg_per_100g', labelKey: 'iron', unit: 'mg', dailyLimit: 18, limitKind: 'target' },
+  { key: 'potassium_mg_per_100g', labelKey: 'potassium', unit: 'mg', dailyLimit: 3500, limitKind: 'target' },
+  { key: 'vitamin_d_mcg_per_100g', labelKey: 'vitaminD', unit: 'mcg', dailyLimit: 20, limitKind: 'target' },
+  { key: 'vitamin_b12_mcg_per_100g', labelKey: 'vitaminB12', unit: 'mcg', dailyLimit: 2.4, limitKind: 'target' },
+  { key: 'magnesium_mg_per_100g', labelKey: 'magnesium', unit: 'mg', dailyLimit: 400, limitKind: 'target' },
+];
+
+
 type MealSection = {
   key: MealType | 'activity';
   label: string;
@@ -101,6 +125,7 @@ const localCatalogForm = reactive({
   name: '', name_i18n: {} as LocalizedNameMap, brand: '', note: '', barcode: '', default_unit: 'g', serving_size_g: null as number | null,
   kcal_per_100g: null as number | null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
   sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0,
+  optional_nutrients: {} as Record<string, number | null>,
   description: '', total_weight_g: null as number | null, extra_kcal: 0 as number | null, servings_count: null as number | null,
   code: '', activity_type: 'custom', met: 0, kcal_per_min: null as number | null,
 });
@@ -1122,6 +1147,8 @@ const diaryKcalTone = computed(() => kcalTone(consumedKcal.value, dailyGoal.valu
 const homeShellToneClass = computed(() => activeTab.value === 'home' ? `home-${diaryKcalTone.value}` : '');
 const selectedDayAnalysis = computed(() => buildDailyAnalysis(selectedDate.value));
 const selectedDayMacroSummary = computed(() => dayMacroSummary(selectedDate.value));
+const selectedDayNutrientRows = computed(() => buildDailyNutrientRows(currentDayIntakes.value));
+const exceededNutrientCount = computed(() => selectedDayNutrientRows.value.filter((row) => row.isOver).length);
 const currentDeficitStreak = computed(() => calculateDeficitStreak(selectedDate.value));
 const bestDeficitStreak = computed(() => calculateBestDeficitStreak(30));
 const analysisDailyRows = computed(() => buildDailyAnalysisRows(14, selectedDate.value));
@@ -6420,7 +6447,13 @@ for (const [language, values] of Object.entries(completeMobileLanguageTranslatio
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
 }
 const mobileVisibleTextTranslations: Record<string, Record<string, string>> = {
-  en: { version: 'Version' }, hu: { version: 'Verzió' }, de: { version: 'Version' }, fr: { version: 'Version' }, ru: { version: 'Версия' }, uk: { version: 'Версія' }, zh: { version: '版本' }, sk: { version: 'Verzia' }, ro: { version: 'Versiune' }, cs: { version: 'Verze' }, sl: { version: 'Različica' }, hr: { version: 'Verzija' }, pl: { version: 'Wersja' }, es: { version: 'Versión' }, pt: { version: 'Versão' }
+  en: {
+    version: 'Version', todayNutrients: "Today's nutrients", importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber'
+  },
+  hu: {
+    version: 'Verzió', todayNutrients: 'Mai tápanyagok', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost'
+  },
+  de: { version: 'Version' }, fr: { version: 'Version' }, ru: { version: 'Версия' }, uk: { version: 'Версія' }, zh: { version: '版本' }, sk: { version: 'Verzia' }, ro: { version: 'Versiune' }, cs: { version: 'Verze' }, sl: { version: 'Različica' }, hr: { version: 'Verzija' }, pl: { version: 'Wersja' }, es: { version: 'Versión' }, pt: { version: 'Versão' }
 };
 for (const [language, values] of Object.entries(mobileVisibleTextTranslations)) {
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
@@ -6518,6 +6551,64 @@ function macroForEntries(entries: Intake[]) {
   return { kcal: Math.round(kcal), carbs: Math.round(carbs), fat: Math.round(fat), protein: Math.round(protein) };
 }
 
+
+function optionalNutrientPer100g(item: Food | undefined, nutrient: OptionalNutrientDefinition): number {
+  if (!item) return 0;
+  if (nutrient.field) return Number(item[nutrient.field] || 0);
+  return Number(item.optional_nutrients?.[nutrient.key] || 0);
+}
+
+function setOptionalNutrientValue(nutrient: OptionalNutrientDefinition, value: unknown) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    if (nutrient.field) (localCatalogForm as any)[nutrient.field] = 0;
+    else delete localCatalogForm.optional_nutrients[nutrient.key];
+    return;
+  }
+  const numeric = Number(raw);
+  if (nutrient.field) {
+    (localCatalogForm as any)[nutrient.field] = Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+    return;
+  }
+  if (Number.isFinite(numeric)) localCatalogForm.optional_nutrients[nutrient.key] = Math.max(0, numeric);
+}
+
+function localOptionalNutrientValue(nutrient: OptionalNutrientDefinition): number | null {
+  if (nutrient.field) return Number((localCatalogForm as any)[nutrient.field] || 0);
+  return localCatalogForm.optional_nutrients[nutrient.key] ?? null;
+}
+
+function setOptionalNutrientValueFromEvent(nutrient: OptionalNutrientDefinition, event: Event) {
+  setOptionalNutrientValue(nutrient, (event.target as HTMLInputElement | null)?.value);
+}
+
+function formatNutrientAmount(value: number, unit: string): string {
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const rounded = safeValue >= 100 ? Math.round(safeValue) : Math.round(safeValue * 10) / 10;
+  return `${rounded}${unit}`;
+}
+
+function buildDailyNutrientRows(entries: Intake[]) {
+  return optionalNutrientDefinitions.map((nutrient) => {
+    const value = entries.reduce((sum, entry) => {
+      const food = foodFromIntake(entry);
+      return sum + optionalNutrientPer100g(food, nutrient) * Math.max(0, Number(entry.amount_g || 0)) / 100;
+    }, 0);
+    const limit = nutrient.dailyLimit;
+    const progress = clamp(value / Math.max(1, limit));
+    return {
+      key: nutrient.key,
+      label: t(nutrient.labelKey),
+      value,
+      limit,
+      unit: nutrient.unit,
+      progress,
+      limitKind: nutrient.limitKind,
+      isOver: value > limit,
+    };
+  });
+}
+
 function sectionSummary(section: MealSection) {
   if (section.key === 'activity') {
     const kcal = currentDayActivities.value.reduce((sum, entry) => sum + entry.kcal, 0);
@@ -6579,7 +6670,7 @@ function resetLocalCatalogForm() {
   Object.assign(localCatalogForm, {
     name: '', name_i18n: {}, brand: '', note: '', barcode: '', default_unit: 'g', serving_size_g: null,
     kcal_per_100g: null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
-    sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0,
+    sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0, optional_nutrients: {},
     description: '', total_weight_g: null, extra_kcal: 0, servings_count: null,
     code: '', activity_type: 'custom', met: 0, kcal_per_min: null,
   });
@@ -6608,6 +6699,7 @@ function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient 
       sugars_per_100g: entry?.sugars_per_100g ?? 0,
       fiber_per_100g: entry?.fiber_per_100g ?? 0,
       salt_per_100g: entry?.salt_per_100g ?? 0,
+      optional_nutrients: { ...(entry?.optional_nutrients ?? {}) },
     });
   } else if (kind === 'recipe') {
     const recipe = item as Recipe | undefined;
@@ -6748,6 +6840,10 @@ const localRecipeNutritionPreview = computed(() => {
   let carbs = 0;
   let fat = 0;
   let protein = 0;
+  let sugars = 0;
+  let fiber = 0;
+  let salt = 0;
+  const optionalNutrients: Record<string, number> = {};
   for (const row of localRecipeItems.value) {
     const item = localRecipeRowItem(row);
     const amount = Math.max(0, Number(row.amount_g || 0));
@@ -6757,6 +6853,13 @@ const localRecipeNutritionPreview = computed(() => {
     carbs += Number(item.carbs_per_100g || 0) * amount / 100;
     fat += Number(item.fat_per_100g || 0) * amount / 100;
     protein += Number(item.protein_per_100g || 0) * amount / 100;
+    sugars += Number(item.sugars_per_100g || 0) * amount / 100;
+    fiber += Number(item.fiber_per_100g || 0) * amount / 100;
+    salt += Number(item.salt_per_100g || 0) * amount / 100;
+    for (const [key, rawValue] of Object.entries(item.optional_nutrients || {})) {
+      const value = Number(rawValue || 0);
+      if (Number.isFinite(value)) optionalNutrients[key] = (optionalNutrients[key] || 0) + value * amount / 100;
+    }
   }
   const extraKcal = Number(localCatalogForm.extra_kcal || 0);
   const finalWeight = weight;
@@ -6777,6 +6880,10 @@ const localRecipeNutritionPreview = computed(() => {
     carbsPer100g: roundOne(carbs * ratio),
     fatPer100g: roundOne(fat * ratio),
     proteinPer100g: roundOne(protein * ratio),
+    sugarsPer100g: roundOne(sugars * ratio),
+    fiberPer100g: roundOne(fiber * ratio),
+    saltPer100g: roundOne(salt * ratio),
+    optionalNutrients: Object.fromEntries(Object.entries(optionalNutrients).map(([key, value]) => [key, roundOne(value * ratio)])),
   };
 });
 
@@ -6822,6 +6929,7 @@ function saveLocalCatalogEditor() {
       sugars_per_100g: Number(localCatalogForm.sugars_per_100g || 0),
       fiber_per_100g: Number(localCatalogForm.fiber_per_100g || 0),
       salt_per_100g: Number(localCatalogForm.salt_per_100g || 0),
+      optional_nutrients: { ...localCatalogForm.optional_nutrients },
       updated_at: now, deleted_at: null, pending_sync: true,
     };
     state.ingredients = [...state.ingredients.filter((entry) => entry.id !== id), ingredient].sort((a, b) => localizedName(a).localeCompare(localizedName(b), currentLocale()));
@@ -6842,6 +6950,7 @@ function saveLocalCatalogEditor() {
       sugars_per_100g: Number(localCatalogForm.sugars_per_100g || 0),
       fiber_per_100g: Number(localCatalogForm.fiber_per_100g || 0),
       salt_per_100g: Number(localCatalogForm.salt_per_100g || 0),
+      optional_nutrients: { ...localCatalogForm.optional_nutrients },
       updated_at: now, deleted_at: null, pending_sync: true,
     };
     state.foods = [...state.foods.filter((entry) => entry.id !== id), food].sort((a, b) => localizedName(a).localeCompare(localizedName(b), currentLocale()));
@@ -6990,6 +7099,7 @@ function addMealNoteFromForm() {
     sugars_per_100g: 0,
     fiber_per_100g: 0,
     salt_per_100g: 0,
+    optional_nutrients: {},
     updated_at: now,
   };
   const payload = {
@@ -7365,6 +7475,10 @@ type CustomRecipeTotals = {
   carbs: number;
   fat: number;
   protein: number;
+  sugars: number;
+  fiber: number;
+  salt: number;
+  optionalNutrients: Record<string, number>;
   components: Array<{ key: string; food_id: string; amount_g: number; base_amount_g: number }>;
 };
 
@@ -7381,6 +7495,10 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
   let carbs = 0;
   let fat = 0;
   let protein = 0;
+  let sugars = 0;
+  let fiber = 0;
+  let salt = 0;
+  const optionalNutrients: Record<string, number> = {};
   const components: Array<{ key: string; food_id: string; amount_g: number; base_amount_g: number }> = [];
 
   for (const row of rows) {
@@ -7391,6 +7509,13 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
     carbs += Number(row.food.carbs_per_100g || 0) * amount / 100;
     fat += Number(row.food.fat_per_100g || 0) * amount / 100;
     protein += Number(row.food.protein_per_100g || 0) * amount / 100;
+    sugars += Number(row.food.sugars_per_100g || 0) * amount / 100;
+    fiber += Number(row.food.fiber_per_100g || 0) * amount / 100;
+    salt += Number(row.food.salt_per_100g || 0) * amount / 100;
+    for (const [key, rawValue] of Object.entries(row.food.optional_nutrients || {})) {
+      const value = Number(rawValue || 0);
+      if (Number.isFinite(value)) optionalNutrients[key] = (optionalNutrients[key] || 0) + value * amount / 100;
+    }
     components.push({ key: row.key, food_id: row.food.id, amount_g: amount, base_amount_g: row.baseAmount });
   }
 
@@ -7407,6 +7532,10 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
     carbs,
     fat,
     protein,
+    sugars,
+    fiber,
+    salt,
+    optionalNutrients,
     components,
   };
 }
@@ -7425,6 +7554,10 @@ function buildCustomRecipeSnapshot(base: Food): Food {
     carbs_per_100g: totals.carbs * ratio,
     fat_per_100g: totals.fat * ratio,
     protein_per_100g: totals.protein * ratio,
+    sugars_per_100g: totals.sugars * ratio,
+    fiber_per_100g: totals.fiber * ratio,
+    salt_per_100g: totals.salt * ratio,
+    optional_nutrients: Object.fromEntries(Object.entries(totals.optionalNutrients).map(([key, value]) => [key, value * ratio])),
     recipe_components: totals.components,
     recipe_extra_kcal: totals.extraKcal,
     recipe_ingredient_weight_g: totals.ingredientWeight,
@@ -9499,6 +9632,22 @@ function setTab(tab: Tab) {
           <span><b>{{ selectedDayMacroSummary.fat }}</b>/<em>{{ selectedDayMacroSummary.fatGoal }}</em> {{ t('fat') }}</span>
           <span><b>{{ selectedDayMacroSummary.protein }}</b>/<em>{{ selectedDayMacroSummary.proteinGoal }}</em> {{ t('protein') }}</span>
         </div>
+        <details class="today-nutrients-dropdown">
+          <summary>
+            <span>{{ t('todayNutrients') }}</span>
+            <b v-if="exceededNutrientCount" class="nutrient-warning-badge">! {{ exceededNutrientCount }}</b>
+          </summary>
+          <div class="today-nutrient-list">
+            <div v-for="row in selectedDayNutrientRows" :key="row.key" class="today-nutrient-row" :class="{ over: row.isOver }">
+              <div class="today-nutrient-copy">
+                <b>{{ row.label }}</b>
+                <small>{{ formatNutrientAmount(row.value, row.unit) }} / {{ formatNutrientAmount(row.limit, row.unit) }} · {{ t(row.limitKind === 'max' ? 'dailyLimit' : 'dailyTarget') }}</small>
+              </div>
+              <span v-if="row.isOver" class="nutrient-row-alert">!</span>
+              <div class="today-nutrient-meter"><span :style="{ width: `${Math.min(100, Math.round(row.progress * 100))}%` }"></span></div>
+            </div>
+          </div>
+        </details>
         <div v-if="editingDayWeight" class="inline-form day-weight-form">
           <input v-model.number="weightInput" class="input" type="number" min="1" step="0.1" :placeholder="t('weightForThisDay')"  @focus="selectNumberInput"  @pointerdown="clearNumberInputOnDoubleTap"  inputmode="decimal" />
           <button class="filled-button" @click="recordWeight('manual')">{{ t('saveWeight') }}</button>
@@ -9902,14 +10051,24 @@ function setTab(tab: Tab) {
             </div>
             <label class="field-label">{{ t('note') }}</label>
             <input v-model="localCatalogForm.note" class="input" :placeholder="t('optional')" />
-            <div class="form-grid-two">
-              <label class="field-label">{{ t('kcalPer100g') }}<input v-model.number="localCatalogForm.kcal_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
-              <label class="field-label">{{ t('servingSizeG') }}<input v-model.number="localCatalogForm.serving_size_g" class="input" type="number" min="0" step="0.1" inputmode="decimal" :placeholder="t('optional')" /></label>
-              <label class="field-label">{{ t('carbs') }}<input v-model.number="localCatalogForm.carbs_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
-              <label class="field-label">{{ t('fat') }}<input v-model.number="localCatalogForm.fat_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
-              <label class="field-label">{{ t('protein') }}<input v-model.number="localCatalogForm.protein_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
-              <label class="field-label">{{ t('salt') }}<input v-model.number="localCatalogForm.salt_per_100g" class="input" type="number" min="0" step="0.01" inputmode="decimal" /></label>
+            <div class="nutrient-form-section">
+              <b>{{ t('importantNutrients') }}</b>
+              <div class="form-grid-two">
+                <label class="field-label">{{ t('kcalPer100g') }}<input v-model.number="localCatalogForm.kcal_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+                <label class="field-label">{{ t('servingSizeG') }}<input v-model.number="localCatalogForm.serving_size_g" class="input" type="number" min="0" step="0.1" inputmode="decimal" :placeholder="t('optional')" /></label>
+                <label class="field-label">{{ t('carbs') }}<input v-model.number="localCatalogForm.carbs_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+                <label class="field-label">{{ t('fat') }}<input v-model.number="localCatalogForm.fat_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+                <label class="field-label">{{ t('protein') }}<input v-model.number="localCatalogForm.protein_per_100g" class="input" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+              </div>
             </div>
+            <details class="optional-nutrients-panel" open>
+              <summary><span>{{ t('optionalNutrients') }}</span><small>{{ t('optionalNutrientsHint') }}</small></summary>
+              <div class="form-grid-two">
+                <label v-for="nutrient in optionalNutrientDefinitions" :key="nutrient.key" class="field-label">{{ t(nutrient.labelKey) }} / 100g
+                  <input :value="localOptionalNutrientValue(nutrient)" class="input" type="number" min="0" step="0.01" inputmode="decimal" :placeholder="t('optional')" @input="setOptionalNutrientValueFromEvent(nutrient, $event)" />
+                </label>
+              </div>
+            </details>
           </template>
 
           <template v-else-if="localEditorKind === 'recipe'">

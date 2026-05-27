@@ -267,6 +267,32 @@ export function normalizeGitHubSource(source: Partial<GitHubCsvSource> | null | 
 }
 
 
+
+function normalizeOptionalNutrients(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object') return {};
+  const result: Record<string, number> = {};
+  for (const [rawKey, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const key = String(rawKey || '').trim();
+    const numberValue = Number(rawValue);
+    if (!key || !Number.isFinite(numberValue)) continue;
+    result[key] = Math.max(0, numberValue);
+  }
+  return result;
+}
+
+function addScaledOptionalNutrients(target: Record<string, number>, source: Record<string, number> | null | undefined, amountG: number) {
+  const scale = Math.max(0, Number(amountG || 0)) / 100;
+  if (!scale) return;
+  for (const [key, value] of Object.entries(normalizeOptionalNutrients(source))) {
+    target[key] = (target[key] || 0) + value * scale;
+  }
+}
+
+function scaleOptionalNutrients(source: Record<string, number>, ratio: number): Record<string, number> {
+  const safeRatio = Number.isFinite(ratio) ? ratio : 0;
+  return Object.fromEntries(Object.entries(source).map(([key, value]) => [key, value * safeRatio]));
+}
+
 function normalizeNameI18n(value: unknown): LocalizedNameMap {
   if (!value || typeof value !== 'object') return {};
   const result: LocalizedNameMap = {};
@@ -291,6 +317,7 @@ export function normalizeFood(food: Food): Food {
     sugars_per_100g: food.sugars_per_100g ?? 0,
     fiber_per_100g: food.fiber_per_100g ?? 0,
     salt_per_100g: food.salt_per_100g ?? 0,
+    optional_nutrients: normalizeOptionalNutrients(food.optional_nutrients),
     barcode: food.barcode ?? null,
   };
 }
@@ -305,6 +332,7 @@ export function normalizeIngredient(ingredient: Ingredient): Ingredient {
     sugars_per_100g: ingredient.sugars_per_100g ?? 0,
     fiber_per_100g: ingredient.fiber_per_100g ?? 0,
     salt_per_100g: ingredient.salt_per_100g ?? 0,
+    optional_nutrients: normalizeOptionalNutrients(ingredient.optional_nutrients),
   };
 }
 
@@ -326,6 +354,7 @@ export function ingredientAsFood(ingredient: Ingredient): Food {
     sugars_per_100g: ingredient.sugars_per_100g ?? 0,
     fiber_per_100g: ingredient.fiber_per_100g ?? 0,
     salt_per_100g: ingredient.salt_per_100g ?? 0,
+    optional_nutrients: normalizeOptionalNutrients(ingredient.optional_nutrients),
     barcode: null,
     updated_at: ingredient.updated_at,
     deleted_at: ingredient.deleted_at,
@@ -349,6 +378,7 @@ function foodToIngredient(food: Food): Ingredient {
     sugars_per_100g: food.sugars_per_100g ?? 0,
     fiber_per_100g: food.fiber_per_100g ?? 0,
     salt_per_100g: food.salt_per_100g ?? 0,
+    optional_nutrients: normalizeOptionalNutrients(food.optional_nutrients),
     updated_at: food.updated_at,
     deleted_at: food.deleted_at,
     pending_sync: food.pending_sync,
@@ -383,6 +413,7 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
       sugars_per_100g: 0,
       fiber_per_100g: 0,
       salt_per_100g: 0,
+      optional_nutrients: {},
       updated_at: recipe.updated_at,
       deleted_at: recipe.deleted_at,
     };
@@ -395,6 +426,10 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
   let carbs = 0;
   let fat = 0;
   let protein = 0;
+  let sugars = 0;
+  let fiber = 0;
+  let salt = 0;
+  const optionalNutrients: Record<string, number> = {};
 
   for (const item of items) {
     const recipeRef = item.food_id.startsWith('recipe:') ? item.food_id.slice('recipe:'.length) : '';
@@ -423,6 +458,10 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
     carbs += food.carbs_per_100g * item.amount_g / 100;
     fat += food.fat_per_100g * item.amount_g / 100;
     protein += food.protein_per_100g * item.amount_g / 100;
+    sugars += Number(food.sugars_per_100g || 0) * item.amount_g / 100;
+    fiber += Number(food.fiber_per_100g || 0) * item.amount_g / 100;
+    salt += Number(food.salt_per_100g || 0) * item.amount_g / 100;
+    addScaledOptionalNutrients(optionalNutrients, food.optional_nutrients, item.amount_g);
   }
 
   visited.delete(recipe.id);
@@ -446,9 +485,10 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
     carbs_per_100g: carbs * ratio,
     fat_per_100g: fat * ratio,
     protein_per_100g: protein * ratio,
-    sugars_per_100g: 0,
-    fiber_per_100g: 0,
-    salt_per_100g: 0,
+    sugars_per_100g: sugars * ratio,
+    fiber_per_100g: fiber * ratio,
+    salt_per_100g: salt * ratio,
+    optional_nutrients: scaleOptionalNutrients(optionalNutrients, ratio),
     updated_at: recipe.updated_at,
     deleted_at: recipe.deleted_at,
   };

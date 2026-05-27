@@ -1952,3 +1952,29 @@ body:has(.modal-backdrop) {
     border-radius: 1.2rem;
   }
 }
+
+/* v0.12.12 optional nutrient editor sections */
+.nutrient-form-section,
+.optional-nutrients-panel {
+  display: grid;
+  gap: .75rem;
+  border: 1px solid rgba(148, 163, 184, .22);
+  border-radius: 1rem;
+  background: rgba(148, 163, 184, .08);
+  padding: .9rem;
+}
+.nutrient-form-section > b,
+.optional-nutrients-panel > summary span {
+  font-weight: 800;
+  color: var(--desktop-text, #e5efe6);
+}
+.optional-nutrients-panel > summary {
+  display: grid;
+  gap: .15rem;
+  cursor: pointer;
+  list-style: none;
+}
+.optional-nutrients-panel > summary::-webkit-details-marker { display: none; }
+.optional-nutrients-panel > summary small {
+  color: var(--muted, #9aa89f);
+}
