@@ -16,7 +16,7 @@ const androidAppGradlePaths = [
   path.join(androidDir, 'app', 'build.gradle.kts'),
   path.join(androidDir, 'app', 'build.gradle'),
 ];
-const NATIVE_STATE_VERSION = 9;
+const NATIVE_STATE_VERSION = 10;
 const forceNativeClean = process.argv.includes('--force-native-clean')
   || process.env.NUTRINO_FORCE_ANDROID_NATIVE_CLEAN === '1';
 
@@ -539,8 +539,8 @@ class MainActivity : TauriActivity() {
         fun dispatch(attempt: Int) {
             val webView = findWebView(window?.decorView)
             if (webView == null) {
-                if (attempt < 16) {
-                    window?.decorView?.postDelayed({ dispatch(attempt + 1) }, 120)
+                if (attempt < 60) {
+                    window?.decorView?.postDelayed({ dispatch(attempt + 1) }, 150)
                 }
                 return
             }

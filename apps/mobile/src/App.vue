@@ -76,14 +76,13 @@ type ScheduledReminderConfig = {
   title: string;
   body: string;
   kind: NutrinoNotificationKind;
-  actionTypeId: string;
+  actionTypeId?: string;
   mealType?: MealType;
 };
 
 const NOTIFICATION_CHANNEL_ID = 'nutrino-reminders';
 const NOTIFICATION_GROUP_ID = 'nutrino-reminders';
 const NOTIFICATION_ICON = 'nutrino_notification';
-const NOTIFICATION_LARGE_ICON = 'nutrino_notification_large';
 const WEB_NOTIFICATION_ICON = '/nutrino-logo.svg';
 const NOTIFICATION_ICON_COLOR = '#2f7d32';
 const NOTIFICATION_ACTION_TYPES = {
@@ -222,6 +221,8 @@ let notificationActionListener: PluginListener | null = null;
 let lastNotificationActionSignature = '';
 let lastNotificationActionHandledAt = 0;
 const nativeReminderSchedulesActive = ref(false);
+const weightReminderModalOpen = ref(false);
+const notificationHighlightedMealType = ref<MealType | null>(null);
 
 const languageSearch = ref('');
 const unlockedDiaryDate = ref<string | null>(null);
@@ -7557,6 +7558,23 @@ function editSelectedDayWeight() {
   nextTick(() => scrollFocusedInputIntoView());
 }
 
+function openWeightReminderModal() {
+  activeTab.value = 'home';
+  weightInput.value = currentDayWeightKg.value ? Number(currentDayWeightKg.value) : null;
+  editingDayWeight.value = false;
+  weightReminderModalOpen.value = true;
+  nextTick(() => scrollFocusedInputIntoView());
+}
+
+function closeWeightReminderModal() {
+  weightReminderModalOpen.value = false;
+  weightInput.value = null;
+}
+
+function saveWeightReminderModal() {
+  recordWeight('mobile_prompt');
+}
+
 function inSelectedDay(ms: number) {
   return ms >= dayStartMs(activeLogDateKey.value) && ms < dayEndMs(activeLogDateKey.value);
 }
@@ -8500,11 +8518,16 @@ function advancedExportHintText(): string {
     : 'Prepares the current channel data so it can be transferred to the other channel.';
 }
 
+function shouldAttachNativeNotificationActions(): boolean {
+  // Android currently renders Tauri notification action buttons without labels on affected SystemUI/plugin versions.
+  // Keep notification taps interactive there, but avoid blank action rows.
+  return isTauriRuntime() && isMobileRuntime() && !isAndroidRuntime();
+}
+
 function notificationVisualOptions(): Partial<NotificationOptions> {
   if (isTauriRuntime() && isAndroidRuntime()) {
     return {
       icon: NOTIFICATION_ICON,
-      largeIcon: NOTIFICATION_LARGE_ICON,
       iconColor: NOTIFICATION_ICON_COLOR,
     };
   }
@@ -8531,7 +8554,7 @@ function buildNotificationOptions(options: {
     ...notificationVisualOptions(),
   };
   if (options.id !== undefined) notification.id = options.id;
-  if (options.actionTypeId) notification.actionTypeId = options.actionTypeId;
+  if (options.actionTypeId && shouldAttachNativeNotificationActions()) notification.actionTypeId = options.actionTypeId;
   if (options.schedule) notification.schedule = options.schedule;
   if (isTauriRuntime() && isAndroidRuntime()) notification.channelId = NOTIFICATION_CHANNEL_ID;
   if (options.kind) {
@@ -8557,7 +8580,7 @@ async function notifyUser(title: string, body: string, options: {
 } = {}) {
   try {
     if (await isPermissionGranted()) {
-      if (options.actionTypeId && isTauriRuntime() && isMobileRuntime()) {
+      if (options.actionTypeId && shouldAttachNativeNotificationActions()) {
         try {
           await registerNotificationActionTypes();
         } catch {
@@ -8586,7 +8609,7 @@ function mealNotificationActionType(mealType: MealType): string {
 }
 
 async function registerNotificationActionTypes() {
-  if (!isTauriRuntime() || !isMobileRuntime()) return;
+  if (!shouldAttachNativeNotificationActions()) return;
   await registerActionTypes([
     {
       id: NOTIFICATION_ACTION_TYPES.daily,
@@ -8650,7 +8673,6 @@ function scheduledReminderDefinitions(): ScheduledReminderConfig[] {
       title: t('dailyReminder'),
       body: t('dailyReminderBody'),
       kind: 'daily',
-      actionTypeId: NOTIFICATION_ACTION_TYPES.daily,
     });
   }
   if (state.settings.daily_weight_reminder_enabled) {
@@ -8718,7 +8740,7 @@ async function sendDevReminderTest(kind: 'daily' | 'weight' | 'mealMorning' | 'm
     actionTypeId: mealNotificationActionType(mealType),
   });
   const reminder = kind === 'daily'
-    ? { id: nextDevNotificationId(), key: 'test.daily', time: '', title: t('dailyReminder'), body: t('dailyReminderBody'), kind: 'daily', actionTypeId: NOTIFICATION_ACTION_TYPES.daily } satisfies ScheduledReminderConfig
+    ? { id: nextDevNotificationId(), key: 'test.daily', time: '', title: t('dailyReminder'), body: t('dailyReminderBody'), kind: 'daily' } satisfies ScheduledReminderConfig
     : kind === 'weight'
       ? { id: nextDevNotificationId(), key: 'test.weight', time: '', title: t('weightReminderTitle'), body: t('weightReminderBody'), kind: 'weight', actionTypeId: NOTIFICATION_ACTION_TYPES.weight } satisfies ScheduledReminderConfig
       : kind === 'mealMorning'
@@ -8874,6 +8896,8 @@ function closeTransientSurfacesForNotificationAction() {
   settingsOpen.value = false;
   settingsDialog.value = null;
   quickAddOpen.value = false;
+  weightReminderModalOpen.value = false;
+  notificationHighlightedMealType.value = null;
   backupProfilesOpen.value = false;
   duplicateMealTargetOpen.value = false;
   entryActionSheet.value = null;
@@ -8897,9 +8921,7 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
     : action;
 
   if (effectiveAction === 'log-weight') {
-    activeTab.value = 'diary';
-    weightInput.value = currentDayWeightKg.value;
-    editingDayWeight.value = true;
+    openWeightReminderModal();
     scrollToPageTop();
     return;
   }
@@ -8913,7 +8935,8 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
     ? extra.mealType || 'breakfast'
     : mealTypeFromNotificationAction(effectiveAction, extra);
   if (mealType) {
-    await openFoodAdd(mealType);
+    openQuickAddMenu(mealType);
+    scrollToPageTop();
     return;
   }
 
@@ -8985,7 +9008,6 @@ function checkReminderNotifications() {
       markReminderSent(key);
       notifyUser(t('dailyReminder'), t('dailyReminderBody'), {
         kind: 'daily',
-        actionTypeId: NOTIFICATION_ACTION_TYPES.daily,
         scheduledTime: state.settings.daily_reminder_time,
       });
     }
@@ -9123,12 +9145,22 @@ async function openActivityAdd() {
   activityPickerOpen.value = true;
 }
 
-function openQuickAddMenu() {
+function closeQuickAddMenu() {
+  quickAddOpen.value = false;
+  notificationHighlightedMealType.value = null;
+}
+
+function openQuickAddMenu(highlightedMealType: MealType | null = null) {
+  notificationHighlightedMealType.value = highlightedMealType;
   quickAddOpen.value = true;
 }
 
+function isNotificationHighlightedQuickAdd(section: MealSection): boolean {
+  return section.key !== 'activity' && notificationHighlightedMealType.value === section.key;
+}
+
 async function chooseQuickAdd(section: MealSection) {
-  quickAddOpen.value = false;
+  closeQuickAddMenu();
   if (section.key === 'activity') {
     await openActivityAdd();
     return;
@@ -9352,6 +9384,7 @@ function recordWeight(source: WeightLog['source'] = 'manual') {
   upsertWeightForDay(value, source);
   weightInput.value = null;
   editingDayWeight.value = false;
+  weightReminderModalOpen.value = false;
   showToast(t('weightSaved'));
 }
 
@@ -10902,13 +10935,13 @@ function setTab(tab: Tab) {
       </article>
     </section>
 
-    <button v-if="activeTab === 'home' && !addMode && !settingsOpen" class="home-quick-fab" :aria-label="t('addNewItem')" @click="openQuickAddMenu">+</button>
+    <button v-if="activeTab === 'home' && !addMode && !settingsOpen" class="home-quick-fab" :aria-label="t('addNewItem')" @click="openQuickAddMenu()">+</button>
 
     <Teleport to="body">
-      <div v-if="quickAddOpen" class="quick-add-backdrop app-overlay" @click.self="quickAddOpen = false">
+      <div v-if="quickAddOpen" class="quick-add-backdrop app-overlay" @click.self="closeQuickAddMenu">
         <article class="quick-add-sheet">
           <h2>{{ t('addNewItem') }}:</h2>
-          <button v-for="section in sections" :key="`quick-${section.key}`" class="quick-add-option" @click="chooseQuickAdd(section)">
+          <button v-for="section in sections" :key="`quick-${section.key}`" class="quick-add-option" :class="{ 'notification-highlight': isNotificationHighlightedQuickAdd(section) }" @click="chooseQuickAdd(section)">
             <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
             <span><b>{{ t(section.key) }}</b><small>{{ sectionHint(section) }}</small></span>
           </button>
@@ -11086,6 +11119,24 @@ function setTab(tab: Tab) {
             <button class="filled-button wide" @click="addActivityLog">{{ editingActivityLogId ? t('updateActivity') : t('addActivity') }}</button>
           </div>
         </template>
+        </article>
+      </div>
+    </Teleport>
+
+
+    <Teleport to="body">
+      <div v-if="weightReminderModalOpen" class="dialog-backdrop" @click.self="closeWeightReminderModal">
+        <article class="settings-dialog weight-reminder-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ t('weightReminderTitle') }}</h2>
+            <button class="text-button" type="button" @click="closeWeightReminderModal">{{ t('cancel') }}</button>
+          </div>
+          <p class="helper big">{{ t('weightReminderBody') }}</p>
+          <label class="field-label">{{ t('weightForThisDay') }}</label>
+          <div class="inline-form compact weight-reminder-form">
+            <input v-model.number="weightInput" class="input" type="number" min="1" step="0.1" :placeholder="t('kgUnit')" @focus="selectNumberInput" @pointerdown="clearNumberInputOnDoubleTap" inputmode="decimal" />
+            <button class="filled-button" type="button" @click="saveWeightReminderModal">{{ t('saveWeight') }}</button>
+          </div>
         </article>
       </div>
     </Teleport>
