@@ -2573,6 +2573,45 @@ select:focus {
   border-radius: 16px;
   background: var(--surface);
 }
+.tracking-time-grid .notification-time-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--on-surface-variant);
+  font-size: .76rem;
+  font-weight: 900;
+}
+.notification-time-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.reminder-test-button {
+  min-height: 42px;
+  padding-inline: 12px;
+}
+.permission-option > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.permission-status {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--error-container);
+  color: var(--on-error-container);
+  font-weight: 950;
+}
+.permission-status.granted {
+  background: color-mix(in srgb, #34c759 22%, var(--surface));
+  color: #16833a;
+}
 @media (max-width: 420px) {
   .tracking-dialog-title {
     display: grid;
@@ -2662,7 +2701,8 @@ select:focus {
 /* v0.12.11 reminders, charts and entry actions */
 .tracking-input-card.disabled,
 .tracking-range-card.disabled,
-.tracking-time-grid.disabled label {
+.tracking-time-grid.disabled label,
+.tracking-time-grid.disabled .notification-time-card {
   opacity: .52;
   filter: grayscale(.25);
 }

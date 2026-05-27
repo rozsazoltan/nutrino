@@ -439,6 +439,7 @@ function mobileMainActivitySource(config) {
   return `${packageLine}
 
 import android.content.res.Configuration
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -448,6 +449,7 @@ import android.view.ViewGroup
 import android.webkit.WebView
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
+import org.json.JSONObject
 // Tauri generates TauriActivity into the same application package at build time.
 // Do not import a global TauriActivity here: with Tauri 2.11 generated Android
 // projects that symbol is not exported from that package and Gradle fails with
@@ -458,6 +460,7 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureEdgeToEdgeWindow()
+        dispatchNutrinoNotificationActionToWebView(intent)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val callback = OnBackInvokedCallback {
                 dispatchNutrinoBackToWebView()
@@ -468,6 +471,12 @@ class MainActivity : TauriActivity() {
                 callback
             )
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        dispatchNutrinoNotificationActionToWebView(intent)
     }
 
     override fun onDestroy() {
@@ -522,6 +531,44 @@ class MainActivity : TauriActivity() {
                 null
             )
         }
+    }
+
+    private fun dispatchNutrinoNotificationActionToWebView(intent: Intent?) {
+        val payload = buildNutrinoNotificationActionPayload(intent) ?: return
+        val payloadString = JSONObject.quote(payload.toString())
+        fun dispatch(attempt: Int) {
+            val webView = findWebView(window?.decorView)
+            if (webView == null) {
+                if (attempt < 16) {
+                    window?.decorView?.postDelayed({ dispatch(attempt + 1) }, 120)
+                }
+                return
+            }
+            webView.post {
+                webView.evaluateJavascript(
+                    "window.__NUTRINO_PENDING_NOTIFICATION_ACTION__ = JSON.parse($payloadString); window.dispatchEvent(new CustomEvent('nutrino:notification-action', { detail: window.__NUTRINO_PENDING_NOTIFICATION_ACTION__ }))",
+                    null
+                )
+            }
+        }
+        dispatch(0)
+    }
+
+    private fun buildNutrinoNotificationActionPayload(intent: Intent?): JSONObject? {
+        if (intent == null) return null
+        val notificationId = intent.getIntExtra("NotificationId", Int.MIN_VALUE)
+        if (notificationId == Int.MIN_VALUE) return null
+        val payload = JSONObject()
+        payload.put("notificationId", notificationId)
+        payload.put("actionId", intent.getStringExtra("NotificationUserAction") ?: "tap")
+        val notificationJson = intent.getStringExtra("LocalNotficationObject")
+        if (!notificationJson.isNullOrBlank()) {
+            try {
+                payload.put("notification", JSONObject(notificationJson))
+            } catch (_: Exception) {
+            }
+        }
+        return payload
     }
 
     private fun findWebView(view: View?): WebView? {
