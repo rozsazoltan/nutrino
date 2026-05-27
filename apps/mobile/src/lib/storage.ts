@@ -300,7 +300,7 @@ function normalizeOptionalNutrients(value: unknown): Record<string, number> {
   return result;
 }
 
-function addScaledOptionalNutrients(target: Record<string, number>, source: Record<string, number> | null | undefined, amountG: number) {
+function addScaledOptionalNutrients(target: Record<string, number>, source: unknown, amountG: number) {
   const scale = Math.max(0, Number(amountG || 0)) / 100;
   if (!scale) return;
   for (const [key, value] of Object.entries(normalizeOptionalNutrients(source))) {

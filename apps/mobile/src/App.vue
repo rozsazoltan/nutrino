@@ -49,6 +49,12 @@ type OptionalNutrientDefinition = {
   field?: 'sugars_per_100g' | 'fiber_per_100g' | 'salt_per_100g';
 };
 
+type NutrientInsightDialog = { kind: 'day' } | { kind: 'meal'; mealType: MealType };
+type NutrientChartMode = 'important' | 'optional';
+type NutrientChartSlice = { label: string; value: number; amount: string; note?: string; share: number; color: string };
+
+const nutrientChartPalette = ['#31c96f', '#e7b341', '#ef5350', '#5f82ff', '#26a69a', '#ab47bc', '#ff8a65', '#7cb342', '#26c6da', '#ec407a', '#9ccc65'];
+
 const optionalNutrientDefinitions: OptionalNutrientDefinition[] = [
   { key: 'sugars_per_100g', field: 'sugars_per_100g', labelKey: 'sugars', unit: 'g', dailyLimit: 50, limitKind: 'max' },
   { key: 'fiber_per_100g', field: 'fiber_per_100g', labelKey: 'fiber', unit: 'g', dailyLimit: 30, limitKind: 'target' },
@@ -145,7 +151,8 @@ const settingsDialog = ref<'units' | 'calculations' | 'tracking' | 'micronutrien
 const analysisOpen = ref(false);
 const deficitInfoOpen = ref(false);
 const micronutrientInfoOpen = ref(false);
-const mealNutrientsDialog = ref<MealType | null>(null);
+const nutrientInsightsDialog = ref<NutrientInsightDialog | null>(null);
+const nutrientChartMode = ref<NutrientChartMode>('important');
 const weightTrendMode = ref<WeightTrendMode>('weekly');
 const notificationPermission = ref('unknown');
 const calorieLegendOpen = ref(false);
@@ -574,6 +581,12 @@ function handleBackNavigation(event?: PopStateEvent) {
 
   if (localEditorOpen.value) {
     requestCloseLocalEditor();
+    keepBackInsideApp();
+    return;
+  }
+
+  if (nutrientInsightsDialog.value) {
+    closeNutrientInsights();
     keepBackInsideApp();
     return;
   }
@@ -1151,8 +1164,28 @@ const selectedDayAnalysis = computed(() => buildDailyAnalysis(selectedDate.value
 const selectedDayMacroSummary = computed(() => dayMacroSummary(selectedDate.value));
 const selectedDayNutrientRows = computed(() => state.settings.show_micronutrients ? buildDailyNutrientRows(currentDayIntakes.value) : []);
 const exceededNutrientCount = computed(() => selectedDayNutrientRows.value.filter((row) => row.isOver).length);
-const selectedMealNutrientRows = computed(() => mealNutrientsDialog.value && state.settings.show_micronutrients ? buildDailyNutrientRows(currentDayIntakes.value.filter((entry) => entry.meal_type === mealNutrientsDialog.value)) : []);
-const selectedMealNutrientExceededCount = computed(() => selectedMealNutrientRows.value.filter((row) => row.isOver).length);
+const activeNutrientInsightEntries = computed(() => {
+  const dialog = nutrientInsightsDialog.value;
+  if (!dialog || !state.settings.show_micronutrients) return [];
+  if (dialog.kind === 'day') return currentDayIntakes.value;
+  return currentDayIntakes.value.filter((entry) => entry.meal_type === dialog.mealType);
+});
+const nutrientInsightRows = computed(() => state.settings.show_micronutrients && nutrientInsightsDialog.value
+  ? buildDailyNutrientRows(activeNutrientInsightEntries.value, currentDayIntakes.value)
+  : []);
+const nutrientInsightExceededCount = computed(() => nutrientInsightRows.value.filter((row) => row.isOver).length);
+const nutrientInsightTitle = computed(() => {
+  if (!nutrientInsightsDialog.value) return '';
+  return nutrientInsightsDialog.value.kind === 'day'
+    ? `${t('todayNutrients')} · ${selectedDate.value}`
+    : `${t('mealMicronutrients')} · ${t(nutrientInsightsDialog.value.mealType)}`;
+});
+const nutrientChartSlices = computed(() => {
+  if (!nutrientInsightsDialog.value) return [];
+  return nutrientChartMode.value === 'important'
+    ? buildMacroChartSlices(activeNutrientInsightEntries.value)
+    : buildOptionalChartSlices(nutrientInsightRows.value);
+});
 const selectedDiaryDateLabel = computed(() => new Intl.DateTimeFormat(currentLocale(), { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(dayStartMs(selectedDate.value))));
 const currentDeficitStreak = computed(() => calculateDeficitStreak(selectedDate.value));
 const bestDeficitStreak = computed(() => calculateBestDeficitStreak(30));
@@ -6453,10 +6486,10 @@ for (const [language, values] of Object.entries(completeMobileLanguageTranslatio
 }
 const mobileVisibleTextTranslations: Record<string, Record<string, string>> = {
   en: {
-    version: 'Version', todayNutrients: "Today's nutrients", mealMicronutrients: 'Meal micronutrients', micronutrientLimits: 'Micronutrient limits', micronutrientLimitsHint: 'Daily thresholds used by the diary warnings.', micronutrientDefaultsInfo: 'Default values are practical adult reference values based on widely used nutrition labels and public health guidance: FDA-style Daily Values for vitamins and minerals, common upper-limit guidance for sodium, saturated fat and added/free sugars, and a 5 g salt reference. They are starting points only; adjust them to your personal plan when needed.', defaultValue: 'default', resetMicronutrients: 'Reset micronutrients', importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber'
+    version: 'Version', todayNutrients: "Today's nutrients", mealMicronutrients: 'Meal micronutrients', dayMicronutrients: 'Day nutrients', noChartData: 'No chart data yet.', micronutrientLimits: 'Micronutrient limits', micronutrientLimitsHint: 'Daily thresholds used by the diary warnings.', micronutrientDefaultsInfo: 'Default values are practical adult reference values based on widely used nutrition labels and public health guidance: FDA-style Daily Values for vitamins and minerals, common upper-limit guidance for sodium, saturated fat and added/free sugars, and a 5 g salt reference. They are starting points only; adjust them to your personal plan when needed.', defaultValue: 'default', resetMicronutrients: 'Reset micronutrients', importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber'
   },
   hu: {
-    version: 'Verzió', todayNutrients: 'Mai tápanyagok', mealMicronutrients: 'Étkezés mikrotápanyagai', micronutrientLimits: 'Mikrotápanyag határértékek', micronutrientLimitsHint: 'A napi figyelmeztetésekhez használt határértékek.', micronutrientDefaultsInfo: 'Az alapértékek gyakorlati felnőtt referenciaértékek: vitaminoknál és ásványi anyagoknál elterjedt tápértékjelölési napi értékek, nátriumnál, telített zsírnál és cukornál közegészségügyi felső határ jellegű ajánlások, sónál 5 g-os referencia. Kiindulási értékek, szükség esetén igazítsd a saját tervedhez.', defaultValue: 'alap', resetMicronutrients: 'Mikrotápanyagok visszaállítása', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost'
+    version: 'Verzió', todayNutrients: 'Mai tápanyagok', mealMicronutrients: 'Étkezés mikrotápanyagai', dayMicronutrients: 'Napi tápanyagok', noChartData: 'Még nincs diagram adat.', micronutrientLimits: 'Mikrotápanyag határértékek', micronutrientLimitsHint: 'A napi figyelmeztetésekhez használt határértékek.', micronutrientDefaultsInfo: 'Az alapértékek gyakorlati felnőtt referenciaértékek: vitaminoknál és ásványi anyagoknál elterjedt tápértékjelölési napi értékek, nátriumnál, telített zsírnál és cukornál közegészségügyi felső határ jellegű ajánlások, sónál 5 g-os referencia. Kiindulási értékek, szükség esetén igazítsd a saját tervedhez.', defaultValue: 'alap', resetMicronutrients: 'Mikrotápanyagok visszaállítása', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost'
   },
   de: { version: 'Version' }, fr: { version: 'Version' }, ru: { version: 'Версия' }, uk: { version: 'Версія' }, zh: { version: '版本' }, sk: { version: 'Verzia' }, ro: { version: 'Versiune' }, cs: { version: 'Verze' }, sl: { version: 'Različica' }, hr: { version: 'Verzija' }, pl: { version: 'Wersja' }, es: { version: 'Versión' }, pt: { version: 'Versão' }
 };
@@ -6616,12 +6649,38 @@ function resetMicronutrientLimits() {
 
 function openMealMicronutrients(section: MealSection) {
   if (!state.settings.show_micronutrients || section.key === 'activity') return;
-  mealNutrientsDialog.value = section.key;
+  nutrientChartMode.value = 'important';
+  nutrientInsightsDialog.value = { kind: 'meal', mealType: section.key };
 }
 
-function buildDailyNutrientRows(entries: Intake[]) {
+function openDayMicronutrients() {
+  if (!state.settings.show_micronutrients) return;
+  nutrientChartMode.value = 'important';
+  nutrientInsightsDialog.value = { kind: 'day' };
+}
+
+function closeNutrientInsights() {
+  nutrientInsightsDialog.value = null;
+}
+
+function nutrientStatusTone(limitKind: 'max' | 'target', progress: number): 'good' | 'warn' | 'danger' {
+  if (limitKind === 'max') {
+    if (progress >= 1) return 'danger';
+    if (progress >= 0.7) return 'warn';
+    return 'good';
+  }
+  if (progress >= 1) return 'good';
+  if (progress >= 0.5) return 'warn';
+  return 'danger';
+}
+
+function buildDailyNutrientRows(entries: Intake[], dailyEntries: Intake[] = entries) {
   return optionalNutrientDefinitions.map((nutrient) => {
     const value = entries.reduce((sum, entry) => {
+      const food = foodFromIntake(entry);
+      return sum + optionalNutrientPer100g(food, nutrient) * Math.max(0, Number(entry.amount_g || 0)) / 100;
+    }, 0);
+    const dailyValue = dailyEntries.reduce((sum, entry) => {
       const food = foodFromIntake(entry);
       return sum + optionalNutrientPer100g(food, nutrient) * Math.max(0, Number(entry.amount_g || 0)) / 100;
     }, 0);
@@ -6631,13 +6690,63 @@ function buildDailyNutrientRows(entries: Intake[]) {
       key: nutrient.key,
       label: t(nutrient.labelKey),
       value,
+      dailyValue,
       limit,
       unit: nutrient.unit,
       progress,
       limitKind: nutrient.limitKind,
       isOver: value > limit,
+      tone: nutrientStatusTone(nutrient.limitKind, progress),
     };
   });
+}
+
+function buildMacroChartSlices(entries: Intake[]): NutrientChartSlice[] {
+  const summary = macroForEntries(entries);
+  const items = [
+    { label: t('carbs'), value: Math.max(0, summary.carbs), amount: `${Math.max(0, summary.carbs)}g` },
+    { label: t('fat'), value: Math.max(0, summary.fat), amount: `${Math.max(0, summary.fat)}g` },
+    { label: t('protein'), value: Math.max(0, summary.protein), amount: `${Math.max(0, summary.protein)}g` },
+  ].filter((item) => item.value > 0);
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  if (!total) return [];
+  return items.map((item, index) => ({
+    label: item.label,
+    value: item.value,
+    amount: item.amount,
+    note: `${Math.round((item.value / total) * 100)}%`,
+    share: item.value / total,
+    color: nutrientChartPalette[index % nutrientChartPalette.length],
+  }));
+}
+
+function buildOptionalChartSlices(rows: Array<{ label: string; value: number; unit: string; limit: number }>): NutrientChartSlice[] {
+  const items = rows
+    .filter((row) => row.value > 0)
+    .map((row, index) => ({
+      label: row.label,
+      value: row.limit > 0 ? row.value / row.limit : 0,
+      amount: formatNutrientAmount(row.value, row.unit),
+      note: row.limit > 0 ? `${Math.round((row.value / row.limit) * 100)}%` : '',
+      share: 0,
+      color: nutrientChartPalette[index % nutrientChartPalette.length],
+    }))
+    .filter((item) => item.value > 0);
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  if (!total) return [];
+  return items.map((item) => ({ ...item, share: item.value / total }));
+}
+
+function nutrientChartBackground(slices: NutrientChartSlice[]): string {
+  if (!slices.length) return 'conic-gradient(var(--surface-container-highest) 0 360deg)';
+  let start = 0;
+  const parts = slices.map((slice) => {
+    const end = start + slice.share * 360;
+    const part = `${slice.color} ${start}deg ${end}deg`;
+    start = end;
+    return part;
+  });
+  return `conic-gradient(${parts.join(', ')})`;
 }
 
 function sectionSummary(section: MealSection) {
@@ -9663,6 +9772,7 @@ function setTab(tab: Tab) {
           <b>{{ selectedDiaryDateLabel }}</b>
         </div>
         <div class="diary-date-sticky-actions">
+          <button v-if="state.settings.show_micronutrients" class="icon-button analysis-open-button" type="button" :aria-label="t('dayMicronutrients')" :title="t('dayMicronutrients')" @click="openDayMicronutrients" v-html="lucideSvg('flaskConical')"></button>
           <button class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="analysisOpen = true" v-html="lucideSvg('chartPie')"></button>
           <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('next')" :title="t('next')" @click="moveSelectedDate(1)" v-html="lucideSvg('chevronRight')"></button>
         </div>
@@ -9684,17 +9794,17 @@ function setTab(tab: Tab) {
           <summary>
             <span class="today-nutrients-summary-main">
               <span>{{ t('todayNutrients') }}</span>
-              <b v-if="exceededNutrientCount" class="nutrient-warning-badge">! {{ exceededNutrientCount }}</b>
+              <span v-if="exceededNutrientCount" class="nutrient-warning-badge">! {{ exceededNutrientCount }}</span>
             </span>
             <span class="today-nutrients-summary-meta">
               <span class="today-nutrients-chevron" v-html="lucideSvg('chevronDown')"></span>
             </span>
           </summary>
           <div v-if="selectedDayNutrientRows.length" class="today-nutrient-list">
-            <div v-for="row in selectedDayNutrientRows" :key="row.key" class="today-nutrient-row" :class="{ over: row.isOver }">
-              <b>{{ row.label }}</b>
-              <span class="today-nutrient-row-value">{{ formatNutrientAmount(row.value, row.unit) }} / {{ formatNutrientAmount(row.limit, row.unit) }}</span>
-              <small>{{ t(row.limitKind === 'max' ? 'dailyLimit' : 'dailyTarget') }}</small>
+            <div v-for="row in selectedDayNutrientRows" :key="row.key" class="today-nutrient-row">
+              <span class="today-nutrient-row-label">{{ row.label }}</span>
+              <span class="today-nutrient-row-value" :class="`nutrient-tone-${row.tone}`">{{ formatNutrientAmount(row.value, row.unit) }}</span>
+              <small>{{ formatNutrientAmount(row.limit, row.unit) }}</small>
               <span v-if="row.isOver" class="nutrient-row-alert">!</span>
             </div>
           </div>
@@ -10268,19 +10378,44 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="mealNutrientsDialog && state.settings.show_micronutrients" class="dialog-backdrop" @click.self="mealNutrientsDialog = null">
-        <article class="settings-dialog meal-micronutrients-dialog">
-          <div class="dialog-title-row"><h2>{{ t('mealMicronutrients') }} · {{ t(mealNutrientsDialog) }}</h2><button class="text-button" @click="mealNutrientsDialog = null">{{ t('close') }}</button></div>
-          <div v-if="selectedMealNutrientRows.length" class="today-nutrient-list meal-micronutrient-list">
-            <div v-for="row in selectedMealNutrientRows" :key="`meal-nutrient-${row.key}`" class="today-nutrient-row" :class="{ over: row.isOver }">
-              <b>{{ row.label }}</b>
-              <span class="today-nutrient-row-value">{{ formatNutrientAmount(row.value, row.unit) }} / {{ formatNutrientAmount(row.limit, row.unit) }}</span>
-              <small>{{ t(row.limitKind === 'max' ? 'dailyLimit' : 'dailyTarget') }}</small>
+      <div v-if="nutrientInsightsDialog && state.settings.show_micronutrients" class="dialog-backdrop" @click.self="closeNutrientInsights">
+        <article class="settings-dialog meal-micronutrients-dialog nutrient-insights-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ nutrientInsightTitle }}</h2>
+            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="closeNutrientInsights" v-html="lucideSvg('x')"></button>
+          </div>
+          <div class="trend-mode-toggle nutrient-chart-toggle">
+            <button :class="{ active: nutrientChartMode === 'important' }" type="button" @click="nutrientChartMode = 'important'">{{ t('importantNutrients') }}</button>
+            <button :class="{ active: nutrientChartMode === 'optional' }" type="button" @click="nutrientChartMode = 'optional'">{{ t('optionalNutrients') }}</button>
+          </div>
+          <div v-if="nutrientChartSlices.length" class="nutrient-pie-card">
+            <div class="nutrient-pie-chart" :style="{ background: nutrientChartBackground(nutrientChartSlices) }"></div>
+            <div class="nutrient-pie-legend">
+              <div v-for="slice in nutrientChartSlices" :key="`slice-${slice.label}`" class="nutrient-pie-legend-row">
+                <span class="nutrient-pie-legend-dot" :style="{ background: slice.color }"></span>
+                <span class="nutrient-pie-legend-label">{{ slice.label }}</span>
+                <span class="nutrient-pie-legend-value">{{ slice.amount }}</span>
+                <small>{{ slice.note }}</small>
+              </div>
+            </div>
+          </div>
+          <p v-else class="today-nutrient-empty">{{ t('noChartData') }}</p>
+          <div v-if="nutrientInsightRows.length" class="today-nutrient-list meal-micronutrient-list nutrient-insight-list">
+            <div v-for="row in nutrientInsightRows" :key="`insight-nutrient-${row.key}`" class="today-nutrient-row nutrient-insight-row">
+              <span class="today-nutrient-row-label">{{ row.label }}</span>
+              <template v-if="nutrientInsightsDialog.kind === 'meal'">
+                <span class="today-nutrient-row-value" :class="`nutrient-tone-${row.tone}`">{{ formatNutrientAmount(row.value, row.unit) }}</span>
+                <small>({{ formatNutrientAmount(row.dailyValue, row.unit) }})</small>
+              </template>
+              <template v-else>
+                <span class="today-nutrient-row-value" :class="`nutrient-tone-${row.tone}`">{{ formatNutrientAmount(row.value, row.unit) }}</span>
+                <small>{{ formatNutrientAmount(row.limit, row.unit) }}</small>
+              </template>
               <span v-if="row.isOver" class="nutrient-row-alert">!</span>
             </div>
           </div>
           <p v-else class="today-nutrient-empty">{{ t('noNutrientsLogged') }}</p>
-          <p v-if="selectedMealNutrientExceededCount" class="helper big">! {{ selectedMealNutrientExceededCount }} {{ t('exceeded') }}</p>
+          <p v-if="nutrientInsightExceededCount" class="helper big">! {{ nutrientInsightExceededCount }} {{ t('exceeded') }}</p>
         </article>
       </div>
     </Teleport>
