@@ -27,7 +27,7 @@ env:
 
 jobs:
   validate-release:
-    name: Validate release input
+    name: Prepare release
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release.outputs.version }}
@@ -40,6 +40,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Resolve release version
         id: release
@@ -57,6 +58,142 @@ jobs:
 
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare release version commit
+        id: prepare
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_BRANCH="${RELEASE_REF#refs/heads/}"
+          if [[ "${RELEASE_BRANCH}" == refs/* ]]; then
+            echo "::error::Release ref must be a branch name so the workflow can push the prepare commit: ${RELEASE_REF}"
+            exit 1
+          fi
+
+          if ! git show-ref --verify --quiet "refs/remotes/origin/${RELEASE_BRANCH}"; then
+            echo "::error::Release ref must be an existing branch so the workflow can push the prepare commit: ${RELEASE_REF}"
+            exit 1
+          fi
+
+          git checkout -B "${RELEASE_BRANCH}" "origin/${RELEASE_BRANCH}"
+
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const version = process.env.VERSION;
+          const [major, minor, patch] = version.split('.').map((part) => Number.parseInt(part, 10));
+          const androidVersionCode = major * 10000 + minor * 100 + patch;
+
+          function writeIfChanged(path, next) {
+            const previous = fs.readFileSync(path, 'utf8');
+            if (previous !== next) {
+              fs.writeFileSync(path, next);
+            }
+          }
+
+          function updateJson(path, update) {
+            const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+            update(data);
+            writeIfChanged(path, `${JSON.stringify(data, null, 2)}\n`);
+          }
+
+          function updateCargoToml(path) {
+            const source = fs.readFileSync(path, 'utf8');
+            const next = source.replace(/^(version\s*=\s*")[^"]+(")/m, `$1${version}$2`);
+            if (next === source) {
+              throw new Error(`Missing package version in ${path}`);
+            }
+            writeIfChanged(path, next);
+          }
+
+          function updateCargoLockPackage(path, packageName) {
+            const source = fs.readFileSync(path, 'utf8');
+            const lines = source.split(/\r?\n/);
+            let inPackage = false;
+            let matchedPackage = false;
+            let foundPackage = false;
+
+            for (let index = 0; index < lines.length; index += 1) {
+              const line = lines[index];
+              if (line === '[[package]]') {
+                inPackage = true;
+                matchedPackage = false;
+                continue;
+              }
+              if (inPackage && line === `name = "${packageName}"`) {
+                matchedPackage = true;
+                foundPackage = true;
+                continue;
+              }
+              if (inPackage && matchedPackage && line.startsWith('version = "')) {
+                lines[index] = `version = "${version}"`;
+                matchedPackage = false;
+              }
+            }
+
+            if (!foundPackage) {
+              throw new Error(`Missing ${packageName} package entry in ${path}`);
+            }
+            writeIfChanged(path, lines.join('\n'));
+          }
+
+          const packageJsonPaths = [
+            'package.json',
+            'packages/shared/package.json',
+            'packages/ui/package.json',
+            'apps/desktop/package.json',
+            'apps/mobile/package.json',
+          ];
+
+          for (const path of packageJsonPaths) {
+            updateJson(path, (data) => {
+              data.version = version;
+            });
+          }
+
+          updateJson('apps/desktop/src-tauri/tauri.conf.json', (data) => {
+            data.version = version;
+          });
+          updateJson('apps/mobile/src-tauri/tauri.conf.json', (data) => {
+            data.version = version;
+            data.bundle ??= {};
+            data.bundle.android ??= {};
+            data.bundle.android.versionCode = androidVersionCode;
+          });
+
+          updateCargoToml('apps/desktop/src-tauri/Cargo.toml');
+          updateCargoToml('apps/mobile/src-tauri/Cargo.toml');
+          updateCargoLockPackage('apps/desktop/src-tauri/Cargo.lock', 'nutrino_desktop');
+          updateCargoLockPackage('apps/mobile/src-tauri/Cargo.lock', 'nutrino_mobile');
+          NODE
+
+          if git diff --quiet; then
+            echo "Release files are already prepared for v${VERSION}"
+            echo "prepared_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            package.json \
+            packages/shared/package.json \
+            packages/ui/package.json \
+            apps/desktop/package.json \
+            apps/mobile/package.json \
+            apps/desktop/src-tauri/tauri.conf.json \
+            apps/mobile/src-tauri/tauri.conf.json \
+            apps/desktop/src-tauri/Cargo.toml \
+            apps/mobile/src-tauri/Cargo.toml \
+            apps/desktop/src-tauri/Cargo.lock \
+            apps/mobile/src-tauri/Cargo.lock
+          git commit -m "chore: prepare release v${VERSION}"
+          git push origin "HEAD:${RELEASE_BRANCH}"
+          echo "prepared_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve target commit
         id: target
@@ -95,6 +232,16 @@ jobs:
             return match[1];
           }
 
+          function cargoLockPackageVersion(path, packageName) {
+            const content = fs.readFileSync(path, 'utf8');
+            const blocks = content.split(/(?=^\[\[package\]\]$)/m);
+            const block = blocks.find((item) => item.includes(`name = "${packageName}"`));
+            if (!block) throw new Error(`Missing ${packageName} package entry in ${path}`);
+            const match = block.match(/^version\s*=\s*"([^"]+)"/m);
+            if (!match) throw new Error(`Missing ${packageName} package version in ${path}`);
+            return match[1];
+          }
+
           const [major, minor, patch] = version.split('.').map(Number);
           const expectedAndroidVersionCode = major * 10000 + minor * 100 + patch;
 
@@ -107,6 +254,8 @@ jobs:
           expect('apps/mobile/src-tauri/tauri.conf.json', readJson('apps/mobile/src-tauri/tauri.conf.json').version);
           expect('apps/desktop/src-tauri/Cargo.toml', cargoVersion('apps/desktop/src-tauri/Cargo.toml'));
           expect('apps/mobile/src-tauri/Cargo.toml', cargoVersion('apps/mobile/src-tauri/Cargo.toml'));
+          expect('apps/desktop/src-tauri/Cargo.lock nutrino_desktop', cargoLockPackageVersion('apps/desktop/src-tauri/Cargo.lock', 'nutrino_desktop'));
+          expect('apps/mobile/src-tauri/Cargo.lock nutrino_mobile', cargoLockPackageVersion('apps/mobile/src-tauri/Cargo.lock', 'nutrino_mobile'));
           expect(
             'apps/mobile/src-tauri/tauri.conf.json bundle.android.versionCode',
             readJson('apps/mobile/src-tauri/tauri.conf.json').bundle?.android?.versionCode,
