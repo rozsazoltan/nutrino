@@ -1,14 +1,16 @@
 # nutrino
 
-`nutrino` is an offline-first nutrition tracker built with Tauri v2, Vue, TypeScript, Rust and SQLite. It helps you manage your own foods, recipes, activities, meals, calories, macros, BMI and weight without depending on public food databases or online food search.
+`nutrino` is an offline-first nutrition and health diary built with Tauri v2, Vue, TypeScript, Rust and SQLite. It helps you manage your own foods, recipes, activities, meals, calories, macros, micronutrients, BMI, weight and optional health observations without depending on public food databases or online food search.
 
 It is designed for people who want a local-first nutrition workflow:
 
 - **Desktop catalog management** for foods, recipes, activities, imports, exports, backups and the LAN API server
-- **Mobile daily tracking** for meals, activities, kcal notes, goals, BMI, weight and offline diary data
+- **Mobile daily tracking** for meals, activities, kcal notes, goals, BMI, weight, micronutrients and offline diary data
+- **Optional mobile health diary** for symptoms, signs, recurrences, attachments, analysis and AI-ready export
 - **CSV-based catalog sync** from the desktop server and optional GitHub repositories
 - **QR import** for sharing individual foods, recipes and activities between devices
-- **ZIP backup and restore** for desktop and mobile data
+- **Selective ZIP backup and restore** for desktop and mobile data, including optional health diary data
+- **Release update checks** with stable/prerelease control, compatibility gates and native installer hand-off where supported
 - **Internationalized UI** across the desktop and mobile apps
 - **Unified release workflow** for desktop and mobile artifacts through `verzly/tauri-release`
 
@@ -63,15 +65,16 @@ Desktop app
   └─ increases catalog_revision when catalog data changes
 
 Mobile app
-  ├─ pulls foods, recipes and activities from the desktop server
+  ├─ pulls foods, recipes and activities from the desktop server when enabled
   ├─ can read Nutrino CSV files from configured GitHub repositories
   ├─ can create foods, recipes, activities, diary entries and kcal notes offline
-  ├─ pushes pending local changes when the desktop server is reachable
-  ├─ monitors server health and catalog_revision
-  └─ continues working when the desktop server is offline
+  ├─ can optionally log health observations, recurrences and attachments
+  ├─ can export an AI-ready health diary timeline summary
+  ├─ checks GitHub Releases for app updates and blocks incompatible desktop/mobile sync
+  └─ continues working when every sync source is disabled or offline
 ```
 
-The desktop LAN API can be protected with an optional server password. Leaving the password empty keeps local sync open on your LAN. When a password is configured, the mobile app must use the same password in Profile → API settings.
+The desktop LAN API can be protected with an optional server password. Leaving the password empty keeps local sync open on your LAN. When a password is configured, the mobile app must use the same password in Profile → API settings. Mobile users can also disable desktop API sync and GitHub CSV sync entirely when they want to use the phone as a standalone tracker.
 
 ### Desktop app
 
@@ -83,6 +86,7 @@ The desktop app provides the local catalog and synchronization backend:
 - QR generation for individual foods, recipes and activities
 - ZIP backup and restore with manifest validation
 - Local LAN API server for mobile sync
+- Version/health endpoints used by mobile compatibility checks
 - Optional system tray behavior
 - Optional launch on Windows startup
 - Optional hidden startup and auto-start server behavior
@@ -91,14 +95,14 @@ The desktop app provides the local catalog and synchronization backend:
 
 The mobile app is the daily offline tracker:
 
-- Today dashboard for supplied calories, burned calories and macro progress
-- Meal diary with foods, recipes and manual kcal notes
-- Activity diary with kcal burn tracking
-- BMI, body weight and goal tracking
+- Today dashboard for supplied calories, burned calories, macro progress and optional health notes
+- Meal diary with foods, recipes, manual kcal notes, micronutrients and activity burn tracking
+- Optional health diary with symptom/sign logging, recurrence tracking, attachments and analysis
+- BMI, body weight, goals and app-purpose profile settings
 - Offline food, recipe and activity creation
-- Desktop LAN API sync when the server is reachable
-- Optional GitHub CSV catalog sync
+- Optional desktop LAN API sync and optional GitHub CSV catalog sync
 - QR scanner import for foods, recipes and activities
+- App update checks with remind-later behavior and native install hand-off where supported
 - ZIP backup and restore through Android's document picker
 
 Android is the primary mobile release target. iOS support is prepared in the workflow, but signed iOS artifacts are optional because Apple distribution requires signing assets.
@@ -107,7 +111,7 @@ Android is the primary mobile release target. iOS support is prepared in the wor
 
 Catalog data and diary data are intentionally separated.
 
-Foods, recipes and activities are catalog items. They can be created on desktop, imported from CSV, synced from GitHub CSV sources, or created on mobile. Diary entries, kcal notes, weight entries and profile data belong to the local mobile user and remain on the device unless explicitly backed up or synchronized through supported local flows.
+Foods, recipes and activities are catalog items. They can be created on desktop, imported from CSV, synced from GitHub CSV sources, or created on mobile. Diary entries, kcal notes, weight entries, profile data and health diary entries belong to the local mobile user and remain on the device unless explicitly backed up, exported or synchronized through supported local flows.
 
 Every catalog item has a stable identifier. Localized names can be stored per item. When a selected UI language has no localized name for an item, the app falls back to the original item name.
 
@@ -115,11 +119,11 @@ CSV import/export keeps optional i18n fields available without making them manda
 
 ### Backup and restore
 
-The desktop app can export and restore a ZIP backup of its catalog and settings. The mobile app can export and restore a ZIP backup of profile, diary, goals, local catalog cache and local sync state.
+The desktop app can export and restore a ZIP backup of its catalog and settings. The mobile app can export and restore a ZIP backup of profile, diary, goals, local catalog cache, local sync state and optional health diary data.
 
-Mobile backup export uses Android's Storage Access Framework save picker and verifies the selected file after writing. A `0 B` file is not treated as a successful backup. Mobile import uses the Android document picker before falling back to non-Android picker paths.
+Mobile backup export asks what to include before writing: activity plus saved catalog items, food diary and health diary. All groups are selected by default. Export uses Android's Storage Access Framework save picker and verifies the selected file after writing. A `0 B` file is not treated as a successful backup. Mobile import uses the Android document picker before falling back to non-Android picker paths.
 
-The mobile app also keeps local backup profiles and creates safety restore points before export, import, backup-profile restore and factory reset. After a mobile factory reset, use **Restore backup** on the first-run setup screen before creating a new profile when you want to recover a previous backup.
+The mobile app also keeps local backup profiles and creates safety restore points before export, import, backup-profile restore and factory reset. On first launch, backup restore and local profile restore are available from the profile setup step so users can recover data before creating a new local profile.
 
 ## Get started
 
@@ -239,9 +243,9 @@ Set `NUTRINO_ANDROID_KEEP_GENERATED_OUTPUTS=1` when you want to keep Gradle-gene
 
 ## Release workflow
 
-The repository has one manual `Release` workflow on the `master` branch. Start it from GitHub Actions and provide the version, for example `0.12.11`. The input version may be written with or without a leading `v`, but repository files must use the plain version number.
+The repository has one manual `Release` workflow on the `master` branch. Start it from GitHub Actions and provide the version, for example `0.12.11`. The input version may be written with or without a leading `v`, but repository files use the plain version number.
 
-The workflow validates the root package, shared packages, desktop package, mobile package, both Tauri configs, both Rust crates and the Android `versionCode` before any release build starts. It resolves the selected ref to a commit SHA first, so all platform jobs build the same commit even if `master` moves while the workflow is running.
+The workflow first prepares a release commit named `chore: prepare release vX.Y.Z`. That commit updates package versions, both Tauri configs, Rust crate versions, Cargo locks and the Android `versionCode`. Build jobs then run from that exact commit SHA, so all platform artifacts are created from the same source even if `master` moves while the workflow is running.
 
 Builds use the public `verzly/tauri-release@v0.2.3` GitHub Action. Release artifacts are built first. The GitHub Release is created only after every required build succeeds. Desktop package names use the plain `Nutrino` product name so generated installer and bundle filenames do not contain spaces.
 
@@ -300,9 +304,10 @@ When these secrets are missing, the workflow skips the iOS build and still publi
 - No public food database is queried
 - No account is required
 - No analytics are collected
-- Mobile diary data stays on the phone
+- Mobile diary and health data stay on the phone unless you export or back them up
 - Desktop catalog data stays on your machine
 - Sync happens only against your configured desktop LAN API server and optional GitHub CSV sources
+- Health exports are explicit files intended for user-controlled sharing, for example with a clinician or AI assistant
 
 ## Contributing
 

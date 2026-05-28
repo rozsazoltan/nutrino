@@ -46,8 +46,7 @@ type LocalRecipeDraftItem = { food_id: string; amount_g: number; unit: 'g' | 'se
 type MealNoteSuggestion = { key: string; title: string; description: string; kcal: number; lastUsedAt: number; count: number };
 type HealthEditorMode = 'new' | 'recurrence' | 'duplicate' | 'edit';
 type HealthQuickTime = 'now' | 'minus10' | 'minus60' | 'custom';
-type HealthAnalysisRangeKey = '30' | '180' | '360' | 'all' | 'custom';
-type HealthAnalysisCustomUnit = 'day' | 'week' | 'month' | 'year';
+type HealthAnalysisRangeKey = '30' | '180' | '360' | 'all';
 type BackupIncludeOptions = { catalog: boolean; foodDiary: boolean; healthDiary: boolean };
 
 type OptionalNutrientDefinition = {
@@ -187,6 +186,7 @@ const activeTab = ref<Tab>('home');
 const selectedDate = ref(dateKey());
 const diaryTab = ref<DiaryTab>('food');
 const healthSearch = ref('');
+const healthAnalysisModalOpen = ref(false);
 const todayKey = ref(dateKey());
 const calendarMonth = ref(new Date(dayStartMs(selectedDate.value)));
 const addMode = ref<AddMode>(null);
@@ -211,10 +211,6 @@ const healthEditorId = ref<string | null>(null);
 const healthRecurrenceSourceId = ref<string | null>(null);
 const healthQuickTime = ref<HealthQuickTime>('now');
 const healthAnalysisRange = ref<HealthAnalysisRangeKey>('30');
-const healthCustomRangeAmount = ref<number | null>(30);
-const healthCustomRangeUnit = ref<HealthAnalysisCustomUnit>('day');
-const healthCustomRangeFrom = ref('');
-const healthCustomRangeTo = ref(dateKey());
 const healthSelectedEventId = ref<string | null>(null);
 const healthForm = reactive({
   title: '',
@@ -506,6 +502,7 @@ watch(() => state.settings.health_diary_enabled, (enabled) => {
   if (enabled) return;
   if (diaryTab.value === 'health') diaryTab.value = 'food';
   healthEditorOpen.value = false;
+  healthAnalysisModalOpen.value = false;
   healthSearch.value = '';
 });
 watch(() => state.settings.desktop_api_enabled, (enabled) => {
@@ -904,8 +901,9 @@ function saveOnboardingProfile() {
   state.profile.gender = onboardingProfile.gender;
   state.profile.activity_level = onboardingProfile.activity_level;
   state.profile.weekly_goal_kg = Number(onboardingProfile.weekly_goal_kg) || 0;
-  state.profile.usage_purposes = [...new Set(onboardingProfile.usage_purposes)];
-  state.settings.health_diary_enabled = state.profile.usage_purposes.includes('health_issue_logging');
+  const purposes = [...new Set(onboardingProfile.usage_purposes)];
+  state.profile.usage_purposes = purposes;
+  if (onboardingOpen.value) state.settings.health_diary_enabled = purposes.includes('health_issue_logging');
 }
 
 function markOnboardingComplete() {
@@ -917,7 +915,6 @@ async function openOnboardingPermissionsStep() {
   state.settings.desktop_sync_prompted = true;
   onboardingStep.value = 3;
   await nextTick();
-  await requestOnboardingPermissions();
 }
 
 function openOnboardingSyncStep() {
@@ -1541,6 +1538,8 @@ const activeHealthEntries = computed(() => healthDiaryEnabled.value ? (state.hea
 const currentDayHealthEntries = computed(() => activeHealthEntries.value
   .filter((entry) => inSelectedDay(entry.occurred_at))
   .sort((a, b) => b.occurred_at - a.occurred_at));
+const currentDayHealthAnalysisRows = computed(() => buildHealthEventFrequencyRowsForEntries(currentDayHealthEntries.value));
+const currentDayHealthClinicalSummary = computed(() => buildHealthClinicalSummary(currentDayHealthEntries.value));
 const filteredHealthEntries = computed(() => {
   const query = healthSearch.value.trim();
   const source = currentDayHealthEntries.value;
@@ -1565,13 +1564,9 @@ const reusableHealthEvents = computed(() => {
   }
   return [...byEvent.values()].sort((a, b) => b.occurred_at - a.occurred_at);
 });
-const currentDayHealthInsightRows = computed(() => buildHealthDayInsightRows(currentDayHealthEntries.value));
-const currentDayHealthSummary = computed(() => buildHealthDaySummary(currentDayHealthEntries.value));
 const healthAnalysisEntries = computed(() => filterHealthEntriesByRange(activeHealthEntries.value, healthAnalysisRange.value));
 const healthAnalysisSummary = computed(() => buildHealthAnalysisSummary());
 const healthCategoryChartRows = computed(() => buildHealthCategoryChartRows());
-const healthWeekdayChartRows = computed(() => buildHealthWeekdayChartRows());
-const healthTimeOfDayChartRows = computed(() => buildHealthTimeOfDayChartRows());
 const healthRecurrenceChartRows = computed(() => buildHealthRecurrenceChartRows());
 const healthPeriodSummaryRows = computed(() => buildHealthPeriodSummaryRows());
 const healthEventFrequencyRows = computed(() => buildHealthEventFrequencyRows());
@@ -7002,12 +6997,12 @@ const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, strin
     now: 'Now', tenMinutesAgo: '10 min ago', oneHourAgo: '1 hour ago', customDateTime: 'Custom', date: 'Date', time: 'Time',
     healthTitle: 'Title, e.g. left knee pain', healthDescription: 'Description', healthCategory: 'Category', healthNotes: 'Optional notes', addPhoto: 'Photo', addVideo: 'Video', photoAttachment: 'Photo', videoAttachment: 'Video', attachments: 'attachments',
     healthTitleRequired: 'Health entry title is required.', healthEntrySaved: 'Health entry saved.', healthEntryUpdated: 'Health entry updated.', searchHealthDiary: 'Search title, description or date', noHealthEntries: 'No health entries for this day.', noHealthSearchResults: 'No matching health entries.',
-    healthAnalysis: 'Health analysis', last30Days: 'Last 30 days', last180Days: 'Last 180 days', last360Days: 'Last 360 days', allTime: 'All time', recurringEvents: 'Recurring events', recurrenceChart: 'Recurrence chart', healthNoInsight: 'Add health entries to see recurring patterns.', healthRecurringInsight: 'recurring pattern(s), most often', healthRecentInsight: 'health note(s) in the last 30 days, most often', today: 'today', healthEntriesToday: 'health entries today', healthRecurringToday: 'recurring today', healthPatternNew: 'new', healthPatternNotFrequent: 'not frequent', healthPatternRecurring: 'recurring', healthPatternSameDay: 'same day', every: 'every', lastBefore: 'last before today', customHealthAnalysisRange: 'Custom range', healthRangeUnit: 'Unit', last: 'Last', from: 'From', to: 'To', weeks: 'weeks', months: 'months', healthClinicalAnalysisNote: 'Pattern summaries are for review and medical conversation support only; they are not a diagnosis. Share persistent, severe or worrying symptoms with a qualified clinician.', healthWeekdayPattern: 'Weekday pattern', healthTimeOfDayPattern: 'Time of day pattern', healthTimeNight: 'Night', healthTimeMorning: 'Morning', healthTimeAfternoon: 'Afternoon', healthTimeEvening: 'Evening',
+    healthAnalysis: 'Health analysis', last30Days: 'Last 30 days', last180Days: 'Last 180 days', last360Days: 'Last 360 days', allTime: 'All time', recurringEvents: 'Recurring events', recurrenceChart: 'Recurrence chart', healthNoInsight: 'Add health entries to see recurring patterns.', healthRecurringInsight: 'recurring pattern(s), most often', healthRecentInsight: 'health note(s) in the last 30 days, most often',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready health summary exported.', selectedDayHealthNote: 'Health entries for the selected day are shown below.', none: 'none', healthDiaryTracking: 'Track health data', healthDiaryTrackingHint: 'Enable the separate health diary, symptom logging and health analysis.', healthDiaryDisabled: 'Health diary is disabled in Settings.', healthEventsShort: 'events', healthAnalysisWindow: 'Analysis window', healthEventFrequency: 'Event frequency', healthFrequencyColumns: '30 / 180 / 360 days / all', healthSelectedEventTrend: 'Monthly frequency for the selected event',
     backupOptions: 'Backup contents', backupOptionsBody: 'Choose what should be included in this ZIP backup. Everything is selected by default.', backupIncludeCatalog: 'Activity + saved food items', backupIncludeCatalogHint: 'Local and synced foods, ingredients, recipes, activities and catalog sources.', backupIncludeFoodDiary: 'Food diary', backupIncludeFoodDiaryHint: 'Meal entries, activity logs and weight logs.', backupIncludeHealthDiary: 'Health diary', backupIncludeHealthDiaryHint: 'Health entries with recurrence links and attachments.', backupSelectAtLeastOne: 'Select at least one backup content group.',
     appPurpose: 'App purpose', profilePurposeMissing: 'Choose at least one purpose.', selectAtLeastOnePurpose: 'Select at least one purpose.', onboardingPurposeIntro: 'What do you want to use Nutrino for? Select at least one option.',
     purposeWeightLoss: 'Weight loss', purposeWeightLossHint: 'Track a calorie deficit and progress.', purposeWeightGain: 'Weight gain', purposeWeightGainHint: 'Track enough intake and weight changes.', purposeHealthyEating: 'Healthy eating', purposeHealthyEatingHint: 'Focus on nutrients and balanced days.', purposeMealLogging: 'Meal logging', purposeMealLoggingHint: 'Keep a simple food diary.', purposeHealthLogging: 'Health issue logging', purposeHealthLoggingHint: 'Track symptoms and recurring signs.',
-    healthCategoryPain: 'Pain', healthCategoryDigestive: 'Digestive', healthCategoryStool: 'Stool changes', healthCategorySkin: 'Skin', healthCategoryRespiratory: 'Respiratory', healthCategorySleep: 'Sleep', healthCategoryMood: 'Mood', healthCategoryInjury: 'Injury', healthCategoryEnergy: 'Energy', healthCategoryOther: 'Other',
+    healthAnalysisDayHint: 'Open analysis for the selected day, recurrence context and longer-term trends.', healthClinicalContext: 'Clinical context', healthClinicalContextHint: 'Focuses on recurrence, timing, attachments and category mix. Useful for preparing a concise doctor visit summary.', healthDayPatternAnalysis: 'Selected day patterns', healthDayPatternHint: 'Today / all-time count / average recurrence interval.', healthAverageInterval: 'avg every', healthRecurringSignal: 'recurring', healthNewEvent: 'new', healthNotFrequent: 'not frequent', healthClinicalDisclaimer: 'This summary is a structured diary view, not a diagnosis. Share severe, worsening or urgent symptoms with a clinician.', healthCategoryPain: 'Pain', healthCategoryDigestive: 'Digestive', healthCategoryStool: 'Stool changes', healthCategorySkin: 'Skin', healthCategoryRespiratory: 'Respiratory', healthCategorySleep: 'Sleep', healthCategoryMood: 'Mood', healthCategoryInjury: 'Injury', healthCategoryEnergy: 'Energy', healthCategoryOther: 'Other',
   },
   hu: {
     foodDiary: 'Étel', healthDiary: 'Egészségnapló', addHealthEntry: 'Egészségbejegyzés', editHealthEntry: 'Egészségbejegyzés szerkesztése', duplicateHealthEntry: 'Egészségbejegyzés duplikálása',
@@ -7015,12 +7010,12 @@ const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, strin
     now: 'Most', tenMinutesAgo: '10 perce', oneHourAgo: '1 órája', customDateTime: 'Egyedi', date: 'Dátum', time: 'Idő',
     healthTitle: 'Cím, pl. bal térdfájdalom', healthDescription: 'Leírás', healthCategory: 'Kategória', healthNotes: 'Opcionális jegyzetek', addPhoto: 'Fotó', addVideo: 'Videó', photoAttachment: 'Fotó', videoAttachment: 'Videó', attachments: 'csatolmány',
     healthTitleRequired: 'Az egészségbejegyzés címe kötelező.', healthEntrySaved: 'Egészségbejegyzés mentve.', healthEntryUpdated: 'Egészségbejegyzés frissítve.', searchHealthDiary: 'Keresés cím, leírás vagy dátum szerint', noHealthEntries: 'Nincs egészségbejegyzés erre a napra.', noHealthSearchResults: 'Nincs találat az egészségnaplóban.',
-    healthAnalysis: 'Egészség analízis', last30Days: 'Utolsó 30 nap', last180Days: 'Utolsó 180 nap', last360Days: 'Utolsó 360 nap', allTime: 'Összes idő', recurringEvents: 'Visszatérő események', recurrenceChart: 'Ismétlődés diagram', healthNoInsight: 'Adj hozzá egészségbejegyzéseket a visszatérő mintákhoz.', healthRecurringInsight: 'visszatérő minta, leggyakrabban', healthRecentInsight: 'egészségjegyzet az utolsó 30 napban, leggyakrabban', today: 'ma', healthEntriesToday: 'mai egészségbejegyzés', healthRecurringToday: 'ma visszatérő', healthPatternNew: 'új', healthPatternNotFrequent: 'nem gyakori', healthPatternRecurring: 'visszatérő', healthPatternSameDay: 'azonos nap', every: 'kb.', lastBefore: 'előző előfordulás', customHealthAnalysisRange: 'Egyéni időszak', healthRangeUnit: 'Egység', last: 'Utolsó', from: 'Dátumtól', to: 'Dátumig', weeks: 'hét', months: 'hónap', healthClinicalAnalysisNote: 'A mintázatok orvosi áttekintést és beszélgetést segítő összefoglalók, nem diagnózisok. Tartós, súlyos vagy aggasztó tünetekkel fordulj szakképzett orvoshoz.', healthWeekdayPattern: 'Hét napjai szerinti minta', healthTimeOfDayPattern: 'Napszak szerinti minta', healthTimeNight: 'Éjszaka', healthTimeMorning: 'Reggel', healthTimeAfternoon: 'Délután', healthTimeEvening: 'Este',
+    healthAnalysis: 'Egészség analízis', last30Days: 'Utolsó 30 nap', last180Days: 'Utolsó 180 nap', last360Days: 'Utolsó 360 nap', allTime: 'Összes idő', recurringEvents: 'Visszatérő események', recurrenceChart: 'Ismétlődés diagram', healthNoInsight: 'Adj hozzá egészségbejegyzéseket a visszatérő mintákhoz.', healthRecurringInsight: 'visszatérő minta, leggyakrabban', healthRecentInsight: 'egészségjegyzet az utolsó 30 napban, leggyakrabban',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready egészség összefoglaló exportálva.', selectedDayHealthNote: 'A kiválasztott nap egészségbejegyzései lent láthatók.', none: 'nincs', healthDiaryTracking: 'Egészségügyi adatok vezetése', healthDiaryTrackingHint: 'Külön egészségnapló, tünetrögzítés és egészség analízis bekapcsolása.', healthDiaryDisabled: 'Az egészségnapló ki van kapcsolva a beállításokban.', healthEventsShort: 'esemény', healthAnalysisWindow: 'Elemzési időszak', healthEventFrequency: 'Esemény gyakoriság', healthFrequencyColumns: '30 / 180 / 360 nap / összes', healthSelectedEventTrend: 'A kiválasztott esemény havi gyakorisága',
     backupOptions: 'Backup tartalma', backupOptionsBody: 'Válaszd ki, mi kerüljön ebbe a ZIP mentésbe. Alapból minden be van pipálva.', backupIncludeCatalog: 'Aktivitás + étel mentett tételek', backupIncludeCatalogHint: 'Helyi és szinkronizált ételek, alapanyagok, receptek, aktivitások és katalógusforrások.', backupIncludeFoodDiary: 'Étel napló', backupIncludeFoodDiaryHint: 'Étkezések, aktivitásnaplók és súlynapló.', backupIncludeHealthDiary: 'Egészségügyi napló', backupIncludeHealthDiaryHint: 'Egészségbejegyzések ismétlődési kapcsolatokkal és csatolmányokkal.', backupSelectAtLeastOne: 'Legalább egy backup tartalmi csoportot válassz ki.',
     appPurpose: 'App használati cél', profilePurposeMissing: 'Válassz legalább egy célt.', selectAtLeastOnePurpose: 'Válassz legalább egy célt.', onboardingPurposeIntro: 'Mire szeretnéd használni a Nutrinót? Válassz legalább egy opciót.',
     purposeWeightLoss: 'Fogyás', purposeWeightLossHint: 'Deficit és haladás követése.', purposeWeightGain: 'Tömegnövelés', purposeWeightGainHint: 'Elég bevitel és súlyváltozás követése.', purposeHealthyEating: 'Egészséges étkezés', purposeHealthyEatingHint: 'Tápanyagok és kiegyensúlyozott napok.', purposeMealLogging: 'Étkezésnapló', purposeMealLoggingHint: 'Egyszerű ételnapló vezetése.', purposeHealthLogging: 'Egészségprobléma naplózás', purposeHealthLoggingHint: 'Tünetek és visszatérő jelek követése.',
-    healthCategoryPain: 'Fájdalom', healthCategoryDigestive: 'Emésztés', healthCategoryStool: 'Székletváltozás', healthCategorySkin: 'Bőr', healthCategoryRespiratory: 'Légzés', healthCategorySleep: 'Alvás', healthCategoryMood: 'Hangulat', healthCategoryInjury: 'Sérülés', healthCategoryEnergy: 'Energia', healthCategoryOther: 'Egyéb',
+    healthAnalysisDayHint: 'Elemzés megnyitása a kiválasztott naphoz, ismétlődési kontextussal és hosszabb távú trendekkel.', healthClinicalContext: 'Klinikai kontextus', healthClinicalContextHint: 'Ismétlődésre, időzítésre, csatolmányokra és kategória-eloszlásra fókuszál. Orvosi konzultáció előkészítéséhez hasznos.', healthDayPatternAnalysis: 'Kiválasztott napi minták', healthDayPatternHint: 'Mai / összes előfordulás / átlagos ismétlődési távolság.', healthAverageInterval: 'átlagosan ennyi naponta:', healthRecurringSignal: 'visszatérő', healthNewEvent: 'új', healthNotFrequent: 'nem gyakori', healthClinicalDisclaimer: 'Ez strukturált naplóösszefoglaló, nem diagnózis. Súlyosbodó, erős vagy sürgős tünettel fordulj orvoshoz.', healthCategoryPain: 'Fájdalom', healthCategoryDigestive: 'Emésztés', healthCategoryStool: 'Székletváltozás', healthCategorySkin: 'Bőr', healthCategoryRespiratory: 'Légzés', healthCategorySleep: 'Alvás', healthCategoryMood: 'Hangulat', healthCategoryInjury: 'Sérülés', healthCategoryEnergy: 'Energia', healthCategoryOther: 'Egyéb',
   },
 };
 translations.en = { ...translations.en, ...normalizeTranslationValues(mobileHealthDiaryTranslations.en || {}) };
@@ -8679,38 +8674,15 @@ function attachmentTypeLabel(type: string) {
 }
 
 function healthRangeDays(range: HealthAnalysisRangeKey) {
-  if (range === 'custom') return customHealthRangeDays();
   return healthAnalysisRanges.find((item) => item.key === range)?.days ?? null;
 }
 
 function healthRangeLabel(range: HealthAnalysisRangeKey) {
-  if (range === 'custom') return t('customHealthAnalysisRange');
   const option = healthAnalysisRanges.find((item) => item.key === range);
   return t(option?.labelKey || 'allTime');
 }
 
-function customHealthRangeDays() {
-  const amount = Math.max(1, Number(healthCustomRangeAmount.value || 1));
-  const unit = healthCustomRangeUnit.value;
-  if (unit === 'week') return amount * 7;
-  if (unit === 'month') return amount * 30;
-  if (unit === 'year') return amount * 365;
-  return amount;
-}
-
-function customHealthRangeBounds(): { start: number; end: number } | null {
-  const toKey = healthCustomRangeTo.value || dateKey();
-  const end = dayEndMs(toKey);
-  if (healthCustomRangeFrom.value) return { start: dayStartMs(healthCustomRangeFrom.value), end };
-  return { start: end - customHealthRangeDays() * 24 * 60 * 60 * 1000 + 1, end };
-}
-
 function filterHealthEntriesByRange(entries: HealthEntry[], range: HealthAnalysisRangeKey) {
-  if (range === 'custom') {
-    const bounds = customHealthRangeBounds();
-    if (!bounds) return [...entries];
-    return entries.filter((entry) => entry.occurred_at >= bounds.start && entry.occurred_at <= bounds.end);
-  }
   const days = healthRangeDays(range);
   if (!days) return [...entries];
   const start = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -8725,86 +8697,6 @@ function countRecurringHealthEvents(entries: HealthEntry[]) {
 
 function latestHealthEntry(entries: HealthEntry[]) {
   return [...entries].sort((a, b) => b.occurred_at - a.occurred_at)[0] || null;
-}
-
-function healthEventSeries(eventId: string) {
-  return activeHealthEntries.value.filter((entry) => entry.event_id === eventId).sort((a, b) => a.occurred_at - b.occurred_at);
-}
-
-function healthAverageIntervalDays(entries: HealthEntry[]) {
-  const ordered = [...entries].sort((a, b) => a.occurred_at - b.occurred_at);
-  if (ordered.length < 2) return null;
-  const gaps: number[] = [];
-  for (let index = 1; index < ordered.length; index += 1) {
-    const days = (ordered[index].occurred_at - ordered[index - 1].occurred_at) / (24 * 60 * 60 * 1000);
-    if (Number.isFinite(days) && days >= 0) gaps.push(days);
-  }
-  if (!gaps.length) return null;
-  return gaps.reduce((sum, value) => sum + value, 0) / gaps.length;
-}
-
-function healthIntervalLabel(days: number | null) {
-  if (days == null) return t('healthPatternNew');
-  if (days < 1) return t('healthPatternSameDay');
-  return `${t('every')} ${Math.max(1, Math.round(days))} ${t('days')}`;
-}
-
-function healthPatternStatus(totalCount: number, averageDays: number | null) {
-  if (totalCount <= 1) return t('healthPatternNew');
-  if (totalCount <= 2 || (averageDays != null && averageDays > 90)) return t('healthPatternNotFrequent');
-  return t('healthPatternRecurring');
-}
-
-function buildHealthDayInsightRows(entries: HealthEntry[]) {
-  const grouped = new Map<string, HealthEntry[]>();
-  for (const entry of entries) {
-    const rows = grouped.get(entry.event_id) || [];
-    rows.push(entry);
-    grouped.set(entry.event_id, rows);
-  }
-  return [...grouped.entries()].map(([eventId, rows]) => {
-    const orderedToday = [...rows].sort((a, b) => b.occurred_at - a.occurred_at);
-    const series = healthEventSeries(eventId);
-    const firstTodayAt = Math.min(...orderedToday.map((entry) => entry.occurred_at));
-    const previous = [...series].filter((entry) => entry.occurred_at < firstTodayAt).at(-1) || null;
-    const averageDays = healthAverageIntervalDays(series);
-    const event = healthEventEntry(orderedToday[0]);
-    return {
-      eventId,
-      title: event.title,
-      categoryLabel: healthCategoryLabel(event.category),
-      countToday: orderedToday.length,
-      totalCount: series.length,
-      lastAt: orderedToday[0]?.occurred_at || 0,
-      lastBeforeLabel: previous ? formatDateTime(previous.occurred_at) : t('none'),
-      intervalLabel: healthIntervalLabel(averageDays),
-      statusLabel: healthPatternStatus(series.length, averageDays),
-      icon: healthCategoryIcon(event.category),
-    };
-  }).sort((a, b) => b.countToday - a.countToday || b.lastAt - a.lastAt);
-}
-
-function buildHealthDaySummary(entries: HealthEntry[]) {
-  const rows = buildHealthDayInsightRows(entries);
-  return {
-    total: entries.length,
-    events: rows.length,
-    recurring: rows.filter((row) => row.totalCount > 1).length,
-    latest: latestHealthEntry(entries),
-    topTitle: rows[0]?.title || t('none'),
-  };
-}
-
-function healthDayInsightText(entries = currentDayHealthEntries.value) {
-  const summary = buildHealthDaySummary(entries);
-  if (!summary.total) return t('healthNoInsight');
-  if (summary.recurring) return `${summary.total} ${t('healthEntriesToday')}, ${summary.recurring} ${t('healthRecurringToday')}.`;
-  return `${summary.total} ${t('healthEntriesToday')}, ${t('healthPatternNew')}.`;
-}
-
-function scrollToHealthAnalysis() {
-  const element = document.getElementById('health-analysis-section');
-  if (element) element.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function buildHealthAnalysisSummary() {
@@ -8847,37 +8739,6 @@ function buildHealthCategoryChartRows(entries = healthAnalysisEntries.value) {
     }));
 }
 
-function buildHealthWeekdayChartRows(entries = healthAnalysisEntries.value) {
-  const formatter = new Intl.DateTimeFormat(currentLocale(), { weekday: 'short' });
-  const base = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(2024, 0, 1 + index);
-    return { index, label: formatter.format(date), count: 0, percent: 0 };
-  });
-  for (const entry of entries) {
-    const jsDay = new Date(entry.occurred_at).getDay();
-    const mondayIndex = (jsDay + 6) % 7;
-    base[mondayIndex].count += 1;
-  }
-  const max = Math.max(1, ...base.map((row) => row.count));
-  return base.map((row) => ({ ...row, percent: Math.round(row.count / max * 100) }));
-}
-
-function buildHealthTimeOfDayChartRows(entries = healthAnalysisEntries.value) {
-  const buckets = [
-    { key: 'night', label: t('healthTimeNight'), from: 0, to: 6, count: 0, percent: 0 },
-    { key: 'morning', label: t('healthTimeMorning'), from: 6, to: 12, count: 0, percent: 0 },
-    { key: 'afternoon', label: t('healthTimeAfternoon'), from: 12, to: 18, count: 0, percent: 0 },
-    { key: 'evening', label: t('healthTimeEvening'), from: 18, to: 24, count: 0, percent: 0 },
-  ];
-  for (const entry of entries) {
-    const hour = new Date(entry.occurred_at).getHours();
-    const bucket = buckets.find((item) => hour >= item.from && hour < item.to) || buckets[0];
-    bucket.count += 1;
-  }
-  const max = Math.max(1, ...buckets.map((row) => row.count));
-  return buckets.map((row) => ({ ...row, percent: Math.round(row.count / max * 100) }));
-}
-
 function buildHealthPeriodSummaryRows() {
   return healthAnalysisRanges.map((range) => {
     const entries = filterHealthEntriesByRange(activeHealthEntries.value, range.key);
@@ -8894,14 +8755,14 @@ function buildHealthPeriodSummaryRows() {
   });
 }
 
-function buildHealthEventFrequencyRows(entries = healthAnalysisEntries.value) {
+function buildHealthEventFrequencyRows() {
   const byEvent = new Map<string, HealthEntry[]>();
-  for (const entry of entries) {
+  for (const entry of activeHealthEntries.value) {
     const rows = byEvent.get(entry.event_id) || [];
     rows.push(entry);
     byEvent.set(entry.event_id, rows);
   }
-  const total = Math.max(1, entries.length);
+  const total = Math.max(1, activeHealthEntries.value.length);
   return [...byEvent.entries()]
     .map(([eventId, entries], index) => {
       const ordered = [...entries].sort((a, b) => a.occurred_at - b.occurred_at);
@@ -8923,6 +8784,59 @@ function buildHealthEventFrequencyRows(entries = healthAnalysisEntries.value) {
       };
     })
     .sort((a, b) => b.count - a.count || b.lastAt - a.lastAt);
+}
+
+
+function buildHealthEventFrequencyRowsForEntries(entries: HealthEntry[]) {
+  const byEvent = new Map<string, HealthEntry[]>();
+  for (const entry of entries) {
+    const rows = byEvent.get(entry.event_id) || [];
+    rows.push(entry);
+    byEvent.set(entry.event_id, rows);
+  }
+  return [...byEvent.entries()]
+    .map(([eventId, localEntries], index) => {
+      const allEntries = activeHealthEntries.value.filter((entry) => entry.event_id === eventId).sort((a, b) => a.occurred_at - b.occurred_at);
+      const event = healthEventEntry(localEntries[0]);
+      const latestLocal = [...localEntries].sort((a, b) => b.occurred_at - a.occurred_at)[0];
+      const previousBeforeDay = [...allEntries].reverse().find((entry) => entry.occurred_at < latestLocal.occurred_at && !inSelectedDay(entry.occurred_at));
+      const intervals = allEntries.slice(1).map((entry, idx) => Math.max(1, Math.round((entry.occurred_at - allEntries[idx].occurred_at) / 86400000)));
+      const averageIntervalDays = intervals.length ? Math.round(intervals.reduce((sum, value) => sum + value, 0) / intervals.length) : 0;
+      const statusKey = allEntries.length <= 1 ? 'healthNewEvent' : averageIntervalDays > 30 ? 'healthNotFrequent' : 'healthRecurringSignal';
+      return {
+        eventId,
+        title: event.title,
+        category: event.category,
+        categoryLabel: healthCategoryLabel(event.category),
+        todayCount: localEntries.length,
+        totalCount: allEntries.length,
+        lastAt: latestLocal.occurred_at,
+        previousAt: previousBeforeDay?.occurred_at || 0,
+        averageIntervalDays,
+        status: t(statusKey),
+        color: healthTrendPalette[index % healthTrendPalette.length],
+      };
+    })
+    .sort((a, b) => b.todayCount - a.todayCount || b.lastAt - a.lastAt);
+}
+
+function buildHealthClinicalSummary(entries: HealthEntry[]) {
+  const uniqueEvents = new Set(entries.map((entry) => entry.event_id)).size;
+  const recurringToday = buildHealthEventFrequencyRowsForEntries(entries).filter((row) => row.totalCount > 1).length;
+  const attachments = entries.reduce((sum, entry) => sum + entry.attachments.length, 0);
+  const categories = new Set(entries.map((entry) => entry.category)).size;
+  return { entries: entries.length, uniqueEvents, recurringToday, attachments, categories };
+}
+
+function healthIntervalText(row: { averageIntervalDays: number; previousAt: number; totalCount: number }) {
+  if (row.totalCount <= 1) return t('healthNewEvent');
+  if (!row.averageIntervalDays) return t('healthNotFrequent');
+  return `${t('healthAverageInterval')} ${row.averageIntervalDays} ${t('days')}`;
+}
+
+function openHealthAnalysisModal() {
+  if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
+  healthAnalysisModalOpen.value = true;
 }
 
 function buildHealthRecurrenceChartRows() {
@@ -12237,19 +12151,19 @@ function setTab(tab: Tab) {
       <article v-if="healthDiaryEnabled" class="card meal-card home-health-card">
         <div class="meal-header home-health-header">
           <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
-          <span><b>{{ t('healthDiary') }}</b><small>{{ currentDayHealthEntries.length }} {{ t('healthEventsShort') }} · {{ healthDayInsightText() }}</small></span>
-          <span class="home-health-header-actions">
-            <button class="entry-icon-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthDiaryTab" v-html="lucideSvg('chartPie')"></button>
-            <button class="entry-icon-button" type="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click="openNewHealthEntry" v-html="lucideSvg('plus')"></button>
-          </span>
+          <span><b>{{ t('healthDiary') }}</b><small>{{ currentDayHealthEntries.length ? healthInsightText() : t('noHealthEntries') }}</small></span>
+          <span class="section-summary-text">{{ currentDayHealthEntries.length }} {{ t('entries') }}</span>
+          <button class="meal-micro-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthAnalysisModal" v-html="lucideSvg('chartPie')"></button>
+          <button class="plus-button" type="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click="openNewHealthEntry">+</button>
         </div>
-        <div class="entry-list home-health-entry-list">
-          <div v-for="row in currentDayHealthInsightRows.slice(0, 4)" :key="`home-health-day-${row.eventId}`" class="entry-row health-insight-entry-row">
-            <div><b>{{ row.title }}</b><small>{{ row.countToday }}x {{ t('today') }} · {{ row.statusLabel }} · {{ row.intervalLabel }}</small></div>
+        <div class="entry-list">
+          <div v-for="entry in currentDayHealthEntries.slice(0, 4)" :key="`home-health-entry-${entry.id}`" class="entry-row">
+            <div><b>{{ entry.title }}</b><small>{{ healthCategoryLabel(entry.category) }} · {{ formatDateTime(entry.occurred_at) }}</small></div>
           </div>
-          <p v-if="!currentDayHealthInsightRows.length" class="empty-line">{{ t('noHealthEntries') }}</p>
+          <p v-if="!currentDayHealthEntries.length" class="empty-line">{{ t('noHealthEntries') }}</p>
         </div>
       </article>
+
     </section>
 
     <section v-if="activeTab === 'diary'" class="page-stack">
@@ -12319,7 +12233,7 @@ function setTab(tab: Tab) {
         <div class="diary-date-sticky-actions">
           <button v-if="diaryTab === 'food' && state.settings.show_micronutrients" class="icon-button analysis-open-button" type="button" :aria-label="t('dayMicronutrients')" :title="t('dayMicronutrients')" @click="openDayMicronutrients" v-html="lucideSvg('flaskConical')"></button>
           <button v-if="diaryTab === 'food'" class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="openAnalysis" v-html="lucideSvg('chartPie')"></button>
-          <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="scrollToHealthAnalysis" v-html="lucideSvg('chartPie')"></button>
+          <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthAnalysisModal" v-html="lucideSvg('chartPie')"></button>
           <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click="openNewHealthEntry" v-html="lucideSvg('plus')"></button>
           <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('next')" :title="t('next')" @click="moveSelectedDate(1)" v-html="lucideSvg('chevronRight')"></button>
         </div>
@@ -12402,23 +12316,19 @@ function setTab(tab: Tab) {
       </template>
 
       <template v-else-if="healthDiaryEnabled">
-        <article class="card health-day-analysis-card">
-          <div class="analysis-card-header compact">
-            <h2>{{ t('healthAnalysis') }}</h2>
-            <small>{{ selectedDate }}</small>
-          </div>
-          <div class="health-summary-grid health-day-summary-grid">
-            <div><span>{{ t('entries') }}</span><b>{{ currentDayHealthSummary.total }}</b></div>
-            <div><span>{{ t('healthEventsShort') }}</span><b>{{ currentDayHealthSummary.events }}</b></div>
-            <div><span>{{ t('recurringEvents') }}</span><b>{{ currentDayHealthSummary.recurring }}</b></div>
-          </div>
-          <div v-if="currentDayHealthInsightRows.length" class="health-day-insight-list">
-            <div v-for="row in currentDayHealthInsightRows" :key="`day-health-${row.eventId}`" class="health-day-insight-row">
-              <span class="health-entry-icon compact" v-html="lucideSvg(row.icon)"></span>
-              <span><b>{{ row.title }}</b><small>{{ row.countToday }}x {{ t('today') }} · {{ row.statusLabel }} · {{ row.intervalLabel }}</small><small>{{ t('lastBefore') }}: {{ row.lastBeforeLabel }}</small></span>
+        <article class="card health-summary-card">
+          <div class="health-summary-head">
+            <span class="health-summary-icon" v-html="lucideSvg('heartPulse')"></span>
+            <div>
+              <h2>{{ t('healthDiary') }}</h2>
+              <p>{{ healthInsightText() }}</p>
             </div>
           </div>
-          <p v-else class="empty-line">{{ t('noHealthEntries') }}</p>
+          <div class="health-summary-grid">
+            <div><span>{{ t('entries') }}</span><b>{{ healthAnalysisSummary.total }}</b></div>
+            <div><span>{{ t('last30Days') }}</span><b>{{ healthAnalysisSummary.recent }}</b></div>
+            <div><span>{{ t('recurringEvents') }}</span><b>{{ healthAnalysisSummary.recurringEvents }}</b></div>
+          </div>
           <div class="health-action-row">
             <button class="outlined-button" type="button" @click="openHealthRecurrence()"><span v-html="lucideSvg('refreshCw')"></span>{{ t('markAgain') }}</button>
             <button class="filled-button" type="button" @click="openNewHealthEntry"><span v-html="lucideSvg('plus')"></span>{{ t('addHealthEntry') }}</button>
@@ -12430,6 +12340,14 @@ function setTab(tab: Tab) {
             <span v-html="lucideSvg('search')"></span>
             <input v-model="healthSearch" class="input" type="search" :placeholder="t('searchHealthDiary')" />
           </div>
+        </article>
+
+        <article class="card health-analysis-card health-analysis-inline-card">
+          <div class="analysis-card-header compact">
+            <h2>{{ t('healthAnalysis') }}</h2>
+            <button class="text-button" type="button" @click="openHealthAnalysisModal"><span v-html="lucideSvg('chartPie')"></span>{{ t('openAnalysis') }}</button>
+          </div>
+          <p class="helper big">{{ t('healthAnalysisDayHint') }}</p>
         </article>
 
         <article v-if="!selectedDayUnlocked" class="card day-edit-card">
@@ -12461,91 +12379,6 @@ function setTab(tab: Tab) {
           </div>
         </article>
         <p v-if="!filteredHealthEntries.length" class="empty-card">{{ healthSearch ? t('noHealthSearchResults') : t('noHealthEntries') }}</p>
-        <article id="health-analysis-section" class="card health-analysis-card">
-          <div class="analysis-card-header compact">
-            <h2>{{ t('healthAnalysis') }}</h2>
-            <button class="text-button" type="button" @click="exportHealthAiSummary"><span v-html="lucideSvg('fileText')"></span>{{ t('healthAiExport') }}</button>
-          </div>
-          <div class="health-period-grid">
-            <button v-for="row in healthPeriodSummaryRows" :key="`health-period-${row.key}`" type="button" class="health-period-card" :class="{ active: healthAnalysisRange === row.key }" @click="healthAnalysisRange = row.key">
-              <span>{{ row.label }}</span>
-              <b>{{ row.entries }}</b>
-              <small>{{ row.events }} {{ t('healthEventsShort') }} · {{ row.recurring }} {{ t('recurringEvents') }}</small>
-            </button>
-            <button type="button" class="health-period-card" :class="{ active: healthAnalysisRange === 'custom' }" @click="healthAnalysisRange = 'custom'">
-              <span>{{ t('customHealthAnalysisRange') }}</span>
-              <b>{{ healthAnalysisEntries.length }}</b>
-              <small>{{ t('customDateTime') }}</small>
-            </button>
-          </div>
-          <div v-if="healthAnalysisRange === 'custom'" class="health-custom-range-card">
-            <label><span>{{ t('last') }}</span><input v-model.number="healthCustomRangeAmount" class="input" type="number" min="1" step="1" inputmode="numeric" /></label>
-            <label><span>{{ t('healthRangeUnit') }}</span><select v-model="healthCustomRangeUnit" class="input"><option value="day">{{ t('days') }}</option><option value="week">{{ t('weeks') }}</option><option value="month">{{ t('months') }}</option><option value="year">{{ t('years') }}</option></select></label>
-            <label><span>{{ t('from') }}</span><input v-model="healthCustomRangeFrom" class="input" type="date" /></label>
-            <label><span>{{ t('to') }}</span><input v-model="healthCustomRangeTo" class="input" type="date" /></label>
-          </div>
-          <p class="helper health-analysis-window-copy">{{ t('healthAnalysisWindow') }}: {{ healthRangeLabel(healthAnalysisRange) }}</p>
-          <p class="helper big health-clinical-note">{{ t('healthClinicalAnalysisNote') }}</p>
-          <div v-if="healthCategoryChartRows.length" class="health-bar-list">
-            <div v-for="row in healthCategoryChartRows" :key="`health-category-${row.category}`" class="health-bar-row">
-              <span class="health-bar-label"><i :style="{ background: row.color }"></i>{{ row.label }}</span>
-              <div class="health-bar-track"><span :style="{ width: `${row.percent}%`, background: row.color }"></span></div>
-              <b>{{ row.count }}</b>
-            </div>
-          </div>
-          <p v-else class="empty-line">{{ t('noHealthEntries') }}</p>
-          <div v-if="healthAnalysisEntries.length" class="health-event-trend-card">
-            <div class="health-frequency-head"><h3>{{ t('healthWeekdayPattern') }}</h3><small>{{ t('healthAnalysisWindow') }}</small></div>
-            <div class="health-trend-bars health-weekday-bars">
-              <div v-for="row in healthWeekdayChartRows" :key="`weekday-${row.index}`" class="health-trend-bar">
-                <span><i :style="{ height: `${Math.max(4, row.percent)}%` }"></i></span>
-                <b>{{ row.count }}</b>
-                <small>{{ row.label }}</small>
-              </div>
-            </div>
-          </div>
-          <div v-if="healthAnalysisEntries.length" class="health-event-trend-card">
-            <div class="health-frequency-head"><h3>{{ t('healthTimeOfDayPattern') }}</h3><small>{{ t('healthAnalysisWindow') }}</small></div>
-            <div class="health-time-grid">
-              <div v-for="row in healthTimeOfDayChartRows" :key="row.key" class="health-time-card"><span>{{ row.label }}</span><b>{{ row.count }}</b><i :style="{ width: `${Math.max(4, row.percent)}%` }"></i></div>
-            </div>
-          </div>
-          <div v-if="healthEventFrequencyRows.length" class="health-frequency-panel">
-            <div class="health-frequency-head">
-              <h3>{{ t('healthEventFrequency') }}</h3>
-              <small>{{ t('healthFrequencyColumns') }}</small>
-            </div>
-            <div class="health-frequency-table">
-              <button v-for="row in healthEventFrequencyRows.slice(0, 10)" :key="row.eventId" type="button" class="health-frequency-row" :class="{ selected: selectedHealthEventAnalysis?.eventId === row.eventId }" @click="healthSelectedEventId = row.eventId">
-                <span class="health-frequency-title"><b>{{ row.title }}</b><small>{{ row.categoryLabel }} · {{ formatDateTime(row.lastAt) }}</small></span>
-                <span>{{ row.last30 }}</span>
-                <span>{{ row.last180 }}</span>
-                <span>{{ row.last360 }}</span>
-                <span>{{ row.count }}</span>
-              </button>
-            </div>
-          </div>
-          <div v-if="selectedHealthEventAnalysis" class="health-event-trend-card">
-            <div class="health-frequency-head">
-              <h3>{{ selectedHealthEventAnalysis.title }}</h3>
-              <small>{{ t('healthSelectedEventTrend') }}</small>
-            </div>
-            <div class="health-trend-bars">
-              <div v-for="row in healthSelectedEventTrendRows" :key="`health-trend-${row.key}`" class="health-trend-bar">
-                <span><i :style="{ height: `${Math.max(4, row.percent)}%`, background: selectedHealthEventAnalysis.color }"></i></span>
-                <b>{{ row.count }}</b>
-                <small>{{ row.label }}</small>
-              </div>
-            </div>
-          </div>
-          <div v-if="healthRecurrenceChartRows.length" class="health-recurrence-list">
-            <h3>{{ t('recurrenceChart') }}</h3>
-            <button v-for="row in healthRecurrenceChartRows" :key="row.eventId" type="button" class="health-recurrence-row" @click="openHealthRecurrence(reusableHealthEvents.find((entry) => entry.event_id === row.eventId))">
-              <span><b>{{ row.title }}</b><small>{{ row.count }}x · {{ formatDateTime(row.latestAt) }}</small></span>
-              <i :style="{ background: row.color, width: `${Math.min(100, row.count * 18)}%` }"></i>
-            </button>
-          </div>
-        </article>
       </template>
     </section>
 
@@ -13517,9 +13350,53 @@ function setTab(tab: Tab) {
           </div>
           <p class="helper big">{{ t('onboardingTourBody') }}</p>
         </div>
-        <div class="dialog-actions onboarding-actions compact-onboarding-actions"><button v-if="onboardingStep === 0" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 0 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 3" class="text-button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="openOnboardingProfileStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 1" class="filled-button" @click="openOnboardingSyncStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 2" class="filled-button" @click="openOnboardingPermissionsStep">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('onboardingTourStart') }}</button></div>
+        <div class="dialog-actions onboarding-actions compact-onboarding-actions"><button v-if="onboardingStep === 1" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 1 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 3" class="text-button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="openOnboardingProfileStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 1" class="filled-button" @click="openOnboardingSyncStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 2" class="filled-button" @click="openOnboardingPermissionsStep">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('onboardingTourStart') }}</button></div>
       </article>
       </section>
+    </Teleport>
+
+
+    <Teleport to="body">
+      <div v-if="healthAnalysisModalOpen && healthDiaryEnabled" class="dialog-backdrop app-overlay" @click.self="healthAnalysisModalOpen = false">
+        <article class="settings-dialog health-analysis-modal">
+          <div class="dialog-title-row"><h2>{{ t('healthAnalysis') }}</h2><span class="dialog-title-actions"><button class="text-button health-inline-icon-button" type="button" @click="exportHealthAiSummary"><span v-html="lucideSvg('fileText')"></span>{{ t('healthAiExport') }}</button><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" @click="healthAnalysisModalOpen = false" v-html="lucideSvg('x')"></button></span></div>
+          <section class="health-clinical-card">
+            <span class="health-summary-icon" v-html="lucideSvg('flaskConical')"></span>
+            <div><b>{{ t('healthClinicalContext') }}</b><small>{{ t('healthClinicalContextHint') }}</small></div>
+          </section>
+          <div class="health-summary-grid">
+            <div><span>{{ t('entries') }}</span><b>{{ currentDayHealthClinicalSummary.entries }}</b></div>
+            <div><span>{{ t('healthEventsShort') }}</span><b>{{ currentDayHealthClinicalSummary.uniqueEvents }}</b></div>
+            <div><span>{{ t('recurringEvents') }}</span><b>{{ currentDayHealthClinicalSummary.recurringToday }}</b></div>
+            <div><span>{{ t('attachments') }}</span><b>{{ currentDayHealthClinicalSummary.attachments }}</b></div>
+          </div>
+          <div v-if="currentDayHealthAnalysisRows.length" class="health-frequency-panel">
+            <div class="health-frequency-head"><h3>{{ t('healthDayPatternAnalysis') }}</h3><small>{{ t('healthDayPatternHint') }}</small></div>
+            <div class="health-frequency-table health-frequency-table-clinical">
+              <button v-for="row in currentDayHealthAnalysisRows" :key="`clinical-day-${row.eventId}`" type="button" class="health-frequency-row" @click="healthSelectedEventId = row.eventId">
+                <span class="health-frequency-title"><b>{{ row.title }}</b><small>{{ row.categoryLabel }} · {{ row.status }}</small></span>
+                <span>{{ row.todayCount }}x</span>
+                <span>{{ row.totalCount }}x</span>
+                <span>{{ healthIntervalText(row) }}</span>
+              </button>
+            </div>
+          </div>
+          <p v-else class="empty-line">{{ t('noHealthEntries') }}</p>
+          <div class="health-period-grid">
+            <button v-for="row in healthPeriodSummaryRows" :key="`health-modal-period-${row.key}`" type="button" class="health-period-card" :class="{ active: healthAnalysisRange === row.key }" @click="healthAnalysisRange = row.key">
+              <span>{{ row.label }}</span><b>{{ row.entries }}</b><small>{{ row.events }} {{ t('healthEventsShort') }} · {{ row.recurring }} {{ t('recurringEvents') }}</small>
+            </button>
+          </div>
+          <div v-if="healthCategoryChartRows.length" class="health-bar-list">
+            <div v-for="row in healthCategoryChartRows" :key="`health-modal-category-${row.category}`" class="health-bar-row"><span class="health-bar-label"><i :style="{ background: row.color }"></i>{{ row.label }}</span><div class="health-bar-track"><span :style="{ width: `${row.percent}%`, background: row.color }"></span></div><b>{{ row.count }}</b></div>
+          </div>
+          <div v-if="selectedHealthEventAnalysis" class="health-event-trend-card">
+            <div class="health-frequency-head"><h3>{{ selectedHealthEventAnalysis.title }}</h3><small>{{ t('healthSelectedEventTrend') }}</small></div>
+            <div class="health-trend-bars"><div v-for="row in healthSelectedEventTrendRows" :key="`health-modal-trend-${row.key}`" class="health-trend-bar"><span><i :style="{ height: `${Math.max(4, row.percent)}%`, background: selectedHealthEventAnalysis.color }"></i></span><b>{{ row.count }}</b><small>{{ row.label }}</small></div></div>
+          </div>
+          <p class="helper big">{{ t('healthClinicalDisclaimer') }}</p>
+        </article>
+      </div>
     </Teleport>
 
     <Teleport to="body">
