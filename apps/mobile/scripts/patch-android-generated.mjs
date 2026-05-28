@@ -568,7 +568,7 @@ function patchAndroidApplicationId(config) {
   return source !== original;
 }
 
-function patchReleaseSigningFallback() {
+function patchReleaseSigning() {
   const gradlePath = findAndroidAppGradlePath();
   if (!gradlePath) return false;
 
@@ -582,12 +582,45 @@ function patchReleaseSigningFallback() {
   const markerRegex = new RegExp(`\\n?${markerStart}[\\s\\S]*?${markerEnd}\\n?`, 'g');
   source = source.replace(markerRegex, '\n');
 
-  if (!hasRealKeystore) {
+  const releaseSigningMarkerStart = '// BEGIN NUTRINO RELEASE SIGNING';
+  const releaseSigningMarkerEnd = '// END NUTRINO RELEASE SIGNING';
+  const releaseSigningMarkerRegex = new RegExp(`\\n?${releaseSigningMarkerStart}[\\s\\S]*?${releaseSigningMarkerEnd}\\n?`, 'g');
+  source = source.replace(releaseSigningMarkerRegex, '\n');
+
+  if (hasRealKeystore) {
+    const signingBlock = `
+${releaseSigningMarkerStart}
+val nutrinoReleaseKeystoreProperties = Properties().apply {
+    rootProject.file("keystore.properties").inputStream().use { load(it) }
+}
+
+android {
+    signingConfigs {
+        create("nutrinoRelease") {
+            val storeFilePath = nutrinoReleaseKeystoreProperties.getProperty("storeFile")
+            storeFile = rootProject.file(storeFilePath)
+            storePassword = nutrinoReleaseKeystoreProperties.getProperty("storePassword")
+            keyAlias = nutrinoReleaseKeystoreProperties.getProperty("keyAlias")
+            keyPassword = nutrinoReleaseKeystoreProperties.getProperty("keyPassword")
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("nutrinoRelease")
+        }
+    }
+}
+${releaseSigningMarkerEnd}
+`;
+    source = `${source.trimEnd()}\n${signingBlock}`;
+  } else {
     const fallbackBlock = `
 ${markerStart}
 // Local sideload safety: when no real release keystore is configured, sign
 // release APKs with the Android debug signing config so the generated APK is
-// still a valid Android package. Do not use this fallback for store releases.
+// still a valid Android package. This is not stable across release machines,
+// so GitHub release APKs built this way may not install over previous stable
+// APKs. Configure keystore.properties or Android signing secrets for releases.
 android {
     buildTypes {
         getByName("release") {
@@ -1068,7 +1101,7 @@ if (!fs.existsSync(androidDir)) {
 
 const gradlePatched = patchGradleProperties();
 const identityPatched = patchAndroidApplicationId(config);
-const signingPatched = patchReleaseSigningFallback();
+const signingPatched = patchReleaseSigning();
 const iconsPatched = patchAndroidIcons();
 const launcherColorPatched = ensureLauncherBackgroundColor();
 const networkSecurityPatched = ensureNetworkSecurityConfig();

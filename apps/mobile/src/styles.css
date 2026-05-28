@@ -1307,6 +1307,48 @@ body:has(.onboarding-screen) {
 
 /* v0.7.0 GitHub CSV sources, scanner, sticky picker search and restored exact-match emphasis */
 .github-sync-card { display: grid; gap: 12px; }
+.source-settings-card { display: grid; gap: 12px; }
+.source-details {
+  display: grid;
+  gap: 12px;
+  padding: 0 4px 4px;
+}
+.source-details > summary {
+  cursor: pointer;
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+}
+.source-details > summary::-webkit-details-marker { display: none; }
+.source-details > summary::after {
+  content: 'v';
+  color: var(--on-surface-variant);
+}
+.source-details[open] > summary::after { transform: rotate(180deg); }
+.source-details > summary span,
+.source-details > summary small {
+  display: block;
+}
+.source-details > summary span { font-weight: 800; }
+.source-details > summary small {
+  margin-top: 3px;
+  color: var(--on-surface-variant);
+  font-size: .78rem;
+}
+.source-details .field-label,
+.source-details .helper,
+.source-details .channel-chip,
+.source-details .button-row {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+.update-status-card { margin-top: 12px; }
 .github-source-form { display: grid; gap: 9px; padding: 0 16px; }
 .github-source-list { display: grid; gap: 10px; padding: 0 16px 4px; }
 .github-source-row { display: grid; gap: 5px; border-radius: 18px; background: var(--surface-container); border: 1px solid color-mix(in srgb, var(--outline-variant) 70%, transparent); padding: 12px; }

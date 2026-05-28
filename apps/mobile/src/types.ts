@@ -260,10 +260,19 @@ export interface SyncPushResponse {
   server_time: number;
 }
 
+export interface DesktopUpdateCheckResponse {
+  accepted: boolean;
+  server_version: string;
+}
+
 export interface AppSettings {
   language: AppLanguage;
   theme: ThemeMode;
   units: 'metric' | 'imperial';
+  desktop_api_enabled: boolean;
+  github_csv_enabled: boolean;
+  desktop_sync_prompted: boolean;
+  check_prerelease_updates: boolean;
   show_activity_tracking: boolean;
   show_meal_macros: boolean;
   show_micronutrients: boolean;

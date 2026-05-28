@@ -30,7 +30,8 @@ import {
   needsWeightPrompt,
   saveState,
 } from './lib/storage';
-import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, syncGitHubCsvSources } from './lib/api';
+import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, syncGitHubCsvSources } from './lib/api';
+import { checkNutrinoUpdates, type UpdateCheckResult } from './lib/releases';
 import { lucideSvg, type IconName } from './icons';
 
 type Tab = 'home' | 'diary' | 'recipes' | 'profile';
@@ -192,14 +193,17 @@ const contentScrolled = ref(false);
 const syncBusy = ref(false);
 const catalogSourceCheckBusyId = ref('');
 const serverOnline = ref(false);
-const githubCatalogAvailable = computed(() => (state.githubSources || []).some((source) => source.enabled));
+const githubCatalogAvailable = computed(() => state.settings.github_csv_enabled !== false && (state.githubSources || []).some((source) => source.enabled));
 const serverChecking = ref(false);
 let healthTimer: number | undefined;
 let todayRolloverTimer: number | undefined;
 const offlineToastShown = ref(false);
 const toast = ref('');
 const settingsOpen = ref(false);
-const settingsDialog = ref<'permissions' | 'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'privacy' | 'about' | 'licenses' | 'advanced' | null>(null);
+const settingsDialog = ref<'permissions' | 'updates' | 'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'privacy' | 'about' | 'licenses' | 'advanced' | null>(null);
+const updateBusy = ref(false);
+const updateDialogOpen = ref(false);
+const updateCheckResult = ref<UpdateCheckResult | null>(null);
 const analysisOpen = ref(false);
 const deficitInfoOpen = ref(false);
 const micronutrientInfoOpen = ref(false);
@@ -331,6 +335,7 @@ const acknowledgements = [
 
 const settingsIconMap: Record<string, IconName> = {
   permissions: 'shield',
+  updates: 'refreshCw',
   units: 'ruler',
   calculations: 'calculator',
   tracking: 'scale',
@@ -425,6 +430,17 @@ watch(() => state.settings.show_micronutrients, (enabled) => {
   if (settingsDialog.value === 'micronutrients') settingsDialog.value = null;
   micronutrientInfoOpen.value = false;
   nutrientInsightsDialog.value = null;
+});
+watch(() => state.settings.desktop_api_enabled, (enabled) => {
+  if (enabled) {
+    void pollServerHealth({ syncOnChange: true, quiet: true });
+    return;
+  }
+  serverOnline.value = false;
+  state.pairing.lastSyncError = undefined;
+});
+watch(() => state.settings.github_csv_enabled, (enabled) => {
+  if (enabled) void syncGitHubDailyIfDue();
 });
 watch(() => notificationPermissionSignature(), () => {
   void ensureNotificationPermissionForReminders();
@@ -728,6 +744,12 @@ function handleBackNavigation(event?: PopStateEvent) {
     return;
   }
 
+  if (updateDialogOpen.value) {
+    remindUpdateLater();
+    keepBackInsideApp();
+    return;
+  }
+
   if (analysisOpen.value) {
     analysisOpen.value = false;
     keepBackInsideApp();
@@ -798,13 +820,20 @@ function markOnboardingComplete() {
 
 async function openOnboardingPermissionsStep() {
   saveOnboardingProfile();
-  onboardingStep.value = 1;
+  state.settings.desktop_sync_prompted = true;
+  onboardingStep.value = 2;
   await nextTick();
   await requestOnboardingPermissions();
 }
 
+function openOnboardingSyncStep() {
+  saveOnboardingProfile();
+  onboardingStep.value = 1;
+}
+
 async function finishOnboarding() {
   saveOnboardingProfile();
+  state.settings.desktop_sync_prompted = true;
   onboardingOpen.value = false;
   onboardingStep.value = 0;
   saveState(JSON.parse(JSON.stringify(state)) as AppState);
@@ -873,6 +902,7 @@ onMounted(() => {
   void refreshBackupProfiles();
   void ensureDailyBackupProfile();
   void syncGitHubDailyIfDue();
+  void checkForAppUpdates({ quiet: true });
   maybeOpenOnboarding();
   refreshTodayKey();
   scheduleTodayRollover();
@@ -892,7 +922,7 @@ onMounted(() => {
   void installWindowCloseGuard();
   void refreshAppPermissionStatuses();
   void initializeNotifications();
-  void pollServerHealth({ syncOnChange: true, quiet: true });
+  if (state.settings.desktop_api_enabled !== false) void pollServerHealth({ syncOnChange: true, quiet: true });
   healthTimer = window.setInterval(() => void pollServerHealth({ syncOnChange: true, quiet: true }), 30000);
   reminderTimer = window.setInterval(checkReminderNotifications, 60000);
   checkReminderNotifications();
@@ -1405,6 +1435,7 @@ const repositoryUrl = 'https://github.com/rozsazoltan/nutrino';
 const issueUrl = 'https://github.com/rozsazoltan/nutrino/issues/new/choose';
 const starUrl = 'https://github.com/rozsazoltan/nutrino/stargazers';
 const SERVER_STALE_MS = 5 * 60 * 1000;
+const updateRemindLaterKey = `nutrino.mobile.${appChannel}.update.remindLater.v1`;
 const selectedDayUnlocked = computed(() => activeTab.value === 'diary' && unlockedDiaryDate.value === selectedDate.value);
 const selectedDateIsFuture = computed(() => dayStartMs(activeLogDateKey.value) > dayStartMs(todayKey.value));
 const currentBmiInfo = computed(() => bmiStatus(currentBmi.value));
@@ -6838,6 +6869,73 @@ for (const language of Object.keys(translations)) {
     ...normalizeTranslationValues(onboardingGuideTranslations[language] || {}),
   };
 }
+
+const mobileUpdateAndSourceTranslations: Record<string, Partial<Record<string, string>>> = {
+  en: {
+    appUpdates: 'App updates',
+    appUpdatesBody: 'Check GitHub Releases for a newer Nutrino version.',
+    checkUpdates: 'Check for updates',
+    checkingUpdates: 'Checking…',
+    includePrereleaseUpdates: 'Watch pre-releases',
+    includePrereleaseUpdatesHint: 'Off by default; stable releases are checked unless enabled.',
+    updateAvailable: 'Update available',
+    updateAvailableBody: 'A newer Nutrino release is available.',
+    installUpdate: 'Install update',
+    remindLater: 'Remind me later',
+    remindLaterSaved: 'Update reminder postponed.',
+    latestInstalled: 'You are on the latest version.',
+    updateCheckFailed: 'Update check failed',
+    desktopApiConnection: 'Desktop API connection',
+    desktopApiConnectionBody: 'Sync catalog data with the desktop LAN server.',
+    githubCsvConnection: 'GitHub CSV connection',
+    githubCsvConnectionBody: 'Import catalog data from GitHub CSV sources.',
+    desktopApiDisabled: 'Desktop API connection is disabled.',
+    githubCsvDisabled: 'GitHub CSV connection is disabled.',
+    sourceSettings: 'Source settings',
+    syncPreferences: 'Sync preferences',
+    syncPreferencesBody: 'Nutrino works as a mobile-only app too. Enable only the catalog sources you want to use.',
+    serverVersionMismatch: 'Desktop communication is disabled because app versions differ.',
+    desktopServerNewer: 'Desktop server is newer than mobile:',
+    desktopServerOlder: 'Desktop server is older than mobile:',
+    desktopNotifiedForUpdate: 'Desktop server was asked to check for updates.',
+  },
+  hu: {
+    appUpdates: 'App frissítések',
+    appUpdatesBody: 'Új Nutrino verzió keresése GitHub Releases alapján.',
+    checkUpdates: 'Frissítés keresése',
+    checkingUpdates: 'Ellenőrzés…',
+    includePrereleaseUpdates: 'Pre-release figyelése',
+    includePrereleaseUpdatesHint: 'Alapból kikapcsolva; bekapcsolás nélkül csak stabil kiadásokat néz.',
+    updateAvailable: 'Frissítés érhető el',
+    updateAvailableBody: 'Újabb Nutrino kiadás érhető el.',
+    installUpdate: 'Frissítés telepítése',
+    remindLater: 'Emlékeztess később',
+    remindLaterSaved: 'Frissítési emlékeztető elhalasztva.',
+    latestInstalled: 'A legfrissebb verzió van fent.',
+    updateCheckFailed: 'A frissítés ellenőrzése sikertelen',
+    desktopApiConnection: 'Desktop API kapcsolat',
+    desktopApiConnectionBody: 'Katalógusadatok szinkronizálása a desktop LAN szerverrel.',
+    githubCsvConnection: 'GitHub CSV kapcsolat',
+    githubCsvConnectionBody: 'Katalógusadatok importálása GitHub CSV forrásokból.',
+    desktopApiDisabled: 'A Desktop API kapcsolat ki van kapcsolva.',
+    githubCsvDisabled: 'A GitHub CSV kapcsolat ki van kapcsolva.',
+    sourceSettings: 'Forrásbeállítások',
+    syncPreferences: 'Szinkron beállítások',
+    syncPreferencesBody: 'A Nutrino csak mobilappként is működik. Csak azokat a katalógusforrásokat kapcsold be, amelyeket használni szeretnél.',
+    serverVersionMismatch: 'Az adatkommunikáció letiltva, mert az appverziók eltérnek.',
+    desktopServerNewer: 'A desktop szerver újabb, mint a mobil:',
+    desktopServerOlder: 'A desktop szerver régebbi, mint a mobil:',
+    desktopNotifiedForUpdate: 'A desktop szervert frissítéskeresésre kértem.',
+  },
+};
+translations.en = { ...translations.en, ...normalizeTranslationValues(mobileUpdateAndSourceTranslations.en || {}) };
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...normalizeTranslationValues(mobileUpdateAndSourceTranslations[language] || {}),
+  };
+}
 // end generated completeMobileLanguageTranslations
 
 function t(key: string) {
@@ -7760,6 +7858,80 @@ function formatDate(value: number) {
 function formatDateTime(value: number) {
   return new Intl.DateTimeFormat(currentLocale(), { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
+
+function updateReleaseTitle(result = updateCheckResult.value): string {
+  if (!result?.release) return t('appUpdates');
+  return `${t('updateAvailable')} ${result.release.version}`;
+}
+
+function updateReleaseBody(result = updateCheckResult.value): string {
+  if (!result?.release) return t('latestInstalled');
+  const asset = result.release.assetName ? ` ${result.release.assetName}` : '';
+  return `${t('updateAvailableBody')} ${t('version')} ${appVersion} → ${result.release.version}.${asset}`;
+}
+
+function updateRemindLaterActive(result: UpdateCheckResult): boolean {
+  if (!result.release) return false;
+  try {
+    const saved = JSON.parse(localStorage.getItem(updateRemindLaterKey) || '{}') as { tag?: string; until?: number };
+    return saved.tag === result.release.tag && Number(saved.until || 0) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function detectUpdateTarget() {
+  if (isAndroidRuntime()) return 'android' as const;
+  return 'mobile' as const;
+}
+
+async function checkForAppUpdates(options: { quiet?: boolean; manual?: boolean; ignoreRemindLater?: boolean } = {}) {
+  if (updateBusy.value) return;
+  updateBusy.value = true;
+  try {
+    const result = await checkNutrinoUpdates(appVersion, {
+      includePrereleases: state.settings.check_prerelease_updates === true,
+      target: detectUpdateTarget(),
+    });
+    updateCheckResult.value = result;
+    if (result.status === 'available' && (options.ignoreRemindLater || options.manual || !updateRemindLaterActive(result))) {
+      updateDialogOpen.value = true;
+      return;
+    }
+    if (options.manual && !options.quiet) showToast(t('latestInstalled'));
+  } catch (error) {
+    if (!options.quiet || options.manual) showToast(`${t('updateCheckFailed')}: ${String(error)}`);
+  } finally {
+    updateBusy.value = false;
+  }
+}
+
+function openExternalUrl(url?: string) {
+  const target = String(url || '').trim();
+  if (!target) return;
+  const opened = window.open(target, '_blank', 'noopener,noreferrer');
+  if (!opened) window.location.href = target;
+}
+
+function installAvailableUpdate() {
+  const release = updateCheckResult.value?.release;
+  if (!release) return;
+  openExternalUrl(release.downloadUrl || release.url);
+  updateDialogOpen.value = false;
+}
+
+function remindUpdateLater() {
+  const release = updateCheckResult.value?.release;
+  if (release) {
+    localStorage.setItem(updateRemindLaterKey, JSON.stringify({
+      tag: release.tag,
+      until: Date.now() + 24 * 60 * 60 * 1000,
+    }));
+  }
+  updateDialogOpen.value = false;
+  showToast(t('remindLaterSaved'));
+}
+
 function compareVersionStrings(left: string, right: string): number {
   const a = String(left || '').split(/[^0-9]+/).filter(Boolean).map(Number);
   const b = String(right || '').split(/[^0-9]+/).filter(Boolean).map(Number);
@@ -7778,42 +7950,34 @@ function isServerNewerThanMobile(serverVersion?: string | null): boolean {
   return Boolean(normalized) && compareVersionStrings(normalized, appVersion) > 0;
 }
 
-function newerServerConfirmMessage(serverVersion: string): string {
-  if (activeLanguage.value === 'hu') {
-    return `A desktop szerver újabb verzió (${serverVersion}), mint ez a mobil app (${appVersion}). Biztosan szinkronizálsz így?`;
-  }
-  return `The desktop server is newer (${serverVersion}) than this mobile app (${appVersion}). Sync anyway?`;
+function isServerOlderThanMobile(serverVersion?: string | null): boolean {
+  const normalized = String(serverVersion || '').trim();
+  return Boolean(normalized) && compareVersionStrings(normalized, appVersion) < 0;
 }
 
-function newerServerSkippedMessage(serverVersion: string): string {
-  if (activeLanguage.value === 'hu') {
-    return `Szinkronizáció kihagyva: a szerver újabb (${serverVersion}), mint a mobil app (${appVersion}).`;
-  }
-  return `Sync skipped: server ${serverVersion} is newer than mobile ${appVersion}.`;
+function serverVersionMismatchMessage(serverVersion: string): string {
+  if (isServerNewerThanMobile(serverVersion)) return `${t('desktopServerNewer')} ${serverVersion} / ${appVersion}`;
+  if (isServerOlderThanMobile(serverVersion)) return `${t('desktopServerOlder')} ${serverVersion} / ${appVersion}`;
+  return t('serverVersionMismatch');
 }
 
 async function ensureServerVersionSyncAllowed(existingHealth?: { version?: string }): Promise<{ allowed: boolean; message?: string }> {
   const health = existingHealth ?? await checkServerHealth(state.pairing.baseUrl, authPassword());
   const serverVersion = String(health.version || '').trim();
-  if (!isServerNewerThanMobile(serverVersion)) {
-    if (state.pairing.acceptedNewerServerVersion && state.pairing.acceptedNewerServerVersion !== serverVersion) delete state.pairing.acceptedNewerServerVersion;
-    if (state.pairing.declinedNewerServerVersion && state.pairing.declinedNewerServerVersion !== serverVersion) delete state.pairing.declinedNewerServerVersion;
-    return { allowed: true };
+  if (!serverVersion || compareVersionStrings(serverVersion, appVersion) === 0) return { allowed: true };
+
+  if (isServerNewerThanMobile(serverVersion)) {
+    void checkForAppUpdates({ quiet: true, ignoreRemindLater: true });
+  } else if (isServerOlderThanMobile(serverVersion)) {
+    try {
+      await requestDesktopUpdateCheck(state.pairing.baseUrl, authPassword(), 'mobile-newer');
+    } catch {
+      // The sync gate still blocks; failing to notify the desktop should not mask
+      // the clearer version mismatch message.
+    }
   }
 
-  if (state.pairing.acceptedNewerServerVersion === serverVersion) return { allowed: true };
-  if (state.pairing.declinedNewerServerVersion === serverVersion) return { allowed: false, message: newerServerSkippedMessage(serverVersion) };
-
-  const proceed = window.confirm(newerServerConfirmMessage(serverVersion));
-  if (proceed) {
-    state.pairing.acceptedNewerServerVersion = serverVersion;
-    delete state.pairing.declinedNewerServerVersion;
-    return { allowed: true };
-  }
-
-  state.pairing.declinedNewerServerVersion = serverVersion;
-  delete state.pairing.acceptedNewerServerVersion;
-  return { allowed: false, message: newerServerSkippedMessage(serverVersion) };
+  return { allowed: false, message: serverVersionMismatchMessage(serverVersion) };
 }
 
 
@@ -9685,6 +9849,7 @@ function updateProfileWeight(event: Event) {
 
 
 async function pollServerHealth(options: { syncOnChange?: boolean; quiet?: boolean } = {}) {
+  if (state.settings.desktop_api_enabled === false) return;
   if (serverChecking.value || !state.pairing.baseUrl.trim()) return;
   serverChecking.value = true;
   try {
@@ -9712,6 +9877,7 @@ async function pollServerHealth(options: { syncOnChange?: boolean; quiet?: boole
 }
 
 async function testConnection() {
+  if (state.settings.desktop_api_enabled === false) return showToast(t('desktopApiDisabled'));
   try {
     const normalizedBaseUrl = normalizeApiBaseUrl(state.pairing.baseUrl);
     if (normalizedBaseUrl) state.pairing.baseUrl = normalizedBaseUrl;
@@ -9725,6 +9891,10 @@ async function testConnection() {
 }
 
 async function runServerTransfer(mode: 'pull' | 'push', options: { quiet?: boolean } = {}) {
+  if (state.settings.desktop_api_enabled === false) {
+    if (!options.quiet) showToast(t('desktopApiDisabled'));
+    return;
+  }
   syncBusy.value = true;
   try {
     const normalizedBaseUrl = normalizeApiBaseUrl(state.pairing.baseUrl);
@@ -9791,6 +9961,7 @@ function removeGitHubSource(id: string) {
 }
 
 async function syncGitHubNow(force = true) {
+  if (state.settings.github_csv_enabled === false) return showToast(t('githubCsvDisabled'));
   if (!state.githubSources?.some((source) => source.enabled)) return showToast('Add at least one GitHub CSV source first.');
   githubSyncBusy.value = true;
   try {
@@ -9834,6 +10005,7 @@ async function requestCatalogSourceCheck(item: Food | ActivityDefinition) {
 }
 
 async function syncGitHubDailyIfDue() {
+  if (state.settings.github_csv_enabled === false) return;
   if (!state.githubSources?.some((source) => source.enabled)) return;
   await syncGitHubNow(false);
 }
@@ -11241,44 +11413,50 @@ function setTab(tab: Tab) {
         </label>
       </article>
 
-      <article class="card pairing-card">
-        <h2>{{ t('apiSettings') }}</h2>
-        <p class="helper" v-if="devMode">{{ t('devApiHint') }}</p>
-        <p class="channel-chip">{{ t('appChannel') }}: {{ appChannel }}</p>
-        <label class="field-label">{{ t('apiUrl') }}</label>
-        <input v-model="state.pairing.baseUrl" class="input" placeholder="http://192.168.1.202:8090/api/v1" />
-        <label class="field-label">{{ t('pairingPassword') }}</label>
-        <input v-model="state.pairing.password" class="input" type="password" autocomplete="current-password" />
-        <div class="button-row">
-          <button class="outlined-button" @click="testConnection">{{ t('test') }}</button>
-          <button class="filled-button" :disabled="syncBusy" @click="syncNow()">{{ t('syncNow') }}</button>
-          <button class="outlined-button" :disabled="syncBusy" @click="pushNow()">{{ t('pushNow') }}</button>
-        </div>
-        <p class="helper">{{ t('localOnlyDiaryHint') }}</p>
-        <p v-if="state.pairing.lastSyncError" class="error-text">{{ state.pairing.lastSyncError }}</p>
+      <article class="card pairing-card source-settings-card">
+        <label class="tracking-toggle-card"><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
+        <details v-if="state.settings.desktop_api_enabled" class="source-details">
+          <summary><span>{{ t('apiSettings') }}</span><small>{{ t('sourceSettings') }}</small></summary>
+          <p class="helper" v-if="devMode">{{ t('devApiHint') }}</p>
+          <p class="channel-chip">{{ t('appChannel') }}: {{ appChannel }}</p>
+          <label class="field-label">{{ t('apiUrl') }}</label>
+          <input v-model="state.pairing.baseUrl" class="input" placeholder="http://192.168.1.202:8090/api/v1" />
+          <label class="field-label">{{ t('pairingPassword') }}</label>
+          <input v-model="state.pairing.password" class="input" type="password" autocomplete="current-password" />
+          <div class="button-row">
+            <button class="outlined-button" @click="testConnection">{{ t('test') }}</button>
+            <button class="filled-button" :disabled="syncBusy" @click="syncNow()">{{ t('syncNow') }}</button>
+            <button class="outlined-button" :disabled="syncBusy" @click="pushNow()">{{ t('pushNow') }}</button>
+          </div>
+          <p class="helper">{{ t('localOnlyDiaryHint') }}</p>
+          <p v-if="state.pairing.lastSyncError" class="error-text">{{ state.pairing.lastSyncError }}</p>
+        </details>
       </article>
 
-      <article class="card github-sync-card">
-        <h2>{{ t('githubCsvSources') }}</h2>
-        <p class="helper">{{ t('githubCsvSourcesBody') }}</p>
-        <div class="github-source-form">
-          <input v-model="githubDraft.owner" class="input" :placeholder="t('githubOwnerPlaceholder')" autocomplete="off" autocapitalize="none" />
-          <input v-model="githubDraft.repo" class="input" :placeholder="t('githubRepoPlaceholder')" autocomplete="off" autocapitalize="none" />
-          <input v-model="githubDraft.branch" class="input" :placeholder="t('githubBranchPlaceholder')" autocomplete="off" autocapitalize="none" />
-          <input v-model="githubDraft.path" class="input" :placeholder="t('githubPathPlaceholder')" autocomplete="off" autocapitalize="none" />
-          <input v-model="githubDraft.token" class="input" type="password" :placeholder="t('githubTokenPlaceholder')" autocomplete="off" />
-        </div>
-        <div class="button-row">
-          <button class="outlined-button" @click="addGitHubSource">{{ t('addRepo') }}</button>
-          <button class="filled-button" :disabled="githubSyncBusy" @click="syncGitHubNow(true)">{{ t('syncGithubNow') }}</button>
-        </div>
-        <div v-if="(state.githubSources || []).length" class="github-source-list">
-          <article v-for="source in (state.githubSources || [])" :key="source.id" class="github-source-row">
-            <label><input v-model="source.enabled" type="checkbox" /> <b>{{ source.owner }}/{{ source.repo }}</b></label>
-            <small>{{ source.branch || 'main' }}{{ source.path ? ` · ${source.path}` : '' }} · {{ source.lastStatus || t('notSyncedYet') }}</small>
-            <button class="text-button danger-text" @click="removeGitHubSource(source.id)">{{ t('remove') }}</button>
-          </article>
-        </div>
+      <article class="card github-sync-card source-settings-card">
+        <label class="tracking-toggle-card"><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
+        <details v-if="state.settings.github_csv_enabled" class="source-details">
+          <summary><span>{{ t('githubCsvSources') }}</span><small>{{ t('sourceSettings') }}</small></summary>
+          <p class="helper">{{ t('githubCsvSourcesBody') }}</p>
+          <div class="github-source-form">
+            <input v-model="githubDraft.owner" class="input" :placeholder="t('githubOwnerPlaceholder')" autocomplete="off" autocapitalize="none" />
+            <input v-model="githubDraft.repo" class="input" :placeholder="t('githubRepoPlaceholder')" autocomplete="off" autocapitalize="none" />
+            <input v-model="githubDraft.branch" class="input" :placeholder="t('githubBranchPlaceholder')" autocomplete="off" autocapitalize="none" />
+            <input v-model="githubDraft.path" class="input" :placeholder="t('githubPathPlaceholder')" autocomplete="off" autocapitalize="none" />
+            <input v-model="githubDraft.token" class="input" type="password" :placeholder="t('githubTokenPlaceholder')" autocomplete="off" />
+          </div>
+          <div class="button-row">
+            <button class="outlined-button" @click="addGitHubSource">{{ t('addRepo') }}</button>
+            <button class="filled-button" :disabled="githubSyncBusy" @click="syncGitHubNow(true)">{{ t('syncGithubNow') }}</button>
+          </div>
+          <div v-if="(state.githubSources || []).length" class="github-source-list">
+            <article v-for="source in (state.githubSources || [])" :key="source.id" class="github-source-row">
+              <label><input v-model="source.enabled" type="checkbox" /> <b>{{ source.owner }}/{{ source.repo }}</b></label>
+              <small>{{ source.branch || 'main' }}{{ source.path ? ` · ${source.path}` : '' }} · {{ source.lastStatus || t('notSyncedYet') }}</small>
+              <button class="text-button danger-text" @click="removeGitHubSource(source.id)">{{ t('remove') }}</button>
+            </article>
+          </div>
+        </details>
       </article>
     </section>
 
@@ -11734,10 +11912,27 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="updateDialogOpen && updateCheckResult?.release" class="dialog-backdrop app-overlay" @click.self="remindUpdateLater">
+        <article class="settings-dialog update-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ updateReleaseTitle() }}</h2>
+            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="remindUpdateLater" v-html="lucideSvg('x')"></button>
+          </div>
+          <p class="helper big">{{ updateReleaseBody() }}</p>
+          <div class="dialog-actions">
+            <button class="text-button" type="button" @click="remindUpdateLater">{{ t('remindLater') }}</button>
+            <button class="filled-button" type="button" @click="installAvailableUpdate">{{ t('installUpdate') }}</button>
+          </div>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <section v-if="settingsOpen" class="settings-screen app-overlay">
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
         <button class="settings-row" @click="openPermissionsSettings"><span class="settings-row-icon" v-html="settingsIcon('permissions')"></span><b>{{ t('appPermissions') }}</b><small>{{ appPermissionSummary() }}</small></button>
+        <button class="settings-row" @click="settingsDialog = 'updates'"><span class="settings-row-icon" v-html="settingsIcon('updates')"></span><b>{{ t('appUpdates') }}</b><small>{{ updateCheckResult?.release ? `${t('updateAvailable')} ${updateCheckResult.release.version}` : t('appUpdatesBody') }}</small></button>
         <button v-if="devMode" class="settings-row" @click="startDevFirstLaunchMode"><span class="settings-row-icon" v-html="settingsIcon('reset')"></span><b>{{ t('devFirstLaunchMode') }}</b><small>{{ t('devFirstLaunchModeBody') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'units'"><span class="settings-row-icon" v-html="settingsIcon('units')"></span><b>{{ t('units') }}</b><small>{{ state.settings.units === 'metric' ? t('metric') : t('imperial') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'calculations'"><span class="settings-row-icon" v-html="settingsIcon('calculations')"></span><b>{{ t('calculations') }}</b><small>{{ t('iomEquationMacro') }}</small></button>
@@ -11783,6 +11978,16 @@ function setTab(tab: Tab) {
               </article>
             </div>
             <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button class="filled-button" type="button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button></div>
+          </template>
+          <template v-else-if="settingsDialog === 'updates'">
+            <div class="dialog-title-row"><h2>{{ t('appUpdates') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></div>
+            <p class="helper big">{{ t('appUpdatesBody') }}</p>
+            <label class="tracking-toggle-card"><span><b>{{ t('includePrereleaseUpdates') }}</b><small>{{ t('includePrereleaseUpdatesHint') }}</small></span><input v-model="state.settings.check_prerelease_updates" type="checkbox" /></label>
+            <article v-if="updateCheckResult" class="permission-status-card update-status-card" :class="{ granted: updateCheckResult.status === 'latest' }">
+              <span class="permission-status" :class="{ granted: updateCheckResult.status === 'latest' }">{{ updateCheckResult.status === 'latest' ? '✓' : '!' }}</span>
+              <span class="permission-copy"><b>{{ updateCheckResult.status === 'available' ? updateReleaseTitle(updateCheckResult) : t('latestInstalled') }}</b><small>{{ updateCheckResult.status === 'available' ? updateReleaseBody(updateCheckResult) : `${t('version')} ${appVersion}` }}</small></span>
+            </article>
+            <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button class="filled-button" type="button" :disabled="updateBusy" @click="checkForAppUpdates({ manual: true, ignoreRemindLater: true })">{{ updateBusy ? t('checkingUpdates') : t('checkUpdates') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'units'"><h2>{{ t('units') }}</h2><button class="dialog-option" @click="state.settings.units = 'metric'; settingsDialog = null">{{ t('metric') }}</button><button class="dialog-option" @click="state.settings.units = 'imperial'; settingsDialog = null">{{ t('imperial') }}</button></template>
           <template v-else-if="settingsDialog === 'language'"><h2>{{ t('language') }}</h2><input v-model="languageSearch" class="input" type="search" :placeholder="t('languageSearch')" /><button v-for="language in filteredLanguageOptions" :key="language.code" class="dialog-option language-dialog-option" @click="setLanguage(language.code); settingsDialog = null"><span>{{ language.englishName }}</span><small>{{ language.nativeName }} · {{ language.code }}</small></button></template>
@@ -11977,6 +12182,14 @@ function setTab(tab: Tab) {
           <label><span>{{ t('activityLevel') }}</span><select v-model="onboardingProfile.activity_level" class="input"><option value="sedentary">{{ t('sedentary') }}</option><option value="low_active">{{ t('lowActive') }}</option><option value="active">{{ t('active') }}</option><option value="very_active">{{ t('veryActive') }}</option></select></label>
           <label><span>{{ t('weeklyGoal') }}: {{ onboardingProfile.weekly_goal_kg }} {{ t('perWeek') }}</span><input v-model.number="onboardingProfile.weekly_goal_kg" class="tile-range" type="range" min="-1" max="1" step="0.25" /></label>
         </div>
+        <div v-else-if="onboardingStep === 1" class="onboarding-permissions">
+          <h3>{{ t('syncPreferences') }}</h3>
+          <p class="helper big">{{ t('syncPreferencesBody') }}</p>
+          <div class="permission-list compact">
+            <label class="tracking-toggle-card"><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
+            <label class="tracking-toggle-card"><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
+          </div>
+        </div>
         <div v-else class="onboarding-permissions">
           <h3>{{ t('onboardingPermissions') }}</h3>
           <p class="helper big">{{ t('onboardingPermissionsBody') }}</p>
@@ -11992,7 +12205,7 @@ function setTab(tab: Tab) {
           </div>
           <p class="helper big">{{ t('onboardingTourBody') }}</p>
         </div>
-        <div class="dialog-actions onboarding-actions"><button v-if="onboardingStep === 0" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 0 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 1" class="text-button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="openOnboardingPermissionsStep">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('onboardingTourStart') }}</button></div>
+        <div class="dialog-actions onboarding-actions"><button v-if="onboardingStep === 0" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 0 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 2" class="text-button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="openOnboardingSyncStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 1" class="filled-button" @click="openOnboardingPermissionsStep">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('onboardingTourStart') }}</button></div>
       </article>
       </section>
     </Teleport>

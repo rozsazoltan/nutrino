@@ -16,7 +16,7 @@ use axum::{
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, PhysicalPosition, PhysicalSize, State, WindowEvent};
+use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tokio::sync::oneshot;
@@ -37,6 +37,7 @@ struct AppState {
     db_path: PathBuf,
     server: Mutex<Option<ServerRuntime>>,
     connected_devices: ConnectedDeviceRegistry,
+    app_handle: tauri::AppHandle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +48,7 @@ struct DesktopSettings {
     auto_start_server: bool,
     close_to_tray: bool,
     start_hidden_to_tray: bool,
+    check_prerelease_updates: bool,
     window_x: Option<i32>,
     window_y: Option<i32>,
     window_width: Option<u32>,
@@ -103,6 +105,18 @@ struct HealthResponse {
     dev_mode: bool,
     catalog_revision: i64,
     connected_devices: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UpdateCheckRequest {
+    client_version: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UpdateCheckResponse {
+    accepted: bool,
+    server_version: String,
 }
 
 
@@ -490,6 +504,7 @@ struct ApiState {
     auth_required: bool,
     dev_mode: bool,
     connected_devices: ConnectedDeviceRegistry,
+    app_handle: tauri::AppHandle,
 }
 
 
@@ -515,6 +530,7 @@ pub fn run() {
                 db_path: db_path.clone(),
                 server: Mutex::new(None),
                 connected_devices: Arc::new(Mutex::new(HashMap::new())),
+                app_handle: app.handle().clone(),
             });
 
             if let Some(window) = app.get_webview_window("main") {
@@ -1116,6 +1132,7 @@ fn read_desktop_settings(path: &Path) -> Result<DesktopSettings> {
         auto_start_server: read_bool_from_conn(&conn, "auto_start_server", false),
         close_to_tray: read_bool_from_conn(&conn, "close_to_tray", false),
         start_hidden_to_tray: read_bool_from_conn(&conn, "start_hidden_to_tray", false),
+        check_prerelease_updates: read_bool_from_conn(&conn, "check_prerelease_updates", false),
         window_x: read_i32_setting(&conn, "window_x"),
         window_y: read_i32_setting(&conn, "window_y"),
         window_width: read_u32_setting(&conn, "window_width"),
@@ -1131,6 +1148,7 @@ fn write_desktop_settings(path: &Path, settings: &DesktopSettings) -> Result<()>
     set_setting(&conn, "auto_start_server", &settings.auto_start_server.to_string())?;
     set_setting(&conn, "close_to_tray", &settings.close_to_tray.to_string())?;
     set_setting(&conn, "start_hidden_to_tray", &settings.start_hidden_to_tray.to_string())?;
+    set_setting(&conn, "check_prerelease_updates", &settings.check_prerelease_updates.to_string())?;
     if let Some(value) = settings.window_x { set_setting(&conn, "window_x", &value.to_string())?; }
     if let Some(value) = settings.window_y { set_setting(&conn, "window_y", &value.to_string())?; }
     if let Some(value) = settings.window_width { set_setting(&conn, "window_width", &value.to_string())?; }
@@ -1202,10 +1220,12 @@ async fn start_api_server_internal(port: u16, state: &AppState) -> Result<Server
         auth_required,
         dev_mode: dev_mode(),
         connected_devices: state.connected_devices.clone(),
+        app_handle: state.app_handle.clone(),
     };
 
     let router = Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/update/check", post(update_check_requested))
         .route("/api/v1/sync/pull", get(sync_pull))
         .route("/api/v1/sync/push", post(sync_push))
         .route("/api/v1/foods", get(api_list_foods).post(api_create_food))
@@ -2799,6 +2819,21 @@ async fn health(
         catalog_revision: db_catalog_revision(&state.db_path).unwrap_or(0),
         connected_devices: active_connected_device_count(&state.connected_devices),
     })
+}
+
+async fn update_check_requested(
+    AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateCheckRequest>,
+) -> Result<Json<UpdateCheckResponse>, StatusCode> {
+    authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/update/check");
+    let _ = state.app_handle.emit("nutrino-update-check-requested", payload);
+    Ok(Json(UpdateCheckResponse {
+        accepted: true,
+        server_version: APP_VERSION.to_string(),
+    }))
 }
 
 async fn sync_pull(

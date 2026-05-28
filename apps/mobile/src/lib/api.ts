@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult } from '../types';
+import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult, DesktopUpdateCheckResponse } from '../types';
 import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeActivity, normalizeFood, normalizeIngredient, normalizeRecipe, resolveCatalogId } from './storage';
 
 export const APP_VERSION = '0.12.11';
@@ -160,6 +160,14 @@ export async function pingServer(baseUrl: string, tokenOrPassword: string): Prom
   const auth = result.auth_required ? 'password required' : 'no password';
   const channel = result.app_channel ?? (result.dev_mode ? 'dev' : 'stable');
   return result.name ? `${result.name}${result.version ? ` ${result.version}` : ''} · ${channel} · ${auth}` : 'Server is reachable.';
+}
+
+export async function requestDesktopUpdateCheck(baseUrl: string, tokenOrPassword: string, reason = 'mobile-newer'): Promise<DesktopUpdateCheckResponse> {
+  if (!baseUrl.trim()) throw new Error('Missing API base URL.');
+  return await requestJson<DesktopUpdateCheckResponse>(baseUrl, tokenOrPassword, '/update/check', {
+    method: 'POST',
+    body: JSON.stringify({ client_version: APP_VERSION, reason }),
+  });
 }
 
 function stripRecipeRef(id: string): string {
