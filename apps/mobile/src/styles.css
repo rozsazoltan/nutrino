@@ -4433,3 +4433,86 @@ select:focus {
     font-size: 1.22rem !important;
   }
 }
+
+/* v0.12.21 mobile update/settings spacing polish */
+.update-dialog-title-row {
+  grid-template-columns: 38px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+.update-dialog-title-row > h2 {
+  min-width: 0;
+  margin: 0 !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.22rem !important;
+  line-height: 1.15 !important;
+}
+.update-dialog-description {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 0 !important;
+  padding-left: 48px;
+  color: var(--on-surface-variant);
+  line-height: 1.35;
+}
+.update-dialog-description small {
+  margin: 0 !important;
+  overflow-wrap: anywhere;
+  color: var(--on-surface-variant);
+  font-weight: 500;
+}
+.update-dialog .update-install-note.warning-callout {
+  margin-top: 14px !important;
+}
+.settings-row {
+  grid-template-columns: 44px minmax(0, 1fr) auto !important;
+  column-gap: 8px !important;
+  padding-inline: 22px !important;
+}
+.settings-row > .settings-row-icon,
+.settings-row > span:first-child {
+  width: 40px !important;
+  height: 40px !important;
+}
+.settings-row small {
+  grid-column: 2 / 4 !important;
+}
+.permission-status-card {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.permission-dialog-actions {
+  margin-top: 4px;
+}
+.source-connection-toggle {
+  padding: 16px 16px 12px !important;
+  gap: 10px !important;
+}
+.source-details {
+  padding: 8px 16px 12px !important;
+}
+.source-details > summary {
+  margin: 0 -16px 8px !important;
+  padding: 8px 16px !important;
+}
+.source-details .button-row {
+  margin-bottom: 0 !important;
+}
+.github-source-list {
+  padding-bottom: 0 !important;
+}
+@media (max-width: 420px) {
+  .update-dialog-title-row {
+    grid-template-columns: 36px minmax(0, 1fr) auto !important;
+    gap: 8px !important;
+  }
+  .update-dialog-description {
+    padding-left: 44px;
+  }
+  .settings-row {
+    grid-template-columns: 42px minmax(0, 1fr) auto !important;
+    column-gap: 7px !important;
+    padding-inline: 20px !important;
+  }
+}

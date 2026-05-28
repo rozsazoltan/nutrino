@@ -12061,16 +12061,13 @@ function setTab(tab: Tab) {
         <article class="settings-dialog update-dialog">
           <div class="dialog-title-row update-dialog-title-row">
             <span class="app-update-status-icon update-dialog-icon" v-html="lucideSvg('download')"></span>
-            <div class="update-dialog-title-copy">
-              <small class="modal-kicker">{{ t('appUpdates') }}</small>
-              <h2>{{ updateReleaseTitle() }}</h2>
-              <p class="helper update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p>
-            </div>
+            <h2>{{ updateReleaseTitle() }}</h2>
             <span class="dialog-title-actions">
               <button class="info-button update-install-info-button" type="button" :aria-label="t('appUpdates')" @click="updateInstallInfoOpen = !updateInstallInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button>
               <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="remindUpdateLater" v-html="lucideSvg('x')"></button>
             </span>
           </div>
+          <p class="helper update-release-copy update-dialog-description">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p>
           <p v-if="updateInstallInfoOpen" class="helper big update-install-note warning-callout"><span class="warning-callout-icon">!</span><span>{{ t('updateInstallConsentInfo') }}</span></p>
           <div class="dialog-actions app-update-dialog-actions">
             <button class="filled-button wide" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('checkingUpdates') : t('installUpdate') }}</button>
@@ -12127,12 +12124,12 @@ function setTab(tab: Tab) {
               <article class="permission-status-card" :class="{ granted: notificationPermissionGranted }">
                 <span class="permission-status" :class="{ granted: notificationPermissionGranted }">{{ notificationPermissionGranted ? '✓' : '×' }}</span>
                 <span class="permission-copy"><b>{{ t('notificationPermission') }}</b><small>{{ notificationPermissionStatusBody() }}</small></span>
-                <button v-if="!notificationPermissionGranted && notificationPermission !== 'unsupported'" class="text-button" type="button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button><button v-else class="text-button" type="button" @click="openPermissionManagementSettings">{{ t('openSystemPermissionSettings') }}</button>
+                <button v-if="!notificationPermissionGranted && notificationPermission !== 'unsupported'" class="text-button" type="button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button>
               </article>
               <article class="permission-status-card" :class="{ granted: cameraPermissionGranted }">
                 <span class="permission-status" :class="{ granted: cameraPermissionGranted }">{{ cameraPermissionGranted ? '✓' : '×' }}</span>
                 <span class="permission-copy"><b>{{ t('cameraPermission') }}</b><small>{{ cameraPermissionStatusBody() }}</small></span>
-                <button v-if="!cameraPermissionGranted && cameraPermission !== 'unsupported'" class="text-button" type="button" @click="requestCameraPermission">{{ t('requestCameraPermission') }}</button><button v-else class="text-button" type="button" @click="openPermissionManagementSettings">{{ t('openSystemPermissionSettings') }}</button>
+                <button v-if="!cameraPermissionGranted && cameraPermission !== 'unsupported'" class="text-button" type="button" @click="requestCameraPermission">{{ t('requestCameraPermission') }}</button>
               </article>
             </div>
             <p class="helper big permission-management-hint">{{ t('permissionManagementHint') }}</p>
