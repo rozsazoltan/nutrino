@@ -772,6 +772,7 @@ input[type="number"]:focus {
 .onboarding-logo { width: 58px; height: 58px; display: grid; place-items: center; border-radius: 22px; background: var(--primary-container); color: var(--on-primary-container); font-size: 1.8rem; font-weight: 900; }
 .onboarding-form { display: grid; gap: 12px; margin-top: 18px; }
 .onboarding-form label { display: grid; gap: 6px; font-weight: 800; color: var(--on-surface-variant); }
+.onboarding-permissions { display: grid; gap: 14px; margin-top: 18px; }
 .onboarding-tour { display: grid; gap: 12px; }
 .tour-pills { display: flex; flex-wrap: wrap; gap: 8px; }
 .tour-pills span { border-radius: 999px; padding: 8px 12px; background: var(--secondary-container); color: var(--on-secondary-container); font-weight: 900; }
@@ -2678,7 +2679,7 @@ select:focus {
 }
 .permission-status-card {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
+  grid-template-columns: 42px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   padding: 16px;
@@ -2689,6 +2690,21 @@ select:focus {
 .permission-status-card.granted {
   border-color: color-mix(in srgb, #34c759 36%, var(--outline-variant));
   background: color-mix(in srgb, #34c759 9%, var(--surface-container));
+}
+.permission-list {
+  display: grid;
+  gap: 12px;
+}
+.permission-list.compact {
+  gap: 10px;
+}
+.permission-list.compact .permission-status-card {
+  grid-template-columns: 36px minmax(0, 1fr);
+  padding: 12px;
+}
+.permission-list.compact .permission-status-card .permission-status {
+  width: 36px;
+  height: 36px;
 }
 .permission-copy b,
 .permission-copy small {
@@ -2718,6 +2734,15 @@ select:focus {
 .permission-status.granted {
   background: color-mix(in srgb, #34c759 22%, var(--surface));
   color: #16833a;
+}
+@media (max-width: 420px) {
+  .permission-status-card {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+  .permission-status-card .text-button {
+    grid-column: 2;
+    justify-self: start;
+  }
 }
 @media (max-width: 420px) {
   .tracking-dialog-title {
@@ -3222,6 +3247,45 @@ select:focus {
 .inline-help-button svg {
   width: 20px !important;
   height: 20px !important;
+}
+.nutrino-driver-popover {
+  max-width: min(340px, calc(100vw - 32px));
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--on-surface);
+  box-shadow: 0 18px 70px rgba(0,0,0,.32);
+}
+.nutrino-driver-popover .driver-popover-title {
+  color: var(--on-surface);
+  font-size: 1rem;
+  font-weight: 800;
+}
+.nutrino-driver-popover .driver-popover-description {
+  color: var(--on-surface-variant);
+  font-size: .92rem;
+  line-height: 1.45;
+}
+.nutrino-driver-popover .driver-popover-progress-text {
+  color: var(--on-surface-variant);
+}
+.nutrino-driver-popover .driver-popover-next-btn,
+.nutrino-driver-popover .driver-popover-prev-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 14px;
+  text-shadow: none;
+  font-weight: 800;
+}
+.nutrino-driver-popover .driver-popover-next-btn {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.nutrino-driver-popover .driver-popover-prev-btn {
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+}
+.nutrino-driver-popover .driver-popover-close-btn {
+  color: var(--on-surface-variant);
 }
 .tracking-input-card.disabled input,
 .tracking-input-card.disabled select,
