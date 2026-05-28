@@ -5,6 +5,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readFile, writeFile } from '@tauri-apps/plugin-fs';
 import { cancel, createChannel, Importance, isPermissionGranted, onAction, registerActionTypes, requestPermission as requestNativeNotificationPermission, Schedule, sendNotification, Visibility, type Options as NotificationOptions } from '@tauri-apps/plugin-notification';
+import { driver, type DriveStep, type Driver } from 'driver.js';
+import 'driver.js/dist/driver.css';
 import JSZip from 'jszip';
 import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, Ingredient, Intake, LocalizedNameMap, MealType, Recipe, RecipeItem, WeightLog, GitHubCsvSource } from './types';
 import {
@@ -206,6 +208,8 @@ const nutrientChartMode = ref<NutrientChartMode>('important');
 const weightTrendMode = ref<WeightTrendMode>('weekly');
 const notificationPermission = ref('unknown');
 const notificationPermissionGranted = computed(() => notificationPermission.value === 'granted');
+const cameraPermission = ref('unknown');
+const cameraPermissionGranted = computed(() => cameraPermission.value === 'granted');
 const calorieLegendOpen = ref(false);
 const weightLegendOpen = ref(false);
 const selectedCalorieRowKey = ref<string | null>(null);
@@ -220,6 +224,7 @@ let reminderScheduleRefreshTimer: number | undefined;
 let notificationActionListener: PluginListener | null = null;
 let lastNotificationActionSignature = '';
 let lastNotificationActionHandledAt = 0;
+let onboardingDriver: Driver | null = null;
 const nativeReminderSchedulesActive = ref(false);
 const weightReminderModalOpen = ref(false);
 const notificationHighlightedMealType = ref<MealType | null>(null);
@@ -281,6 +286,7 @@ const onboardingProfile = reactive({
 });
 const mobileStateKey = 'nutrino.mobile.v3.state';
 const mobileOnboardingKey = 'nutrino.mobile.onboarded.v1';
+const mobileCameraPermissionGrantedKey = 'nutrino.mobile.cameraPermissionGranted.v1';
 const mobileBackupDbName = 'nutrino-mobile-backups';
 const mobileBackupStoreName = 'profiles';
 const mobileDailyBackupDateKey = 'nutrino.mobile.dailyBackupProfileDate.v1';
@@ -734,6 +740,12 @@ function handleBackNavigation(event?: PopStateEvent) {
     return;
   }
 
+  if (onboardingDriver?.isActive()) {
+    stopOnboardingTour();
+    keepBackInsideApp();
+    return;
+  }
+
   if (catalogMenuOpen.value) {
     catalogMenuOpen.value = false;
     keepBackInsideApp();
@@ -770,7 +782,7 @@ function handleBackNavigation(event?: PopStateEvent) {
 }
 
 
-function finishOnboarding() {
+function saveOnboardingProfile() {
   state.profile.height_cm = Number(onboardingProfile.height_cm) || state.profile.height_cm;
   state.profile.current_weight_kg = Number(onboardingProfile.current_weight_kg) || state.profile.current_weight_kg;
   state.profile.plan_start_weight_kg = state.profile.current_weight_kg;
@@ -778,16 +790,50 @@ function finishOnboarding() {
   state.profile.gender = onboardingProfile.gender;
   state.profile.activity_level = onboardingProfile.activity_level;
   state.profile.weekly_goal_kg = Number(onboardingProfile.weekly_goal_kg) || 0;
+}
+
+function markOnboardingComplete() {
   localStorage.setItem(mobileOnboardingKey, '1');
+}
+
+async function openOnboardingPermissionsStep() {
+  saveOnboardingProfile();
+  onboardingStep.value = 1;
+  await nextTick();
+  await requestOnboardingPermissions();
+}
+
+async function finishOnboarding() {
+  saveOnboardingProfile();
   onboardingOpen.value = false;
   onboardingStep.value = 0;
   saveState(JSON.parse(JSON.stringify(state)) as AppState);
+  await nextTick();
+  startOnboardingTour();
 }
 
 function maybeOpenOnboarding() {
   if (!localStorage.getItem(mobileOnboardingKey)) {
     onboardingOpen.value = true;
   }
+}
+
+function startDevFirstLaunchMode() {
+  if (!devMode) return;
+  const fresh = defaultState();
+  onboardingProfile.height_cm = fresh.profile.height_cm;
+  onboardingProfile.current_weight_kg = fresh.profile.current_weight_kg;
+  onboardingProfile.birthday = fresh.profile.birthday;
+  onboardingProfile.gender = fresh.profile.gender;
+  onboardingProfile.activity_level = fresh.profile.activity_level;
+  onboardingProfile.weekly_goal_kg = fresh.profile.weekly_goal_kg;
+  localStorage.removeItem(mobileOnboardingKey);
+  stopOnboardingTour(false);
+  settingsOpen.value = false;
+  settingsDialog.value = null;
+  activeTab.value = 'home';
+  onboardingStep.value = 0;
+  onboardingOpen.value = true;
 }
 
 async function factoryResetMobile() {
@@ -844,7 +890,7 @@ onMounted(() => {
   (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = true;
   consumeNativePendingNotificationAction();
   void installWindowCloseGuard();
-  void refreshNotificationPermissionStatus();
+  void refreshAppPermissionStatuses();
   void initializeNotifications();
   void pollServerHealth({ syncOnChange: true, quiet: true });
   healthTimer = window.setInterval(() => void pollServerHealth({ syncOnChange: true, quiet: true }), 30000);
@@ -867,6 +913,8 @@ onBeforeUnmount(() => {
   if (reminderTimer) window.clearInterval(reminderTimer);
   if (reminderScheduleRefreshTimer) window.clearTimeout(reminderScheduleRefreshTimer);
   void notificationActionListener?.unregister();
+  onboardingDriver?.destroy();
+  onboardingDriver = null;
   if (todayRolloverTimer) window.clearTimeout(todayRolloverTimer);
   if (backTrapRearmingTimer) window.clearTimeout(backTrapRearmingTimer);
   if (highlightedReviewTimer) window.clearTimeout(highlightedReviewTimer);
@@ -6717,6 +6765,79 @@ const mobileVisibleTextTranslations: Record<string, Record<string, string>> = {
 for (const [language, values] of Object.entries(mobileVisibleTextTranslations)) {
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
 }
+
+const onboardingGuideTranslations: Record<string, Partial<Record<string, string>>> = {
+  en: {
+    permissionsReady: 'permissions ready',
+    notificationPermission: 'Notifications',
+    cameraPermission: 'Camera',
+    cameraPermissionEnabled: 'Camera enabled.',
+    cameraPermissionNotEnabled: 'Camera is not enabled.',
+    cameraPermissionUnsupported: 'Camera is not supported here.',
+    requestCameraPermission: 'Enable camera',
+    requestAllPermissions: 'Enable all permissions',
+    onboardingPermissions: 'App permissions',
+    onboardingPermissionsBody: 'Set up notifications for reminders and camera access for barcode or QR scanning before you start using the app.',
+    onboardingTourStart: 'Start guide',
+    devFirstLaunchMode: 'Test first launch',
+    devFirstLaunchModeBody: 'DEV only: reopen the app as a new user without deleting current data.',
+    tourDashboardTitle: 'Daily dashboard',
+    tourDashboardBody: 'Track consumed and burned kcal, macro progress and your current daily target from the Home screen.',
+    tourMealsTitle: 'Meal logging',
+    tourMealsBody: 'Tap a meal row to add foods, recipes, notes or activity for the current day.',
+    tourQuickAddTitle: 'Quick add',
+    tourQuickAddBody: 'Use the floating add button when you want to choose the target meal first.',
+    tourSyncTitle: 'Sync status',
+    tourSyncBody: 'This shows whether the desktop server or GitHub catalog source is available.',
+    tourSettingsTitle: 'Settings',
+    tourSettingsBody: 'Manage permissions, reminders, nutrients, backups, language and privacy settings from here.',
+    tourDiaryTitle: 'Diary',
+    tourDiaryBody: 'Open the calendar view to review past days, daily nutrients and historical entries.',
+    tourRecipesTitle: 'Recipes and catalog',
+    tourRecipesBody: 'Browse synced foods, recipes and local catalog items here.',
+    tourProfileTitle: 'Profile',
+    tourProfileBody: 'Adjust body data, goals, API pairing and catalog sources in Profile.',
+  },
+  hu: {
+    permissionsReady: 'engedély kész',
+    notificationPermission: 'Értesítések',
+    cameraPermission: 'Kamera',
+    cameraPermissionEnabled: 'Kamera engedélyezve.',
+    cameraPermissionNotEnabled: 'A kamera nincs engedélyezve.',
+    cameraPermissionUnsupported: 'A kamera itt nem támogatott.',
+    requestCameraPermission: 'Kamera engedélyezése',
+    requestAllPermissions: 'Minden engedély kérése',
+    onboardingPermissions: 'App engedélyek',
+    onboardingPermissionsBody: 'Állítsd be az értesítéseket az emlékeztetőkhöz és a kamerát a vonalkódok vagy QR-kódok beolvasásához, mielőtt használni kezded az appot.',
+    onboardingTourStart: 'Bemutató indítása',
+    devFirstLaunchMode: 'Első indítás tesztelése',
+    devFirstLaunchModeBody: 'Csak DEV-ben: új belépőként indítja az appot a jelenlegi adatok törlése nélkül.',
+    tourDashboardTitle: 'Napi áttekintő',
+    tourDashboardBody: 'A Kezdőlapon látod a bevitt és elégetett kcal-t, a makrókat és az aktuális napi célodat.',
+    tourMealsTitle: 'Étkezések rögzítése',
+    tourMealsBody: 'Koppints egy étkezés sorára, ha ételt, receptet, jegyzetet vagy aktivitást adnál hozzá az aktuális naphoz.',
+    tourQuickAddTitle: 'Gyors hozzáadás',
+    tourQuickAddBody: 'A lebegő hozzáadás gombbal először kiválaszthatod, melyik étkezéshez szeretnél rögzíteni.',
+    tourSyncTitle: 'Szinkron állapot',
+    tourSyncBody: 'Itt látod, hogy a desktop szerver vagy a GitHub katalógusforrás elérhető-e.',
+    tourSettingsTitle: 'Beállítások',
+    tourSettingsBody: 'Itt kezelhetők az engedélyek, emlékeztetők, tápanyagok, backupok, nyelv és adatvédelmi beállítások.',
+    tourDiaryTitle: 'Napló',
+    tourDiaryBody: 'A naptárnézetben átnézheted a korábbi napokat, napi tápanyagokat és bejegyzéseket.',
+    tourRecipesTitle: 'Receptek és katalógus',
+    tourRecipesBody: 'Itt böngészhetők a szinkronizált ételek, receptek és helyi katalógustételek.',
+    tourProfileTitle: 'Profil',
+    tourProfileBody: 'A testadatok, célok, API párosítás és katalógusforrások a Profilban módosíthatók.',
+  },
+};
+translations.en = { ...translations.en, ...normalizeTranslationValues(onboardingGuideTranslations.en || {}) };
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...normalizeTranslationValues(onboardingGuideTranslations[language] || {}),
+  };
+}
 // end generated completeMobileLanguageTranslations
 
 function t(key: string) {
@@ -8419,6 +8540,54 @@ async function refreshNotificationPermissionStatus() {
   notificationPermission.value = Notification.permission;
 }
 
+async function refreshCameraPermissionStatus() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    cameraPermission.value = 'unsupported';
+    return;
+  }
+  const rememberedGrant = localStorage.getItem(mobileCameraPermissionGrantedKey) === '1';
+  try {
+    const permissionStatus = await navigator.permissions?.query?.({ name: 'camera' as PermissionName });
+    if (permissionStatus?.state) {
+      if (permissionStatus.state === 'granted') {
+        localStorage.setItem(mobileCameraPermissionGrantedKey, '1');
+        cameraPermission.value = 'granted';
+        return;
+      }
+      if (permissionStatus.state === 'denied') {
+        localStorage.removeItem(mobileCameraPermissionGrantedKey);
+        cameraPermission.value = 'denied';
+        return;
+      }
+      cameraPermission.value = rememberedGrant ? 'granted' : permissionStatus.state;
+      permissionStatus.onchange = () => {
+        if (permissionStatus.state === 'granted') {
+          localStorage.setItem(mobileCameraPermissionGrantedKey, '1');
+          cameraPermission.value = 'granted';
+          return;
+        }
+        if (permissionStatus.state === 'denied') {
+          localStorage.removeItem(mobileCameraPermissionGrantedKey);
+          cameraPermission.value = 'denied';
+          return;
+        }
+        cameraPermission.value = localStorage.getItem(mobileCameraPermissionGrantedKey) === '1' ? 'granted' : permissionStatus.state;
+      };
+      return;
+    }
+  } catch {
+    // Some WebViews expose camera access without the Permissions API.
+  }
+  cameraPermission.value = rememberedGrant ? 'granted' : 'prompt';
+}
+
+async function refreshAppPermissionStatuses() {
+  await Promise.all([
+    refreshNotificationPermissionStatus(),
+    refreshCameraPermissionStatus(),
+  ]);
+}
+
 async function requestReminderPermission() {
   try {
     if (await isPermissionGranted()) {
@@ -8444,9 +8613,61 @@ async function requestReminderPermission() {
   }
 }
 
+async function requestCameraPermission() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    cameraPermission.value = 'unsupported';
+    showToast(t('cameraPermissionUnsupported'));
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    stream.getTracks().forEach((track) => track.stop());
+    localStorage.setItem(mobileCameraPermissionGrantedKey, '1');
+    cameraPermission.value = 'granted';
+    showToast(t('cameraPermissionEnabled'));
+  } catch {
+    localStorage.removeItem(mobileCameraPermissionGrantedKey);
+    cameraPermission.value = 'denied';
+    showToast(t('cameraPermissionNotEnabled'));
+  }
+}
+
+async function requestOnboardingPermissions() {
+  await requestReminderPermission();
+  await requestCameraPermission();
+  await refreshAppPermissionStatuses();
+}
+
+function cameraPermissionStatusLabel(): string {
+  if (cameraPermissionGranted.value) return t('cameraPermissionEnabled');
+  if (cameraPermission.value === 'unsupported') return t('cameraPermissionUnsupported');
+  return t('cameraPermissionNotEnabled');
+}
+
+function cameraPermissionStatusBody(): string {
+  if (cameraPermissionGranted.value) {
+    return activeLanguage.value === 'hu'
+      ? 'A vonalkód- és QR-szkenner használhatja a kamerát.'
+      : 'The barcode and QR scanner can use the camera.';
+  }
+  if (cameraPermission.value === 'unsupported') {
+    return activeLanguage.value === 'hu'
+      ? 'Ez a környezet nem támogatja a kamerás szkennelést.'
+      : 'This environment does not support camera scanning.';
+  }
+  return activeLanguage.value === 'hu'
+    ? 'Engedélyezd a kamerát a vonalkódok és Nutrino QR-kódok beolvasásához.'
+    : 'Enable camera access to scan barcodes and Nutrino QR codes.';
+}
+
+function appPermissionSummary(): string {
+  const statuses = [notificationPermissionGranted.value, cameraPermissionGranted.value];
+  return `${statuses.filter(Boolean).length}/${statuses.length} ${t('permissionsReady')}`;
+}
+
 function openPermissionsSettings() {
   settingsDialog.value = 'permissions';
-  void refreshNotificationPermissionStatus();
+  void refreshAppPermissionStatuses();
 }
 
 async function ensureNotificationPermissionForReminders() {
@@ -9914,6 +10135,8 @@ async function startCameraScanner() {
   if (!video || !Detector || !navigator.mediaDevices?.getUserMedia) return;
   try {
     scannerStream = await navigator.mediaDevices.getUserMedia(await bestCameraConstraints());
+    localStorage.setItem(mobileCameraPermissionGrantedKey, '1');
+    cameraPermission.value = 'granted';
     video.srcObject = scannerStream;
     await video.play();
     scannerActive.value = true;
@@ -10555,6 +10778,69 @@ function clearCachedItems() {
   showToast(t('cachedCatalogCleared'));
 }
 
+function stopOnboardingTour(markComplete = true) {
+  if (markComplete) markOnboardingComplete();
+  if (onboardingDriver?.isActive()) onboardingDriver.destroy();
+  onboardingDriver = null;
+}
+
+function tourStep(selector: string, titleKey: string, bodyKey: string): DriveStep | null {
+  const element = document.querySelector(selector);
+  if (!element) return null;
+  return {
+    element,
+    popover: {
+      title: t(titleKey),
+      description: t(bodyKey),
+    },
+  };
+}
+
+function buildOnboardingTourSteps(): DriveStep[] {
+  const steps = [
+    tourStep('[data-tour="dashboard"]', 'tourDashboardTitle', 'tourDashboardBody'),
+    tourStep('[data-tour="meal-logging"]', 'tourMealsTitle', 'tourMealsBody'),
+    tourStep('[data-tour="quick-add"]', 'tourQuickAddTitle', 'tourQuickAddBody'),
+    tourStep('[data-tour="sync"]', 'tourSyncTitle', 'tourSyncBody'),
+    tourStep('[data-tour="settings"]', 'tourSettingsTitle', 'tourSettingsBody'),
+    tourStep('[data-tour="nav-diary"]', 'tourDiaryTitle', 'tourDiaryBody'),
+    tourStep('[data-tour="nav-recipes"]', 'tourRecipesTitle', 'tourRecipesBody'),
+    tourStep('[data-tour="nav-profile"]', 'tourProfileTitle', 'tourProfileBody'),
+  ];
+  return steps.filter((step): step is DriveStep => Boolean(step));
+}
+
+function startOnboardingTour() {
+  activeTab.value = 'home';
+  settingsOpen.value = false;
+  settingsDialog.value = null;
+  quickAddOpen.value = false;
+  const steps = buildOnboardingTourSteps();
+  if (!steps.length) {
+    markOnboardingComplete();
+    return;
+  }
+  onboardingDriver?.destroy();
+  onboardingDriver = driver({
+    steps,
+    showProgress: true,
+    allowClose: true,
+    smoothScroll: true,
+    overlayOpacity: 0.58,
+    stagePadding: 8,
+    stageRadius: 16,
+    popoverClass: 'nutrino-driver-popover',
+    nextBtnText: t('next'),
+    prevBtnText: t('back'),
+    doneBtnText: t('startUsingNutrino'),
+    onDestroyed: () => {
+      markOnboardingComplete();
+      onboardingDriver = null;
+    },
+  });
+  onboardingDriver.drive();
+}
+
 function editIntake(entry: Intake) {
   if (!ensureSelectedDayEditing()) return;
   editingIntakeId.value = entry.id;
@@ -10619,11 +10905,11 @@ function setTab(tab: Tab) {
         </div>
       </div>
       <div class="appbar-actions">
-        <button class="sync-chip" :disabled="syncBusy" @click="syncNow()">
+        <button class="sync-chip" data-tour="sync" :disabled="syncBusy" @click="syncNow()">
           <span class="sync-dot" :class="serverOnline ? '' : githubCatalogAvailable ? 'available' : 'offline'"></span>
           {{ syncBusy ? t('syncing') : serverOnline ? t('online') : githubCatalogAvailable ? t('available') : t('offline') }}
         </button>
-        <button class="settings-button" :aria-label="t('settings')" @click="openSettings">
+        <button class="settings-button" data-tour="settings" :aria-label="t('settings')" @click="openSettings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8.4 8.4 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A8.4 8.4 0 0 0 7 6L4.6 5 2.6 8.5l2 1.5a8.8 8.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a8.4 8.4 0 0 0 2.6 1.5L10 22h4l.4-2.5A8.4 8.4 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/></svg>
         </button>
       </div>
@@ -10641,7 +10927,7 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
-      <article class="card dashboard-card">
+      <article class="card dashboard-card" data-tour="dashboard">
         <div class="source-action"><button class="icon-button" :aria-label="t('sources')" v-html="lucideSvg('info')"></button></div>
         <div class="dashboard-row">
           <div class="side-stat">
@@ -10684,7 +10970,7 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
-      <article v-for="section in sections" :key="section.key" class="card meal-card">
+      <article v-for="section in sections" :key="section.key" class="card meal-card" :data-tour="section.key === 'breakfast' ? 'meal-logging' : undefined">
         <button class="meal-header" @click="section.key === 'activity' ? openActivityAdd() : openFoodAdd(section.key)">
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
           <span><b>{{ t(section.key) }}</b><small>{{ sectionHint(section) }}</small></span>
@@ -10996,7 +11282,7 @@ function setTab(tab: Tab) {
       </article>
     </section>
 
-    <button v-if="activeTab === 'home' && !addMode && !settingsOpen" class="home-quick-fab" :aria-label="t('addNewItem')" @click="openQuickAddMenu()">+</button>
+    <button v-if="activeTab === 'home' && !addMode && !settingsOpen" class="home-quick-fab" data-tour="quick-add" :aria-label="t('addNewItem')" @click="openQuickAddMenu()">+</button>
 
     <Teleport to="body">
       <div v-if="quickAddOpen" class="quick-add-backdrop app-overlay" @click.self="closeQuickAddMenu">
@@ -11451,7 +11737,8 @@ function setTab(tab: Tab) {
       <section v-if="settingsOpen" class="settings-screen app-overlay">
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
-        <button class="settings-row" @click="openPermissionsSettings"><span class="settings-row-icon" v-html="settingsIcon('permissions')"></span><b>{{ t('appPermissions') }}</b><small>{{ notificationPermissionStatusLabel() }}</small></button>
+        <button class="settings-row" @click="openPermissionsSettings"><span class="settings-row-icon" v-html="settingsIcon('permissions')"></span><b>{{ t('appPermissions') }}</b><small>{{ appPermissionSummary() }}</small></button>
+        <button v-if="devMode" class="settings-row" @click="startDevFirstLaunchMode"><span class="settings-row-icon" v-html="settingsIcon('reset')"></span><b>{{ t('devFirstLaunchMode') }}</b><small>{{ t('devFirstLaunchModeBody') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'units'"><span class="settings-row-icon" v-html="settingsIcon('units')"></span><b>{{ t('units') }}</b><small>{{ state.settings.units === 'metric' ? t('metric') : t('imperial') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'calculations'"><span class="settings-row-icon" v-html="settingsIcon('calculations')"></span><b>{{ t('calculations') }}</b><small>{{ t('iomEquationMacro') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'tracking'"><span class="settings-row-icon" v-html="settingsIcon('tracking')"></span><b>{{ t('trackingReminders') }}</b><small>{{ calorieDeficitEnabled ? `${state.settings.target_deficit_kcal} kcal ${t('targetDeficit')}` : t('deficitOffHint') }}</small></button>
@@ -11483,11 +11770,19 @@ function setTab(tab: Tab) {
         <article class="settings-dialog">
           <template v-if="settingsDialog === 'permissions'">
             <div class="dialog-title-row"><h2>{{ t('appPermissions') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></div>
-            <article class="permission-status-card" :class="{ granted: notificationPermissionGranted }">
-              <span class="permission-status" :class="{ granted: notificationPermissionGranted }">{{ notificationPermissionGranted ? '✓' : '!' }}</span>
-              <span class="permission-copy"><b>{{ notificationPermissionStatusLabel() }}</b><small>{{ notificationPermissionStatusBody() }}</small></span>
-            </article>
-            <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button v-if="!notificationPermissionGranted && notificationPermission !== 'unsupported'" class="filled-button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button></div>
+            <div class="permission-list">
+              <article class="permission-status-card" :class="{ granted: notificationPermissionGranted }">
+                <span class="permission-status" :class="{ granted: notificationPermissionGranted }">{{ notificationPermissionGranted ? '✓' : '×' }}</span>
+                <span class="permission-copy"><b>{{ t('notificationPermission') }}</b><small>{{ notificationPermissionStatusBody() }}</small></span>
+                <button v-if="!notificationPermissionGranted && notificationPermission !== 'unsupported'" class="text-button" type="button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button>
+              </article>
+              <article class="permission-status-card" :class="{ granted: cameraPermissionGranted }">
+                <span class="permission-status" :class="{ granted: cameraPermissionGranted }">{{ cameraPermissionGranted ? '✓' : '×' }}</span>
+                <span class="permission-copy"><b>{{ t('cameraPermission') }}</b><small>{{ cameraPermissionStatusBody() }}</small></span>
+                <button v-if="!cameraPermissionGranted && cameraPermission !== 'unsupported'" class="text-button" type="button" @click="requestCameraPermission">{{ t('requestCameraPermission') }}</button>
+              </article>
+            </div>
+            <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button class="filled-button" type="button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'units'"><h2>{{ t('units') }}</h2><button class="dialog-option" @click="state.settings.units = 'metric'; settingsDialog = null">{{ t('metric') }}</button><button class="dialog-option" @click="state.settings.units = 'imperial'; settingsDialog = null">{{ t('imperial') }}</button></template>
           <template v-else-if="settingsDialog === 'language'"><h2>{{ t('language') }}</h2><input v-model="languageSearch" class="input" type="search" :placeholder="t('languageSearch')" /><button v-for="language in filteredLanguageOptions" :key="language.code" class="dialog-option language-dialog-option" @click="setLanguage(language.code); settingsDialog = null"><span>{{ language.englishName }}</span><small>{{ language.nativeName }} · {{ language.code }}</small></button></template>
@@ -11682,12 +11977,22 @@ function setTab(tab: Tab) {
           <label><span>{{ t('activityLevel') }}</span><select v-model="onboardingProfile.activity_level" class="input"><option value="sedentary">{{ t('sedentary') }}</option><option value="low_active">{{ t('lowActive') }}</option><option value="active">{{ t('active') }}</option><option value="very_active">{{ t('veryActive') }}</option></select></label>
           <label><span>{{ t('weeklyGoal') }}: {{ onboardingProfile.weekly_goal_kg }} {{ t('perWeek') }}</span><input v-model.number="onboardingProfile.weekly_goal_kg" class="tile-range" type="range" min="-1" max="1" step="0.25" /></label>
         </div>
-        <div v-else class="onboarding-tour">
-          <h3>{{ t('onboardingTour') }}</h3>
+        <div v-else class="onboarding-permissions">
+          <h3>{{ t('onboardingPermissions') }}</h3>
+          <p class="helper big">{{ t('onboardingPermissionsBody') }}</p>
+          <div class="permission-list compact">
+            <article class="permission-status-card" :class="{ granted: notificationPermissionGranted }">
+              <span class="permission-status" :class="{ granted: notificationPermissionGranted }">{{ notificationPermissionGranted ? '✓' : '×' }}</span>
+              <span class="permission-copy"><b>{{ t('notificationPermission') }}</b><small>{{ notificationPermissionStatusLabel() }}</small></span>
+            </article>
+            <article class="permission-status-card" :class="{ granted: cameraPermissionGranted }">
+              <span class="permission-status" :class="{ granted: cameraPermissionGranted }">{{ cameraPermissionGranted ? '✓' : '×' }}</span>
+              <span class="permission-copy"><b>{{ t('cameraPermission') }}</b><small>{{ cameraPermissionStatusLabel() }}</small></span>
+            </article>
+          </div>
           <p class="helper big">{{ t('onboardingTourBody') }}</p>
-          <div class="tour-pills"><span>{{ t('home') }}</span><span>{{ t('diary') }}</span><span>{{ t('recipes') }}</span><span>{{ t('profile') }}</span></div>
         </div>
-        <div class="dialog-actions onboarding-actions"><button v-if="onboardingStep === 0" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 0 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="onboardingStep++">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('startUsingNutrino') }}</button></div>
+        <div class="dialog-actions onboarding-actions"><button v-if="onboardingStep === 0" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 0 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 1" class="text-button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="openOnboardingPermissionsStep">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('onboardingTourStart') }}</button></div>
       </article>
       </section>
     </Teleport>
@@ -11709,7 +12014,7 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <nav class="bottom-nav">
-      <button v-for="item in navItems" :key="item.key" :class="activeTab === item.key ? 'active' : ''" @click="setTab(item.key)">
+      <button v-for="item in navItems" :key="item.key" :data-tour="`nav-${item.key}`" :class="activeTab === item.key ? 'active' : ''" @click="setTab(item.key)">
         <span class="nav-svg" v-html="activeTab === item.key ? item.activeIcon : item.icon"></span>
         <span>{{ t(item.key) }}</span>
       </button>
