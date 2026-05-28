@@ -5159,3 +5159,148 @@ select:focus {
   margin-top: 0 !important;
   margin-bottom: 0 !important;
 }
+
+/* v0.13.1 health diary completion and compact UI */
+.home-health-card .home-health-header {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  cursor: default;
+}
+.home-health-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.home-health-entry-list .entry-row,
+.health-insight-entry-row {
+  min-height: 44px;
+}
+.health-day-analysis-card {
+  padding: 16px;
+}
+.health-day-summary-grid {
+  margin-top: 10px;
+}
+.health-day-insight-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.health-day-insight-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border-radius: 14px;
+  background: var(--surface-container);
+}
+.health-day-insight-row b,
+.health-day-insight-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-day-insight-row small {
+  color: var(--on-surface-variant);
+  font-size: .76rem;
+}
+.health-entry-icon.compact {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+}
+.health-entry-icon.compact svg {
+  width: 19px;
+  height: 19px;
+}
+.health-custom-range-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0 12px;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--surface-container);
+}
+.health-custom-range-card label {
+  display: grid;
+  gap: 6px;
+  color: var(--on-surface-variant);
+  font-size: .78rem;
+  font-weight: 800;
+}
+.health-clinical-note {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--secondary-container) 58%, var(--surface));
+  color: var(--on-surface-variant);
+}
+.health-weekday-bars {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.health-weekday-bars .health-trend-bar i {
+  background: var(--primary);
+}
+.health-time-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.health-time-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--surface-container);
+}
+.health-time-card span {
+  color: var(--on-surface-variant);
+  font-size: .78rem;
+  font-weight: 800;
+}
+.health-time-card b {
+  font-size: 1.1rem;
+}
+.health-time-card i {
+  display: block;
+  height: 5px;
+  min-width: 5%;
+  border-radius: 999px;
+  background: var(--primary);
+}
+.profile-purpose-panel {
+  padding: 10px 12px 12px !important;
+  gap: 8px !important;
+}
+.profile-purpose-panel .profile-purpose-head {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 2px !important;
+}
+.profile-purpose-panel .purpose-choice-grid {
+  grid-template-columns: 1fr !important;
+  gap: 6px !important;
+}
+.profile-purpose-panel .purpose-choice-card {
+  min-height: 0 !important;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px !important;
+  padding: 8px 10px !important;
+  border-radius: 14px !important;
+}
+.profile-purpose-panel .purpose-choice-card small {
+  display: none;
+}
+.profile-purpose-panel .purpose-choice-card svg {
+  width: 19px;
+  height: 19px;
+}
+@media (max-width: 430px) {
+  .health-custom-range-card,
+  .health-time-grid {
+    grid-template-columns: 1fr;
+  }
+}

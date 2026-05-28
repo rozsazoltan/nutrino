@@ -46,7 +46,8 @@ type LocalRecipeDraftItem = { food_id: string; amount_g: number; unit: 'g' | 'se
 type MealNoteSuggestion = { key: string; title: string; description: string; kcal: number; lastUsedAt: number; count: number };
 type HealthEditorMode = 'new' | 'recurrence' | 'duplicate' | 'edit';
 type HealthQuickTime = 'now' | 'minus10' | 'minus60' | 'custom';
-type HealthAnalysisRangeKey = '30' | '180' | '360' | 'all';
+type HealthAnalysisRangeKey = '30' | '180' | '360' | 'all' | 'custom';
+type HealthAnalysisCustomUnit = 'day' | 'week' | 'month' | 'year';
 type BackupIncludeOptions = { catalog: boolean; foodDiary: boolean; healthDiary: boolean };
 
 type OptionalNutrientDefinition = {
@@ -210,6 +211,10 @@ const healthEditorId = ref<string | null>(null);
 const healthRecurrenceSourceId = ref<string | null>(null);
 const healthQuickTime = ref<HealthQuickTime>('now');
 const healthAnalysisRange = ref<HealthAnalysisRangeKey>('30');
+const healthCustomRangeAmount = ref<number | null>(30);
+const healthCustomRangeUnit = ref<HealthAnalysisCustomUnit>('day');
+const healthCustomRangeFrom = ref('');
+const healthCustomRangeTo = ref(dateKey());
 const healthSelectedEventId = ref<string | null>(null);
 const healthForm = reactive({
   title: '',
@@ -900,6 +905,7 @@ function saveOnboardingProfile() {
   state.profile.activity_level = onboardingProfile.activity_level;
   state.profile.weekly_goal_kg = Number(onboardingProfile.weekly_goal_kg) || 0;
   state.profile.usage_purposes = [...new Set(onboardingProfile.usage_purposes)];
+  state.settings.health_diary_enabled = state.profile.usage_purposes.includes('health_issue_logging');
 }
 
 function markOnboardingComplete() {
@@ -1559,9 +1565,13 @@ const reusableHealthEvents = computed(() => {
   }
   return [...byEvent.values()].sort((a, b) => b.occurred_at - a.occurred_at);
 });
+const currentDayHealthInsightRows = computed(() => buildHealthDayInsightRows(currentDayHealthEntries.value));
+const currentDayHealthSummary = computed(() => buildHealthDaySummary(currentDayHealthEntries.value));
 const healthAnalysisEntries = computed(() => filterHealthEntriesByRange(activeHealthEntries.value, healthAnalysisRange.value));
 const healthAnalysisSummary = computed(() => buildHealthAnalysisSummary());
 const healthCategoryChartRows = computed(() => buildHealthCategoryChartRows());
+const healthWeekdayChartRows = computed(() => buildHealthWeekdayChartRows());
+const healthTimeOfDayChartRows = computed(() => buildHealthTimeOfDayChartRows());
 const healthRecurrenceChartRows = computed(() => buildHealthRecurrenceChartRows());
 const healthPeriodSummaryRows = computed(() => buildHealthPeriodSummaryRows());
 const healthEventFrequencyRows = computed(() => buildHealthEventFrequencyRows());
@@ -6992,7 +7002,7 @@ const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, strin
     now: 'Now', tenMinutesAgo: '10 min ago', oneHourAgo: '1 hour ago', customDateTime: 'Custom', date: 'Date', time: 'Time',
     healthTitle: 'Title, e.g. left knee pain', healthDescription: 'Description', healthCategory: 'Category', healthNotes: 'Optional notes', addPhoto: 'Photo', addVideo: 'Video', photoAttachment: 'Photo', videoAttachment: 'Video', attachments: 'attachments',
     healthTitleRequired: 'Health entry title is required.', healthEntrySaved: 'Health entry saved.', healthEntryUpdated: 'Health entry updated.', searchHealthDiary: 'Search title, description or date', noHealthEntries: 'No health entries for this day.', noHealthSearchResults: 'No matching health entries.',
-    healthAnalysis: 'Health analysis', last30Days: 'Last 30 days', last180Days: 'Last 180 days', last360Days: 'Last 360 days', allTime: 'All time', recurringEvents: 'Recurring events', recurrenceChart: 'Recurrence chart', healthNoInsight: 'Add health entries to see recurring patterns.', healthRecurringInsight: 'recurring pattern(s), most often', healthRecentInsight: 'health note(s) in the last 30 days, most often',
+    healthAnalysis: 'Health analysis', last30Days: 'Last 30 days', last180Days: 'Last 180 days', last360Days: 'Last 360 days', allTime: 'All time', recurringEvents: 'Recurring events', recurrenceChart: 'Recurrence chart', healthNoInsight: 'Add health entries to see recurring patterns.', healthRecurringInsight: 'recurring pattern(s), most often', healthRecentInsight: 'health note(s) in the last 30 days, most often', today: 'today', healthEntriesToday: 'health entries today', healthRecurringToday: 'recurring today', healthPatternNew: 'new', healthPatternNotFrequent: 'not frequent', healthPatternRecurring: 'recurring', healthPatternSameDay: 'same day', every: 'every', lastBefore: 'last before today', customHealthAnalysisRange: 'Custom range', healthRangeUnit: 'Unit', last: 'Last', from: 'From', to: 'To', weeks: 'weeks', months: 'months', healthClinicalAnalysisNote: 'Pattern summaries are for review and medical conversation support only; they are not a diagnosis. Share persistent, severe or worrying symptoms with a qualified clinician.', healthWeekdayPattern: 'Weekday pattern', healthTimeOfDayPattern: 'Time of day pattern', healthTimeNight: 'Night', healthTimeMorning: 'Morning', healthTimeAfternoon: 'Afternoon', healthTimeEvening: 'Evening',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready health summary exported.', selectedDayHealthNote: 'Health entries for the selected day are shown below.', none: 'none', healthDiaryTracking: 'Track health data', healthDiaryTrackingHint: 'Enable the separate health diary, symptom logging and health analysis.', healthDiaryDisabled: 'Health diary is disabled in Settings.', healthEventsShort: 'events', healthAnalysisWindow: 'Analysis window', healthEventFrequency: 'Event frequency', healthFrequencyColumns: '30 / 180 / 360 days / all', healthSelectedEventTrend: 'Monthly frequency for the selected event',
     backupOptions: 'Backup contents', backupOptionsBody: 'Choose what should be included in this ZIP backup. Everything is selected by default.', backupIncludeCatalog: 'Activity + saved food items', backupIncludeCatalogHint: 'Local and synced foods, ingredients, recipes, activities and catalog sources.', backupIncludeFoodDiary: 'Food diary', backupIncludeFoodDiaryHint: 'Meal entries, activity logs and weight logs.', backupIncludeHealthDiary: 'Health diary', backupIncludeHealthDiaryHint: 'Health entries with recurrence links and attachments.', backupSelectAtLeastOne: 'Select at least one backup content group.',
     appPurpose: 'App purpose', profilePurposeMissing: 'Choose at least one purpose.', selectAtLeastOnePurpose: 'Select at least one purpose.', onboardingPurposeIntro: 'What do you want to use Nutrino for? Select at least one option.',
@@ -7005,7 +7015,7 @@ const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, strin
     now: 'Most', tenMinutesAgo: '10 perce', oneHourAgo: '1 órája', customDateTime: 'Egyedi', date: 'Dátum', time: 'Idő',
     healthTitle: 'Cím, pl. bal térdfájdalom', healthDescription: 'Leírás', healthCategory: 'Kategória', healthNotes: 'Opcionális jegyzetek', addPhoto: 'Fotó', addVideo: 'Videó', photoAttachment: 'Fotó', videoAttachment: 'Videó', attachments: 'csatolmány',
     healthTitleRequired: 'Az egészségbejegyzés címe kötelező.', healthEntrySaved: 'Egészségbejegyzés mentve.', healthEntryUpdated: 'Egészségbejegyzés frissítve.', searchHealthDiary: 'Keresés cím, leírás vagy dátum szerint', noHealthEntries: 'Nincs egészségbejegyzés erre a napra.', noHealthSearchResults: 'Nincs találat az egészségnaplóban.',
-    healthAnalysis: 'Egészség analízis', last30Days: 'Utolsó 30 nap', last180Days: 'Utolsó 180 nap', last360Days: 'Utolsó 360 nap', allTime: 'Összes idő', recurringEvents: 'Visszatérő események', recurrenceChart: 'Ismétlődés diagram', healthNoInsight: 'Adj hozzá egészségbejegyzéseket a visszatérő mintákhoz.', healthRecurringInsight: 'visszatérő minta, leggyakrabban', healthRecentInsight: 'egészségjegyzet az utolsó 30 napban, leggyakrabban',
+    healthAnalysis: 'Egészség analízis', last30Days: 'Utolsó 30 nap', last180Days: 'Utolsó 180 nap', last360Days: 'Utolsó 360 nap', allTime: 'Összes idő', recurringEvents: 'Visszatérő események', recurrenceChart: 'Ismétlődés diagram', healthNoInsight: 'Adj hozzá egészségbejegyzéseket a visszatérő mintákhoz.', healthRecurringInsight: 'visszatérő minta, leggyakrabban', healthRecentInsight: 'egészségjegyzet az utolsó 30 napban, leggyakrabban', today: 'ma', healthEntriesToday: 'mai egészségbejegyzés', healthRecurringToday: 'ma visszatérő', healthPatternNew: 'új', healthPatternNotFrequent: 'nem gyakori', healthPatternRecurring: 'visszatérő', healthPatternSameDay: 'azonos nap', every: 'kb.', lastBefore: 'előző előfordulás', customHealthAnalysisRange: 'Egyéni időszak', healthRangeUnit: 'Egység', last: 'Utolsó', from: 'Dátumtól', to: 'Dátumig', weeks: 'hét', months: 'hónap', healthClinicalAnalysisNote: 'A mintázatok orvosi áttekintést és beszélgetést segítő összefoglalók, nem diagnózisok. Tartós, súlyos vagy aggasztó tünetekkel fordulj szakképzett orvoshoz.', healthWeekdayPattern: 'Hét napjai szerinti minta', healthTimeOfDayPattern: 'Napszak szerinti minta', healthTimeNight: 'Éjszaka', healthTimeMorning: 'Reggel', healthTimeAfternoon: 'Délután', healthTimeEvening: 'Este',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready egészség összefoglaló exportálva.', selectedDayHealthNote: 'A kiválasztott nap egészségbejegyzései lent láthatók.', none: 'nincs', healthDiaryTracking: 'Egészségügyi adatok vezetése', healthDiaryTrackingHint: 'Külön egészségnapló, tünetrögzítés és egészség analízis bekapcsolása.', healthDiaryDisabled: 'Az egészségnapló ki van kapcsolva a beállításokban.', healthEventsShort: 'esemény', healthAnalysisWindow: 'Elemzési időszak', healthEventFrequency: 'Esemény gyakoriság', healthFrequencyColumns: '30 / 180 / 360 nap / összes', healthSelectedEventTrend: 'A kiválasztott esemény havi gyakorisága',
     backupOptions: 'Backup tartalma', backupOptionsBody: 'Válaszd ki, mi kerüljön ebbe a ZIP mentésbe. Alapból minden be van pipálva.', backupIncludeCatalog: 'Aktivitás + étel mentett tételek', backupIncludeCatalogHint: 'Helyi és szinkronizált ételek, alapanyagok, receptek, aktivitások és katalógusforrások.', backupIncludeFoodDiary: 'Étel napló', backupIncludeFoodDiaryHint: 'Étkezések, aktivitásnaplók és súlynapló.', backupIncludeHealthDiary: 'Egészségügyi napló', backupIncludeHealthDiaryHint: 'Egészségbejegyzések ismétlődési kapcsolatokkal és csatolmányokkal.', backupSelectAtLeastOne: 'Legalább egy backup tartalmi csoportot válassz ki.',
     appPurpose: 'App használati cél', profilePurposeMissing: 'Válassz legalább egy célt.', selectAtLeastOnePurpose: 'Válassz legalább egy célt.', onboardingPurposeIntro: 'Mire szeretnéd használni a Nutrinót? Válassz legalább egy opciót.',
@@ -8669,15 +8679,38 @@ function attachmentTypeLabel(type: string) {
 }
 
 function healthRangeDays(range: HealthAnalysisRangeKey) {
+  if (range === 'custom') return customHealthRangeDays();
   return healthAnalysisRanges.find((item) => item.key === range)?.days ?? null;
 }
 
 function healthRangeLabel(range: HealthAnalysisRangeKey) {
+  if (range === 'custom') return t('customHealthAnalysisRange');
   const option = healthAnalysisRanges.find((item) => item.key === range);
   return t(option?.labelKey || 'allTime');
 }
 
+function customHealthRangeDays() {
+  const amount = Math.max(1, Number(healthCustomRangeAmount.value || 1));
+  const unit = healthCustomRangeUnit.value;
+  if (unit === 'week') return amount * 7;
+  if (unit === 'month') return amount * 30;
+  if (unit === 'year') return amount * 365;
+  return amount;
+}
+
+function customHealthRangeBounds(): { start: number; end: number } | null {
+  const toKey = healthCustomRangeTo.value || dateKey();
+  const end = dayEndMs(toKey);
+  if (healthCustomRangeFrom.value) return { start: dayStartMs(healthCustomRangeFrom.value), end };
+  return { start: end - customHealthRangeDays() * 24 * 60 * 60 * 1000 + 1, end };
+}
+
 function filterHealthEntriesByRange(entries: HealthEntry[], range: HealthAnalysisRangeKey) {
+  if (range === 'custom') {
+    const bounds = customHealthRangeBounds();
+    if (!bounds) return [...entries];
+    return entries.filter((entry) => entry.occurred_at >= bounds.start && entry.occurred_at <= bounds.end);
+  }
   const days = healthRangeDays(range);
   if (!days) return [...entries];
   const start = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -8692,6 +8725,86 @@ function countRecurringHealthEvents(entries: HealthEntry[]) {
 
 function latestHealthEntry(entries: HealthEntry[]) {
   return [...entries].sort((a, b) => b.occurred_at - a.occurred_at)[0] || null;
+}
+
+function healthEventSeries(eventId: string) {
+  return activeHealthEntries.value.filter((entry) => entry.event_id === eventId).sort((a, b) => a.occurred_at - b.occurred_at);
+}
+
+function healthAverageIntervalDays(entries: HealthEntry[]) {
+  const ordered = [...entries].sort((a, b) => a.occurred_at - b.occurred_at);
+  if (ordered.length < 2) return null;
+  const gaps: number[] = [];
+  for (let index = 1; index < ordered.length; index += 1) {
+    const days = (ordered[index].occurred_at - ordered[index - 1].occurred_at) / (24 * 60 * 60 * 1000);
+    if (Number.isFinite(days) && days >= 0) gaps.push(days);
+  }
+  if (!gaps.length) return null;
+  return gaps.reduce((sum, value) => sum + value, 0) / gaps.length;
+}
+
+function healthIntervalLabel(days: number | null) {
+  if (days == null) return t('healthPatternNew');
+  if (days < 1) return t('healthPatternSameDay');
+  return `${t('every')} ${Math.max(1, Math.round(days))} ${t('days')}`;
+}
+
+function healthPatternStatus(totalCount: number, averageDays: number | null) {
+  if (totalCount <= 1) return t('healthPatternNew');
+  if (totalCount <= 2 || (averageDays != null && averageDays > 90)) return t('healthPatternNotFrequent');
+  return t('healthPatternRecurring');
+}
+
+function buildHealthDayInsightRows(entries: HealthEntry[]) {
+  const grouped = new Map<string, HealthEntry[]>();
+  for (const entry of entries) {
+    const rows = grouped.get(entry.event_id) || [];
+    rows.push(entry);
+    grouped.set(entry.event_id, rows);
+  }
+  return [...grouped.entries()].map(([eventId, rows]) => {
+    const orderedToday = [...rows].sort((a, b) => b.occurred_at - a.occurred_at);
+    const series = healthEventSeries(eventId);
+    const firstTodayAt = Math.min(...orderedToday.map((entry) => entry.occurred_at));
+    const previous = [...series].filter((entry) => entry.occurred_at < firstTodayAt).at(-1) || null;
+    const averageDays = healthAverageIntervalDays(series);
+    const event = healthEventEntry(orderedToday[0]);
+    return {
+      eventId,
+      title: event.title,
+      categoryLabel: healthCategoryLabel(event.category),
+      countToday: orderedToday.length,
+      totalCount: series.length,
+      lastAt: orderedToday[0]?.occurred_at || 0,
+      lastBeforeLabel: previous ? formatDateTime(previous.occurred_at) : t('none'),
+      intervalLabel: healthIntervalLabel(averageDays),
+      statusLabel: healthPatternStatus(series.length, averageDays),
+      icon: healthCategoryIcon(event.category),
+    };
+  }).sort((a, b) => b.countToday - a.countToday || b.lastAt - a.lastAt);
+}
+
+function buildHealthDaySummary(entries: HealthEntry[]) {
+  const rows = buildHealthDayInsightRows(entries);
+  return {
+    total: entries.length,
+    events: rows.length,
+    recurring: rows.filter((row) => row.totalCount > 1).length,
+    latest: latestHealthEntry(entries),
+    topTitle: rows[0]?.title || t('none'),
+  };
+}
+
+function healthDayInsightText(entries = currentDayHealthEntries.value) {
+  const summary = buildHealthDaySummary(entries);
+  if (!summary.total) return t('healthNoInsight');
+  if (summary.recurring) return `${summary.total} ${t('healthEntriesToday')}, ${summary.recurring} ${t('healthRecurringToday')}.`;
+  return `${summary.total} ${t('healthEntriesToday')}, ${t('healthPatternNew')}.`;
+}
+
+function scrollToHealthAnalysis() {
+  const element = document.getElementById('health-analysis-section');
+  if (element) element.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function buildHealthAnalysisSummary() {
@@ -8734,6 +8847,37 @@ function buildHealthCategoryChartRows(entries = healthAnalysisEntries.value) {
     }));
 }
 
+function buildHealthWeekdayChartRows(entries = healthAnalysisEntries.value) {
+  const formatter = new Intl.DateTimeFormat(currentLocale(), { weekday: 'short' });
+  const base = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(2024, 0, 1 + index);
+    return { index, label: formatter.format(date), count: 0, percent: 0 };
+  });
+  for (const entry of entries) {
+    const jsDay = new Date(entry.occurred_at).getDay();
+    const mondayIndex = (jsDay + 6) % 7;
+    base[mondayIndex].count += 1;
+  }
+  const max = Math.max(1, ...base.map((row) => row.count));
+  return base.map((row) => ({ ...row, percent: Math.round(row.count / max * 100) }));
+}
+
+function buildHealthTimeOfDayChartRows(entries = healthAnalysisEntries.value) {
+  const buckets = [
+    { key: 'night', label: t('healthTimeNight'), from: 0, to: 6, count: 0, percent: 0 },
+    { key: 'morning', label: t('healthTimeMorning'), from: 6, to: 12, count: 0, percent: 0 },
+    { key: 'afternoon', label: t('healthTimeAfternoon'), from: 12, to: 18, count: 0, percent: 0 },
+    { key: 'evening', label: t('healthTimeEvening'), from: 18, to: 24, count: 0, percent: 0 },
+  ];
+  for (const entry of entries) {
+    const hour = new Date(entry.occurred_at).getHours();
+    const bucket = buckets.find((item) => hour >= item.from && hour < item.to) || buckets[0];
+    bucket.count += 1;
+  }
+  const max = Math.max(1, ...buckets.map((row) => row.count));
+  return buckets.map((row) => ({ ...row, percent: Math.round(row.count / max * 100) }));
+}
+
 function buildHealthPeriodSummaryRows() {
   return healthAnalysisRanges.map((range) => {
     const entries = filterHealthEntriesByRange(activeHealthEntries.value, range.key);
@@ -8750,14 +8894,14 @@ function buildHealthPeriodSummaryRows() {
   });
 }
 
-function buildHealthEventFrequencyRows() {
+function buildHealthEventFrequencyRows(entries = healthAnalysisEntries.value) {
   const byEvent = new Map<string, HealthEntry[]>();
-  for (const entry of activeHealthEntries.value) {
+  for (const entry of entries) {
     const rows = byEvent.get(entry.event_id) || [];
     rows.push(entry);
     byEvent.set(entry.event_id, rows);
   }
-  const total = Math.max(1, activeHealthEntries.value.length);
+  const total = Math.max(1, entries.length);
   return [...byEvent.entries()]
     .map(([eventId, entries], index) => {
       const ordered = [...entries].sort((a, b) => a.occurred_at - b.occurred_at);
@@ -12067,31 +12211,6 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
-      <article v-if="healthDiaryEnabled" class="card home-health-card">
-        <div class="health-summary-head">
-          <span class="health-summary-icon" v-html="lucideSvg('heartPulse')"></span>
-          <div>
-            <h2>{{ t('healthDiary') }}</h2>
-            <p>{{ healthInsightText() }}</p>
-          </div>
-        </div>
-        <div class="health-summary-grid compact-health-summary">
-          <div><span>{{ t('allTime') }}</span><b>{{ healthAnalysisSummary.total }}</b></div>
-          <div><span>{{ t('last30Days') }}</span><b>{{ healthAnalysisSummary.recent }}</b></div>
-          <div><span>{{ t('recurringEvents') }}</span><b>{{ healthAnalysisSummary.recurringEvents }}</b></div>
-        </div>
-        <div v-if="healthEventFrequencyRows.length" class="home-health-mini-list">
-          <button v-for="row in healthEventFrequencyRows.slice(0, 3)" :key="`home-health-${row.eventId}`" type="button" @click="healthSelectedEventId = row.eventId; openHealthDiaryTab()">
-            <span><b>{{ row.title }}</b><small>{{ row.categoryLabel }} · {{ row.last30 }} / {{ t('last30Days') }}</small></span>
-            <i :style="{ width: `${row.percent}%`, background: row.color }"></i>
-          </button>
-        </div>
-        <div class="health-action-row home-health-actions">
-          <button class="outlined-button" type="button" @click="openHealthDiaryTab"><span v-html="lucideSvg('chartPie')"></span>{{ t('healthAnalysis') }}</button>
-          <button class="filled-button" type="button" @click="openNewHealthEntry"><span v-html="lucideSvg('plus')"></span>{{ t('addHealthEntry') }}</button>
-        </div>
-      </article>
-
       <article v-for="section in sections" :key="section.key" class="card meal-card" :data-tour="section.key === 'breakfast' ? 'meal-logging' : undefined">
         <button class="meal-header" @click="section.key === 'activity' ? openActivityAdd() : openFoodAdd(section.key)">
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
@@ -12113,6 +12232,22 @@ function setTab(tab: Tab) {
             <div class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="openDuplicateIntakeTarget(entry)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editIntake(entry)" v-html="lucideSvg('pencil')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeIntake(entry.id)" v-html="lucideSvg('trash2')"></button></div>
           </div>
           <p v-if="!entriesForSection(section).length" class="empty-line">{{ t('noEntries') }}</p>
+        </div>
+      </article>
+      <article v-if="healthDiaryEnabled" class="card meal-card home-health-card">
+        <div class="meal-header home-health-header">
+          <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
+          <span><b>{{ t('healthDiary') }}</b><small>{{ currentDayHealthEntries.length }} {{ t('healthEventsShort') }} · {{ healthDayInsightText() }}</small></span>
+          <span class="home-health-header-actions">
+            <button class="entry-icon-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthDiaryTab" v-html="lucideSvg('chartPie')"></button>
+            <button class="entry-icon-button" type="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click="openNewHealthEntry" v-html="lucideSvg('plus')"></button>
+          </span>
+        </div>
+        <div class="entry-list home-health-entry-list">
+          <div v-for="row in currentDayHealthInsightRows.slice(0, 4)" :key="`home-health-day-${row.eventId}`" class="entry-row health-insight-entry-row">
+            <div><b>{{ row.title }}</b><small>{{ row.countToday }}x {{ t('today') }} · {{ row.statusLabel }} · {{ row.intervalLabel }}</small></div>
+          </div>
+          <p v-if="!currentDayHealthInsightRows.length" class="empty-line">{{ t('noHealthEntries') }}</p>
         </div>
       </article>
     </section>
@@ -12170,7 +12305,7 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
-      <div class="diary-tab-toggle segmented-pill-toggle" :class="{ 'single-option': !healthDiaryEnabled }">
+      <div v-if="healthDiaryEnabled" class="diary-tab-toggle segmented-pill-toggle">
         <button type="button" :class="{ active: diaryTab === 'food' }" @click="diaryTab = 'food'"><span v-html="lucideSvg('utensils')"></span>{{ t('foodDiary') }}</button>
         <button v-if="healthDiaryEnabled" type="button" :class="{ active: diaryTab === 'health' }" @click="diaryTab = 'health'"><span v-html="lucideSvg('heartPulse')"></span>{{ t('healthDiary') }}</button>
       </div>
@@ -12184,7 +12319,7 @@ function setTab(tab: Tab) {
         <div class="diary-date-sticky-actions">
           <button v-if="diaryTab === 'food' && state.settings.show_micronutrients" class="icon-button analysis-open-button" type="button" :aria-label="t('dayMicronutrients')" :title="t('dayMicronutrients')" @click="openDayMicronutrients" v-html="lucideSvg('flaskConical')"></button>
           <button v-if="diaryTab === 'food'" class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="openAnalysis" v-html="lucideSvg('chartPie')"></button>
-          <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('healthAiExport')" :title="t('healthAiExport')" @click="exportHealthAiSummary" v-html="lucideSvg('fileText')"></button>
+          <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="scrollToHealthAnalysis" v-html="lucideSvg('chartPie')"></button>
           <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click="openNewHealthEntry" v-html="lucideSvg('plus')"></button>
           <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('next')" :title="t('next')" @click="moveSelectedDate(1)" v-html="lucideSvg('chevronRight')"></button>
         </div>
@@ -12267,19 +12402,23 @@ function setTab(tab: Tab) {
       </template>
 
       <template v-else-if="healthDiaryEnabled">
-        <article class="card health-summary-card">
-          <div class="health-summary-head">
-            <span class="health-summary-icon" v-html="lucideSvg('heartPulse')"></span>
-            <div>
-              <h2>{{ t('healthDiary') }}</h2>
-              <p>{{ healthInsightText() }}</p>
+        <article class="card health-day-analysis-card">
+          <div class="analysis-card-header compact">
+            <h2>{{ t('healthAnalysis') }}</h2>
+            <small>{{ selectedDate }}</small>
+          </div>
+          <div class="health-summary-grid health-day-summary-grid">
+            <div><span>{{ t('entries') }}</span><b>{{ currentDayHealthSummary.total }}</b></div>
+            <div><span>{{ t('healthEventsShort') }}</span><b>{{ currentDayHealthSummary.events }}</b></div>
+            <div><span>{{ t('recurringEvents') }}</span><b>{{ currentDayHealthSummary.recurring }}</b></div>
+          </div>
+          <div v-if="currentDayHealthInsightRows.length" class="health-day-insight-list">
+            <div v-for="row in currentDayHealthInsightRows" :key="`day-health-${row.eventId}`" class="health-day-insight-row">
+              <span class="health-entry-icon compact" v-html="lucideSvg(row.icon)"></span>
+              <span><b>{{ row.title }}</b><small>{{ row.countToday }}x {{ t('today') }} · {{ row.statusLabel }} · {{ row.intervalLabel }}</small><small>{{ t('lastBefore') }}: {{ row.lastBeforeLabel }}</small></span>
             </div>
           </div>
-          <div class="health-summary-grid">
-            <div><span>{{ t('entries') }}</span><b>{{ healthAnalysisSummary.total }}</b></div>
-            <div><span>{{ t('last30Days') }}</span><b>{{ healthAnalysisSummary.recent }}</b></div>
-            <div><span>{{ t('recurringEvents') }}</span><b>{{ healthAnalysisSummary.recurringEvents }}</b></div>
-          </div>
+          <p v-else class="empty-line">{{ t('noHealthEntries') }}</p>
           <div class="health-action-row">
             <button class="outlined-button" type="button" @click="openHealthRecurrence()"><span v-html="lucideSvg('refreshCw')"></span>{{ t('markAgain') }}</button>
             <button class="filled-button" type="button" @click="openNewHealthEntry"><span v-html="lucideSvg('plus')"></span>{{ t('addHealthEntry') }}</button>
@@ -12293,7 +12432,36 @@ function setTab(tab: Tab) {
           </div>
         </article>
 
-        <article class="card health-analysis-card">
+        <article v-if="!selectedDayUnlocked" class="card day-edit-card">
+          <div>
+            <b>{{ t('lockedNote') }}</b>
+            <small>{{ t('selectedDayHealthNote') }}</small>
+          </div>
+          <button class="outlined-button unlock-button" @click="unlockSelectedDay"><span v-html="lucideSvg('lockOpen')"></span>{{ t('unlockDay') }}</button>
+        </article>
+
+        <article v-for="entry in filteredHealthEntries" :key="entry.id" class="card health-entry-card">
+          <div class="health-entry-main">
+            <span class="health-entry-icon" v-html="lucideSvg(healthCategoryIcon(entry.category))"></span>
+            <div>
+              <div class="health-entry-title-line"><h3>{{ entry.title }}</h3><span>{{ healthCategoryLabel(entry.category) }}</span></div>
+              <p>{{ entry.description }}</p>
+              <small>{{ healthEntrySubtitle(entry) }}</small>
+              <small v-if="entry.notes">{{ entry.notes }}</small>
+              <div v-if="entry.attachments.length" class="health-attachment-strip">
+                <span v-for="attachment in entry.attachments" :key="attachment.id" class="health-attachment-chip"><i v-html="lucideSvg(attachment.type === 'video' ? 'video' : 'camera')"></i>{{ attachment.name }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-if="selectedDayUnlocked" class="health-entry-actions">
+            <button class="entry-icon-button" type="button" :aria-label="t('markAgain')" :title="t('markAgain')" @click="openHealthRecurrence(entry)" v-html="lucideSvg('refreshCw')"></button>
+            <button class="entry-icon-button" type="button" :aria-label="t('duplicate')" :title="t('duplicate')" @click="duplicateHealthEntry(entry)" v-html="lucideSvg('copy')"></button>
+            <button class="entry-icon-button" type="button" :aria-label="t('edit')" :title="t('edit')" @click="editHealthEntry(entry)" v-html="lucideSvg('pencil')"></button>
+            <button class="entry-icon-button danger" type="button" :aria-label="t('delete')" :title="t('delete')" @click="removeHealthEntry(entry.id)" v-html="lucideSvg('trash2')"></button>
+          </div>
+        </article>
+        <p v-if="!filteredHealthEntries.length" class="empty-card">{{ healthSearch ? t('noHealthSearchResults') : t('noHealthEntries') }}</p>
+        <article id="health-analysis-section" class="card health-analysis-card">
           <div class="analysis-card-header compact">
             <h2>{{ t('healthAnalysis') }}</h2>
             <button class="text-button" type="button" @click="exportHealthAiSummary"><span v-html="lucideSvg('fileText')"></span>{{ t('healthAiExport') }}</button>
@@ -12304,8 +12472,20 @@ function setTab(tab: Tab) {
               <b>{{ row.entries }}</b>
               <small>{{ row.events }} {{ t('healthEventsShort') }} · {{ row.recurring }} {{ t('recurringEvents') }}</small>
             </button>
+            <button type="button" class="health-period-card" :class="{ active: healthAnalysisRange === 'custom' }" @click="healthAnalysisRange = 'custom'">
+              <span>{{ t('customHealthAnalysisRange') }}</span>
+              <b>{{ healthAnalysisEntries.length }}</b>
+              <small>{{ t('customDateTime') }}</small>
+            </button>
+          </div>
+          <div v-if="healthAnalysisRange === 'custom'" class="health-custom-range-card">
+            <label><span>{{ t('last') }}</span><input v-model.number="healthCustomRangeAmount" class="input" type="number" min="1" step="1" inputmode="numeric" /></label>
+            <label><span>{{ t('healthRangeUnit') }}</span><select v-model="healthCustomRangeUnit" class="input"><option value="day">{{ t('days') }}</option><option value="week">{{ t('weeks') }}</option><option value="month">{{ t('months') }}</option><option value="year">{{ t('years') }}</option></select></label>
+            <label><span>{{ t('from') }}</span><input v-model="healthCustomRangeFrom" class="input" type="date" /></label>
+            <label><span>{{ t('to') }}</span><input v-model="healthCustomRangeTo" class="input" type="date" /></label>
           </div>
           <p class="helper health-analysis-window-copy">{{ t('healthAnalysisWindow') }}: {{ healthRangeLabel(healthAnalysisRange) }}</p>
+          <p class="helper big health-clinical-note">{{ t('healthClinicalAnalysisNote') }}</p>
           <div v-if="healthCategoryChartRows.length" class="health-bar-list">
             <div v-for="row in healthCategoryChartRows" :key="`health-category-${row.category}`" class="health-bar-row">
               <span class="health-bar-label"><i :style="{ background: row.color }"></i>{{ row.label }}</span>
@@ -12314,6 +12494,22 @@ function setTab(tab: Tab) {
             </div>
           </div>
           <p v-else class="empty-line">{{ t('noHealthEntries') }}</p>
+          <div v-if="healthAnalysisEntries.length" class="health-event-trend-card">
+            <div class="health-frequency-head"><h3>{{ t('healthWeekdayPattern') }}</h3><small>{{ t('healthAnalysisWindow') }}</small></div>
+            <div class="health-trend-bars health-weekday-bars">
+              <div v-for="row in healthWeekdayChartRows" :key="`weekday-${row.index}`" class="health-trend-bar">
+                <span><i :style="{ height: `${Math.max(4, row.percent)}%` }"></i></span>
+                <b>{{ row.count }}</b>
+                <small>{{ row.label }}</small>
+              </div>
+            </div>
+          </div>
+          <div v-if="healthAnalysisEntries.length" class="health-event-trend-card">
+            <div class="health-frequency-head"><h3>{{ t('healthTimeOfDayPattern') }}</h3><small>{{ t('healthAnalysisWindow') }}</small></div>
+            <div class="health-time-grid">
+              <div v-for="row in healthTimeOfDayChartRows" :key="row.key" class="health-time-card"><span>{{ row.label }}</span><b>{{ row.count }}</b><i :style="{ width: `${Math.max(4, row.percent)}%` }"></i></div>
+            </div>
+          </div>
           <div v-if="healthEventFrequencyRows.length" class="health-frequency-panel">
             <div class="health-frequency-head">
               <h3>{{ t('healthEventFrequency') }}</h3>
@@ -12350,36 +12546,6 @@ function setTab(tab: Tab) {
             </button>
           </div>
         </article>
-
-        <article v-if="!selectedDayUnlocked" class="card day-edit-card">
-          <div>
-            <b>{{ t('lockedNote') }}</b>
-            <small>{{ t('selectedDayHealthNote') }}</small>
-          </div>
-          <button class="outlined-button unlock-button" @click="unlockSelectedDay"><span v-html="lucideSvg('lockOpen')"></span>{{ t('unlockDay') }}</button>
-        </article>
-
-        <article v-for="entry in filteredHealthEntries" :key="entry.id" class="card health-entry-card">
-          <div class="health-entry-main">
-            <span class="health-entry-icon" v-html="lucideSvg(healthCategoryIcon(entry.category))"></span>
-            <div>
-              <div class="health-entry-title-line"><h3>{{ entry.title }}</h3><span>{{ healthCategoryLabel(entry.category) }}</span></div>
-              <p>{{ entry.description }}</p>
-              <small>{{ healthEntrySubtitle(entry) }}</small>
-              <small v-if="entry.notes">{{ entry.notes }}</small>
-              <div v-if="entry.attachments.length" class="health-attachment-strip">
-                <span v-for="attachment in entry.attachments" :key="attachment.id" class="health-attachment-chip"><i v-html="lucideSvg(attachment.type === 'video' ? 'video' : 'camera')"></i>{{ attachment.name }}</span>
-              </div>
-            </div>
-          </div>
-          <div v-if="selectedDayUnlocked" class="health-entry-actions">
-            <button class="entry-icon-button" type="button" :aria-label="t('markAgain')" :title="t('markAgain')" @click="openHealthRecurrence(entry)" v-html="lucideSvg('refreshCw')"></button>
-            <button class="entry-icon-button" type="button" :aria-label="t('duplicate')" :title="t('duplicate')" @click="duplicateHealthEntry(entry)" v-html="lucideSvg('copy')"></button>
-            <button class="entry-icon-button" type="button" :aria-label="t('edit')" :title="t('edit')" @click="editHealthEntry(entry)" v-html="lucideSvg('pencil')"></button>
-            <button class="entry-icon-button danger" type="button" :aria-label="t('delete')" :title="t('delete')" @click="removeHealthEntry(entry.id)" v-html="lucideSvg('trash2')"></button>
-          </div>
-        </article>
-        <p v-if="!filteredHealthEntries.length" class="empty-card">{{ healthSearch ? t('noHealthSearchResults') : t('noHealthEntries') }}</p>
       </template>
     </section>
 
