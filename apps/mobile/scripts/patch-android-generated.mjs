@@ -906,6 +906,13 @@ class MainActivity : TauriActivity() {
         }
 
         @JavascriptInterface
+        fun openAppPermissionSettings() {
+            activity.runOnUiThread {
+                activity.openAppPermissionSettings()
+            }
+        }
+
+        @JavascriptInterface
         fun installUpdateApk(downloadUrl: String?, assetName: String?) {
             activity.runOnUiThread {
                 activity.installUpdateApk(downloadUrl, assetName)
@@ -1023,6 +1030,14 @@ class MainActivity : TauriActivity() {
             }
             startActivity(intent)
         }
+    }
+
+    private fun openAppPermissionSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:" + packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
     }
 
     private fun notifyInstallerError(message: String) {

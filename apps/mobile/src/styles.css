@@ -3946,3 +3946,156 @@ select:focus {
     height: 38px;
   }
 }
+
+/* v0.12.18 update and permission UI polish */
+.app-logo-update-button {
+  overflow: visible;
+}
+.app-logo-mark-content {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.app-logo-mark-content svg {
+  width: 100% !important;
+  height: 100% !important;
+}
+.app-logo-update-button.update-available::after {
+  content: none !important;
+}
+.app-logo-update-icon {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  border: 2px solid var(--surface);
+  box-shadow: 0 6px 12px color-mix(in srgb, #000 18%, transparent);
+}
+.app-logo-update-icon svg,
+.appbar-update-chip svg,
+.app-update-status-icon svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+}
+.appbar-update-chip span {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 0;
+  background: transparent;
+}
+.info-button,
+.update-install-info-button,
+.micronutrient-dialog-title .info-button,
+.analysis-card-header .info-button {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: var(--primary) !important;
+  box-shadow: none !important;
+}
+.info-button:active,
+.info-button:focus-visible,
+.info-button:hover {
+  background: color-mix(in srgb, var(--primary) 8%, transparent) !important;
+  color: var(--primary) !important;
+}
+.dialog-title-row,
+.update-dialog-title-row {
+  align-items: flex-start;
+}
+.dialog-title-row h2,
+.update-dialog-title-copy h2 {
+  margin-bottom: 0;
+  line-height: 1.15;
+}
+.dialog-title-actions {
+  align-self: flex-start;
+  min-height: 36px;
+  padding-top: 0;
+}
+.update-dialog-title-copy {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.update-dialog .update-release-copy {
+  margin: 0;
+  font-size: .94rem;
+}
+.update-dialog .update-release-copy small {
+  margin-top: 2px;
+  font-weight: 500;
+}
+.app-update-status-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--on-surface-variant);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
+}
+.app-update-status-card.attention .app-update-status-icon {
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--outline-variant));
+}
+.app-update-status-card.latest .app-update-status-icon {
+  background: color-mix(in srgb, #34c759 10%, var(--surface));
+  color: #16833a;
+  border-color: color-mix(in srgb, #34c759 28%, var(--outline-variant));
+}
+.app-update-status-orb {
+  display: none !important;
+}
+.settings-row.update-settings-entry.attention,
+.settings-row.dev-only-settings-row {
+  align-items: center;
+  row-gap: 2px;
+  min-height: 72px;
+  padding-block: 12px;
+}
+.settings-row.update-settings-entry.attention small,
+.settings-row.dev-only-settings-row small {
+  margin-top: 0 !important;
+  align-self: start;
+}
+.settings-section-label {
+  padding-top: 18px;
+  padding-bottom: 8px;
+}
+.permission-management-hint {
+  margin: 12px 0 0;
+}
+.permission-dialog-actions {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 10px !important;
+}
+.source-choice-card-simple {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+@media (max-width: 420px) {
+  .dialog-title-actions .info-button,
+  .dialog-title-actions .dialog-close-icon {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+  }
+  .settings-dialog {
+    padding-top: 22px;
+  }
+  .source-choice-card-simple {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}

@@ -2128,3 +2128,103 @@ body:has(.modal-backdrop) {
   background: var(--primary-container, #C8F7C5) !important;
   color: #0F1F11 !important;
 }
+
+/* v0.12.18 desktop update dialog and hover polish */
+.desktop-update-status-icon,
+.desktop-update-modal-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--desktop-surface-2, #1d271d) 78%, transparent);
+  color: var(--desktop-muted, #B8C4B5);
+  border: 1px solid color-mix(in srgb, var(--outline, #dfe8df) 22%, transparent);
+}
+.desktop-update-status-icon svg,
+.desktop-update-modal-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+}
+.desktop-update-status-card.attention .desktop-update-status-icon,
+.desktop-update-modal-icon {
+  background: color-mix(in srgb, #2196f3 14%, var(--desktop-surface-2, #1d271d));
+  color: #78b9ff;
+  border-color: color-mix(in srgb, #2196f3 34%, transparent);
+}
+.desktop-update-status-card.latest .desktop-update-status-icon {
+  background: color-mix(in srgb, #34c759 12%, var(--desktop-surface-2, #1d271d));
+  color: #80e89f;
+  border-color: color-mix(in srgb, #34c759 30%, transparent);
+}
+.desktop-update-status-orb {
+  display: none !important;
+}
+.desktop-update-modal {
+  width: min(560px, calc(100vw - 36px));
+  padding: 0;
+  overflow: hidden;
+}
+.desktop-update-modal-head {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem;
+  padding: 1.35rem 1.45rem 1.1rem;
+}
+.desktop-update-modal-copy {
+  min-width: 0;
+  display: grid;
+  gap: .45rem;
+}
+.desktop-update-modal-copy .modal-kicker,
+.desktop-update-modal-copy h2,
+.desktop-update-modal-copy p {
+  margin: 0;
+}
+.desktop-update-modal-copy h2 {
+  line-height: 1.15;
+}
+.desktop-update-modal-copy .update-release-copy {
+  margin-top: .15rem;
+  color: var(--desktop-muted, #B8C4B5);
+}
+.desktop-update-modal-copy .update-release-copy small {
+  margin-top: .3rem;
+  opacity: .78;
+  font-size: .84rem;
+}
+.desktop-update-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: .75rem;
+  padding: 1rem 1.45rem 1.35rem;
+  border-top: 1px solid color-mix(in srgb, var(--outline, #dfe8df) 14%, transparent);
+  background: color-mix(in srgb, var(--desktop-surface-2, #1d271d) 54%, transparent);
+}
+.desktop-update-chip:hover:not(:disabled),
+.desktop-update-chip:focus-visible {
+  background: color-mix(in srgb, #2196f3 18%, var(--desktop-surface-2, #1d271d)) !important;
+  color: #d9ecff !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #2196f3 34%, transparent) !important;
+}
+.desktop-update-chip:hover:not(:disabled) *,
+.desktop-update-chip:focus-visible * {
+  color: #d9ecff !important;
+}
+.desktop-update-status-card:hover,
+.desktop-update-status-card:hover * {
+  color: inherit !important;
+}
+@media (max-width: 640px) {
+  .desktop-update-modal-head {
+    grid-template-columns: 1fr;
+  }
+  .desktop-update-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}

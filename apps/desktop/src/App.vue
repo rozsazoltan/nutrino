@@ -7241,7 +7241,7 @@ onBeforeUnmount(() => {
               </div>
               <article class="desktop-update-settings-panel">
                 <div class="desktop-update-status-card" :class="{ attention: updateAvailable, latest: updateCheckResult?.status === 'latest' }">
-                  <span class="desktop-update-status-orb"></span>
+                  <span class="desktop-update-status-icon" v-html="icon(updateAvailable ? 'download' : 'refreshCw')"></span>
                   <div>
                     <b>{{ updateAvailable ? updateReleaseTitle(updateCheckResult) : updateCheckResult?.status === 'latest' ? t('ui.latestInstalled') : t('ui.appUpdates') }}</b>
                     <small>{{ updateAvailable ? updateReleaseBody(updateCheckResult) : `${t('ui.versionLabel')} ${appVersion}` }}</small>
@@ -7367,11 +7367,12 @@ onBeforeUnmount(() => {
 
     <Teleport to="body">
       <div v-if="updateDialogOpen && updateCheckResult?.release" class="modal-backdrop" @click.self="remindUpdateLater">
-        <section class="modal-card update-modal">
-          <div class="modal-title-row">
-            <div><p class="modal-kicker">{{ t('ui.appUpdates') }}</p><h2>{{ updateReleaseTitle() }}</h2><p class="muted update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p></div>
+        <section class="modal-card update-modal desktop-update-modal">
+          <div class="desktop-update-modal-head">
+            <span class="desktop-update-modal-icon" v-html="icon('download')"></span>
+            <div class="desktop-update-modal-copy"><p class="modal-kicker">{{ t('ui.appUpdates') }}</p><h2>{{ updateReleaseTitle() }}</h2><p class="muted update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p></div>
           </div>
-          <div class="dialog-actions">
+          <div class="dialog-actions desktop-update-modal-actions">
             <button class="btn-secondary" type="button" @click="remindUpdateLater">{{ t('ui.remindLater') }}</button>
             <button class="btn-primary" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('ui.checkingUpdates') : t('ui.installUpdate') }}</button>
           </div>

@@ -6901,7 +6901,7 @@ const mobileUpdateAndSourceTranslations: Record<string, Partial<Record<string, s
     updateInstallerStarted: 'Opening the update installer.',
     androidUpdateInstallerStarted: 'Android opened the update installer. Confirm installation to finish.',
     androidInstallPermissionRequired: 'Allow app installs for Nutrino. The update will continue when you return.',
-    updateInstallConsentInfo: 'Nutrino does not install any external apps. Every app installation requires your confirmation. The software is open source, so you can review the source code yourself. This permission is used only to install Nutrino updates.',
+    updateInstallConsentInfo: 'Nutrino does not install any external apps. Every app installation requires your confirmation. The software is open source, so you can review the source code yourself. This permission is used only to install Nutrino updates.', openSystemPermissionSettings: 'Open system permission settings', permissionManagementHint: 'To revoke permissions, open the system app settings and turn off the permission there.',
     connectionDetails: 'Connection details',
     catalogSourceDetails: 'CSV source details',
     updateInstallerFailed: 'Could not start update installation',
@@ -6937,6 +6937,8 @@ const mobileUpdateAndSourceTranslations: Record<string, Partial<Record<string, s
     androidUpdateInstallerStarted: 'Az Android megnyitotta a frissítés telepítőjét. Erősítsd meg a telepítést.',
     androidInstallPermissionRequired: 'Engedélyezd a Nutrino apptelepítést. Visszatéréskor folytatódik a frissítés.',
     updateInstallConsentInfo: 'A Nutrino nem telepít semmilyen külső alkalmazást. Minden apptelepítéshez felhasználói jóváhagyás szükséges. A szoftver open source, a forrást te is átnézheted. Ez az engedély kizárólag a Nutrino frissítéséhez szükséges.',
+    openSystemPermissionSettings: 'Rendszer engedélybeállítások megnyitása',
+    permissionManagementHint: 'Engedélyek visszavonásához nyisd meg a rendszer appbeállításait, és ott kapcsold ki az adott engedélyt.',
     connectionDetails: 'Kapcsolat részletei',
     catalogSourceDetails: 'CSV forrás részletei',
     updateInstallerFailed: 'Nem sikerült elindítani a frissítés telepítését',
@@ -8956,6 +8958,19 @@ function appPermissionSummary(): string {
 function openPermissionsSettings() {
   settingsDialog.value = 'permissions';
   void refreshAppPermissionStatuses();
+}
+
+async function openPermissionManagementSettings() {
+  const androidInstaller = (window as any).NutrinoAndroidInstaller;
+  try {
+    if (isAndroidRuntime() && typeof androidInstaller?.openAppPermissionSettings === 'function') {
+      androidInstaller.openAppPermissionSettings();
+      return;
+    }
+    await openExternalUrl(isIosRuntime() ? 'app-settings:' : 'app-settings:');
+  } catch {
+    showToast(t('openSystemPermissionSettings'));
+  }
 }
 
 async function ensureNotificationPermissionForReminders() {
@@ -11198,7 +11213,7 @@ function setTab(tab: Tab) {
   <main class="app-shell" :class="[homeShellToneClass, { 'page-scrolled': contentScrolled }]">
     <header class="top-appbar">
       <div class="brand-lockup">
-        <button class="app-logo-mark app-logo-update-button" :class="{ 'update-available': updateAvailable }" type="button" :aria-label="t('checkUpdates')" :title="t('checkUpdates')" @click="openUpdateCenter" v-html="nutrinoLogoSvg"></button>
+        <button class="app-logo-mark app-logo-update-button" :class="{ 'update-available': updateAvailable }" type="button" :aria-label="t('checkUpdates')" :title="t('checkUpdates')" @click="openUpdateCenter"><span class="app-logo-mark-content" v-html="nutrinoLogoSvg"></span><span v-if="updateAvailable" class="app-logo-update-icon" v-html="lucideSvg('refreshCw')"></span></button>
         <div>
           <small>nutrino<span v-if="appChannel === 'dev'" class="brand-channel-suffix"> · dev</span></small>
           <h1>{{ pageTitle() }}</h1>
@@ -11209,7 +11224,7 @@ function setTab(tab: Tab) {
           <span class="sync-dot" :class="serverOnline ? '' : githubCatalogAvailable ? 'available' : 'offline'"></span>
           {{ syncBusy ? t('syncing') : serverOnline ? t('online') : githubCatalogAvailable ? t('available') : t('offline') }}
         </button>
-        <button v-if="updateAvailable" class="appbar-update-chip" type="button" :aria-label="updateReleaseTitle()" :title="updateReleaseTitle()" @click="openUpdateCenter"><span></span>{{ updateCheckResult?.release?.version }}</button>
+        <button v-if="updateAvailable" class="appbar-update-chip" type="button" :aria-label="updateReleaseTitle()" :title="updateReleaseTitle()" @click="openUpdateCenter"><span v-html="lucideSvg('refreshCw')"></span>{{ updateCheckResult?.release?.version }}</button>
         <button class="settings-button" data-tour="settings" :aria-label="t('settings')" @click="openSettings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8.4 8.4 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A8.4 8.4 0 0 0 7 6L4.6 5 2.6 8.5l2 1.5a8.8 8.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a8.4 8.4 0 0 0 2.6 1.5L10 22h4l.4-2.5A8.4 8.4 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/></svg>
         </button>
@@ -12043,15 +12058,17 @@ function setTab(tab: Tab) {
     <Teleport to="body">
       <div v-if="updateDialogOpen && updateCheckResult?.release" class="dialog-backdrop app-overlay" @click.self="remindUpdateLater">
         <article class="settings-dialog update-dialog">
-          <div class="dialog-title-row">
-            <h2>{{ updateReleaseTitle() }}</h2>
+          <div class="dialog-title-row update-dialog-title-row">
+            <div class="update-dialog-title-copy">
+              <h2>{{ updateReleaseTitle() }}</h2>
+              <p class="helper update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p>
+            </div>
             <span class="dialog-title-actions">
               <button class="info-button update-install-info-button" type="button" :aria-label="t('appUpdates')" @click="updateInstallInfoOpen = !updateInstallInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button>
               <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="remindUpdateLater" v-html="lucideSvg('x')"></button>
             </span>
           </div>
           <p v-if="updateInstallInfoOpen" class="helper big update-install-note">{{ t('updateInstallConsentInfo') }}</p>
-          <p class="helper big update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p>
           <div class="dialog-actions app-update-dialog-actions">
             <button class="filled-button wide" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('checkingUpdates') : t('installUpdate') }}</button>
             <button class="text-button wide" type="button" @click="remindUpdateLater">{{ t('remindLater') }}</button>
@@ -12114,14 +12131,15 @@ function setTab(tab: Tab) {
                 <button v-if="!cameraPermissionGranted && cameraPermission !== 'unsupported'" class="text-button" type="button" @click="requestCameraPermission">{{ t('requestCameraPermission') }}</button>
               </article>
             </div>
-            <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button class="filled-button" type="button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button></div>
+            <p class="helper big permission-management-hint">{{ t('permissionManagementHint') }}</p>
+            <div class="dialog-actions permission-dialog-actions"><button class="outlined-button wide" type="button" @click="openPermissionManagementSettings">{{ t('openSystemPermissionSettings') }}</button><button class="filled-button wide" type="button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'updates'">
             <div class="dialog-title-row"><h2>{{ t('appUpdates') }}</h2><span class="dialog-title-actions"><button class="info-button update-install-info-button" type="button" :aria-label="t('appUpdates')" @click="updateInstallInfoOpen = !updateInstallInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></span></div>
             <p v-if="updateInstallInfoOpen" class="helper big update-install-note">{{ t('updateInstallConsentInfo') }}</p>
             <section class="app-update-settings-panel">
               <article class="app-update-status-card" :class="{ attention: updateAvailable, latest: updateCheckResult?.status === 'latest' }">
-                <span class="app-update-status-orb"></span>
+                <span class="app-update-status-icon" v-html="lucideSvg(updateAvailable ? 'download' : 'refreshCw')"></span>
                 <div>
                   <b>{{ updateAvailable ? updateReleaseTitle(updateCheckResult) : updateCheckResult?.status === 'latest' ? t('latestInstalled') : t('appUpdates') }}</b>
                   <small>{{ updateAvailable ? updateReleaseBody(updateCheckResult) : `${t('version')} ${appVersion}` }}</small>
@@ -12329,8 +12347,8 @@ function setTab(tab: Tab) {
           <h3>{{ t('syncPreferences') }}</h3>
           <p class="helper big">{{ t('syncPreferencesBody') }}</p>
           <div class="source-choice-list">
-            <label class="source-choice-card"><span class="source-choice-icon" v-html="settingsIcon('api')"></span><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
-            <label class="source-choice-card"><span class="source-choice-icon" v-html="settingsIcon('github')"></span><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
+            <label class="source-choice-card source-choice-card-simple"><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
+            <label class="source-choice-card source-choice-card-simple"><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
           </div>
         </div>
         <div v-else class="onboarding-permissions">
