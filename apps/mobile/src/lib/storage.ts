@@ -7,6 +7,7 @@ import type {
   Food,
   Ingredient,
   Gender,
+  HealthEntry,
   Intake,
   PairingConfig,
   AppChannel,
@@ -106,6 +107,7 @@ export function defaultSettings(): AppSettings {
     show_activity_tracking: true,
     show_meal_macros: true,
     show_micronutrients: false,
+    health_diary_enabled: false,
     protect_external_catalog_items: true,
     include_inactive_catalog_items: false,
     micronutrient_limits: { ...DEFAULT_MICRONUTRIENT_LIMITS },
@@ -132,6 +134,7 @@ export function defaultSettings(): AppSettings {
 
 export function defaultProfile(): UserProfile {
   return {
+    id: generateId('profile'),
     height_cm: 175,
     current_weight_kg: 80,
     birthday: '1990-01-01',
@@ -139,6 +142,7 @@ export function defaultProfile(): UserProfile {
     activity_level: 'low_active',
     weekly_goal_kg: -0.5,
     plan_start_weight_kg: 80,
+    usage_purposes: [],
     last_weight_prompt_at: 0,
   };
 }
@@ -156,8 +160,27 @@ export function defaultState(): AppState {
     intakes: [],
     activityLogs: [],
     weightLogs: [],
+    healthEntries: [],
     catalogAliases: [],
     githubSources: [],
+  };
+}
+
+function normalizeHealthEntry(entry: HealthEntry): HealthEntry {
+  return {
+    ...entry,
+    profile_id: String(entry.profile_id || ''),
+    event_id: String(entry.event_id || entry.id),
+    recurrence_of_id: entry.recurrence_of_id ?? null,
+    title: String(entry.title || ''),
+    description: String(entry.description || ''),
+    occurred_at: Number(entry.occurred_at || entry.created_at || Date.now()),
+    category: entry.category || 'other',
+    notes: entry.notes ?? null,
+    attachments: Array.isArray(entry.attachments) ? entry.attachments : [],
+    created_at: Number(entry.created_at || Date.now()),
+    updated_at: Number(entry.updated_at || entry.created_at || Date.now()),
+    deleted_at: entry.deleted_at ?? null,
   };
 }
 
@@ -197,6 +220,7 @@ export function loadState(): AppState {
       meal_reminders_enabled: storedSettings.meal_reminders_enabled === true,
       calorie_deficit_enabled: storedSettings.calorie_deficit_enabled === true,
       calorie_limit_warning_enabled: storedSettings.calorie_limit_warning_enabled === true,
+      health_diary_enabled: storedSettings.health_diary_enabled === true,
       protect_external_catalog_items: storedSettings.protect_external_catalog_items !== false,
       include_inactive_catalog_items: storedSettings.include_inactive_catalog_items === true,
       target_deficit_kcal: Number.isFinite(Number(storedSettings.target_deficit_kcal)) ? Number(storedSettings.target_deficit_kcal) : defaults.settings.target_deficit_kcal,
@@ -222,7 +246,9 @@ export function loadState(): AppState {
       profile: {
         ...defaults.profile,
         ...storedProfile,
+        id: storedProfile.id || defaults.profile.id,
         plan_start_weight_kg: storedProfile.plan_start_weight_kg || storedProfile.current_weight_kg || defaults.profile.current_weight_kg,
+        usage_purposes: Array.isArray(storedProfile.usage_purposes) ? storedProfile.usage_purposes : defaults.profile.usage_purposes,
       },
       foods,
       ingredients,
@@ -232,6 +258,7 @@ export function loadState(): AppState {
       intakes: Array.isArray(parsed.intakes) ? parsed.intakes : [],
       activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
       weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
+      healthEntries: Array.isArray((parsed as any).healthEntries) ? ((parsed as any).healthEntries as HealthEntry[]).map(normalizeHealthEntry) : [],
       catalogAliases: Array.isArray(parsed.catalogAliases) ? parsed.catalogAliases : [],
       githubSources: Array.isArray(parsed.githubSources) ? parsed.githubSources.map(normalizeGitHubSource).filter(Boolean) as GitHubCsvSource[] : [],
     };

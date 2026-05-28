@@ -10,6 +10,9 @@ export type AppChannel = 'dev' | 'stable';
 export type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 export type FoodCatalogKind = 'food' | 'ingredient';
 export type CatalogSourceKind = 'desktop' | 'github' | 'custom' | 'qr';
+export type ProfilePurpose = 'weight_loss' | 'weight_gain' | 'healthy_eating' | 'meal_logging' | 'health_issue_logging';
+export type HealthCategoryType = 'pain' | 'digestive' | 'stool' | 'skin' | 'respiratory' | 'sleep' | 'mood' | 'injury' | 'energy' | 'other';
+export type HealthAttachmentType = 'photo' | 'video';
 
 export interface CatalogItemMetadata {
   catalog_source_kind?: CatalogSourceKind | null;
@@ -77,6 +80,7 @@ export interface PairingConfig {
 
 
 export interface UserProfile {
+  id: string;
   height_cm: number;
   current_weight_kg: number;
   birthday: string;
@@ -84,7 +88,34 @@ export interface UserProfile {
   activity_level: ActivityLevel;
   weekly_goal_kg: number;
   plan_start_weight_kg: number;
+  usage_purposes: ProfilePurpose[];
   last_weight_prompt_at?: number;
+}
+
+export interface HealthAttachment {
+  id: string;
+  type: HealthAttachmentType;
+  name: string;
+  mime_type: string;
+  size: number;
+  data_url: string;
+  created_at: number;
+}
+
+export interface HealthEntry {
+  id: string;
+  profile_id: string;
+  event_id: string;
+  recurrence_of_id?: string | null;
+  title: string;
+  description: string;
+  occurred_at: number;
+  category: HealthCategoryType;
+  notes?: string | null;
+  attachments: HealthAttachment[];
+  created_at: number;
+  updated_at: number;
+  deleted_at?: number | null;
 }
 
 export interface Food extends CatalogItemMetadata {
@@ -276,6 +307,7 @@ export interface AppSettings {
   show_activity_tracking: boolean;
   show_meal_macros: boolean;
   show_micronutrients: boolean;
+  health_diary_enabled: boolean;
   protect_external_catalog_items: boolean;
   include_inactive_catalog_items: boolean;
   micronutrient_limits: Record<string, number>;
@@ -311,6 +343,7 @@ export interface AppState {
   intakes: Intake[];
   activityLogs: ActivityLog[];
   weightLogs: WeightLog[];
+  healthEntries: HealthEntry[];
   catalogAliases: CatalogAlias[];
   githubSources: GitHubCsvSource[];
 }
