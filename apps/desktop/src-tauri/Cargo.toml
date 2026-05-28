@@ -28,7 +28,10 @@ axum = "0.8"
 tower-http = { version = "0.6", features = ["cors"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
+
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

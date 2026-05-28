@@ -107,6 +107,55 @@ const targetValues = args.flatMap((arg, index) => (arg === '--target' && args[in
 const keystorePropertiesPath = path.join(androidDir, 'keystore.properties');
 const androidEnv = cleanEnv(channel);
 
+function envValue(...names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value && String(value).trim()) return String(value).trim();
+  }
+  return '';
+}
+
+function escapePropertiesValue(value) {
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
+}
+
+function materializeReleaseKeystoreFromEnv() {
+  if (config.channel !== 'stable' || isDebugBuild) return false;
+  if (fs.existsSync(keystorePropertiesPath)) return false;
+
+  const storeBase64 = envValue('NUTRINO_ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_BASE64');
+  const storePassword = envValue('NUTRINO_ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEYSTORE_PASSWORD');
+  const keyAlias = envValue('NUTRINO_ANDROID_KEY_ALIAS', 'ANDROID_KEY_ALIAS');
+  const keyPassword = envValue('NUTRINO_ANDROID_KEY_PASSWORD', 'ANDROID_KEY_PASSWORD') || storePassword;
+  const provided = [storeBase64, storePassword, keyAlias, keyPassword].some(Boolean);
+
+  if (!provided) return false;
+  if (!storeBase64 || !storePassword || !keyAlias || !keyPassword) {
+    console.error('\nAndroid release signing is partially configured.');
+    console.error('Set NUTRINO_ANDROID_KEYSTORE_BASE64, NUTRINO_ANDROID_KEYSTORE_PASSWORD, NUTRINO_ANDROID_KEY_ALIAS and NUTRINO_ANDROID_KEY_PASSWORD, or remove all of them to use the local debug fallback.');
+    process.exit(1);
+  }
+
+  const keystoreFileName = 'nutrino-release-keystore.jks';
+  const keystorePath = path.join(androidDir, keystoreFileName);
+  fs.mkdirSync(androidDir, { recursive: true });
+  fs.writeFileSync(keystorePath, Buffer.from(storeBase64, 'base64'));
+  fs.writeFileSync(keystorePropertiesPath, [
+    `storeFile=${keystoreFileName}`,
+    `storePassword=${escapePropertiesValue(storePassword)}`,
+    `keyAlias=${escapePropertiesValue(keyAlias)}`,
+    `keyPassword=${escapePropertiesValue(keyPassword)}`,
+    '',
+  ].join('\n'));
+  console.log('Android release signing: keystore.properties created from environment secrets.');
+  return true;
+}
+
+const envKeystoreCreated = materializeReleaseKeystoreFromEnv();
+
 console.log(isDebugBuild
   ? 'Debug APK build: fast and installable for development, but larger than release.'
   : 'Release build: optimized for size. A real keystore is recommended for distribution.');
@@ -117,7 +166,10 @@ console.log('Use root commands: pnpm dev:android for live Vite development or pn
 if (isApkBuild && !isDebugBuild && !fs.existsSync(keystorePropertiesPath)) {
   console.warn('\nWarning: no src-tauri/gen/android/keystore.properties file found.');
   console.warn('Nutrino will sign the local release APK with Android debug signing as a sideload fallback.');
+  console.warn('GitHub release APKs built this way may not install over an older stable app because Android requires the same signing key for updates.');
   console.warn('Configure keystore.properties before publishing to a store.\n');
+} else if (envKeystoreCreated) {
+  console.log('Stable sideload updates will keep the same Android signing identity when the same secrets are reused.');
 }
 console.log('');
 

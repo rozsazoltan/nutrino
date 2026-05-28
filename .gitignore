@@ -22,6 +22,10 @@ coverage/
 **/src-tauri/gen/android/build/
 **/src-tauri/gen/apple/build/
 **/src-tauri/gen/schemas/
+**/src-tauri/gen/android/keystore.properties
+**/src-tauri/gen/android/*.jks
+**/src-tauri/gen/android/*.keystore
+**/src-tauri/gen/android/*.p12
 
 # Generated mobile projects can be recreated with pnpm init:android / pnpm init:ios.
 # Keep this commented if you intentionally commit native generated projects.

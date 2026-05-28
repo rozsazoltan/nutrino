@@ -1307,6 +1307,48 @@ body:has(.onboarding-screen) {
 
 /* v0.7.0 GitHub CSV sources, scanner, sticky picker search and restored exact-match emphasis */
 .github-sync-card { display: grid; gap: 12px; }
+.source-settings-card { display: grid; gap: 12px; }
+.source-details {
+  display: grid;
+  gap: 12px;
+  padding: 0 4px 4px;
+}
+.source-details > summary {
+  cursor: pointer;
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+}
+.source-details > summary::-webkit-details-marker { display: none; }
+.source-details > summary::after {
+  content: 'v';
+  color: var(--on-surface-variant);
+}
+.source-details[open] > summary::after { transform: rotate(180deg); }
+.source-details > summary span,
+.source-details > summary small {
+  display: block;
+}
+.source-details > summary span { font-weight: 800; }
+.source-details > summary small {
+  margin-top: 3px;
+  color: var(--on-surface-variant);
+  font-size: .78rem;
+}
+.source-details .field-label,
+.source-details .helper,
+.source-details .channel-chip,
+.source-details .button-row {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+.update-status-card { margin-top: 12px; }
 .github-source-form { display: grid; gap: 9px; padding: 0 16px; }
 .github-source-list { display: grid; gap: 10px; padding: 0 16px 4px; }
 .github-source-row { display: grid; gap: 5px; border-radius: 18px; background: var(--surface-container); border: 1px solid color-mix(in srgb, var(--outline-variant) 70%, transparent); padding: 12px; }
@@ -3613,4 +3655,887 @@ select:focus {
   .nutrient-pie-legend {
     width: 100%;
   }
+}
+
+/* v0.12.12 release update installer readability */
+.update-release-copy {
+  display: grid;
+  gap: 4px;
+  line-height: 1.42;
+}
+.update-release-copy small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--on-surface-variant);
+  font-weight: 700;
+}
+
+/* v0.12.16 update status polish */
+.app-logo-update-button {
+  position: relative;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.app-logo-update-button.update-available::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #2196f3;
+  box-shadow: 0 0 0 0 color-mix(in srgb, #2196f3 60%, transparent);
+  animation: nutrino-update-pulse 1.3s ease-out infinite;
+}
+@keyframes nutrino-update-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, #2196f3 60%, transparent); }
+  72% { box-shadow: 0 0 0 10px color-mix(in srgb, #2196f3 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, #2196f3 0%, transparent); }
+}
+.appbar-update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  max-width: 92px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #2196f3 18%, var(--surface));
+  color: #0b64c0;
+  font-size: .74rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.appbar-update-chip span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #2196f3;
+}
+.update-settings-entry.attention {
+  background: color-mix(in srgb, #2196f3 10%, transparent);
+}
+.settings-section-label {
+  padding: 12px 28px 2px;
+  color: var(--on-surface-variant);
+  font-size: .75rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.dev-only-settings-row {
+  background: color-mix(in srgb, var(--secondary-container) 38%, transparent);
+}
+.app-update-settings-panel {
+  display: grid;
+  gap: 12px;
+}
+.app-update-status-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--surface-container);
+  border: 1px solid var(--outline-variant);
+}
+.app-update-status-card.attention {
+  background: color-mix(in srgb, #2196f3 10%, var(--surface-container));
+  border-color: color-mix(in srgb, #2196f3 34%, var(--outline-variant));
+}
+.app-update-status-card.latest {
+  background: color-mix(in srgb, #34c759 8%, var(--surface-container));
+  border-color: color-mix(in srgb, #34c759 28%, var(--outline-variant));
+}
+.app-update-status-card b,
+.app-update-status-card small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.app-update-status-card b {
+  font-size: .96rem;
+  font-weight: 850;
+}
+.app-update-status-card small {
+  margin-top: 3px;
+  color: var(--on-surface-variant);
+  line-height: 1.35;
+}
+.app-update-status-orb {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--outline-variant);
+  position: relative;
+}
+.app-update-status-orb::after {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  border-radius: 999px;
+  background: var(--on-surface-variant);
+}
+.app-update-status-card.attention .app-update-status-orb::after { background: #2196f3; }
+.app-update-status-card.latest .app-update-status-orb::after { background: #34c759; }
+@media (max-width: 390px) {
+  .appbar-update-chip { display: none; }
+  .settings-section-label { padding-inline: 22px; }
+}
+
+/* v0.12.17 mobile update/settings readability polish */
+.dialog-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.update-install-note {
+  margin: -8px 0 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: color-mix(in srgb, #ffcc4d 22%, var(--surface-container));
+  color: var(--on-surface);
+  border: 1px solid color-mix(in srgb, #ffcc4d 48%, var(--outline-variant));
+  line-height: 1.45;
+}
+.update-install-info-button {
+  background: color-mix(in srgb, #ffcc4d 18%, var(--surface));
+  color: color-mix(in srgb, #7a5100 72%, var(--on-surface));
+  border-color: color-mix(in srgb, #ffcc4d 48%, var(--outline-variant));
+}
+.app-update-dialog-actions {
+  display: grid !important;
+  grid-template-columns: 1fr;
+  gap: 10px !important;
+  margin-top: 18px !important;
+}
+.app-update-dialog-actions > button,
+.update-dialog .dialog-actions > button {
+  width: 100%;
+  justify-content: center;
+}
+.update-dialog .update-release-copy {
+  margin-bottom: 0;
+}
+.app-logo-update-button.update-available::after {
+  width: 10px;
+  height: 10px;
+  top: 0;
+  right: 0;
+}
+.appbar-update-chip {
+  background: var(--surface-container-high);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+.update-settings-entry.attention {
+  width: calc(100% - 32px);
+  margin: 4px 16px;
+  padding: 12px;
+  min-height: 74px;
+  border-radius: 18px;
+  background: var(--surface-container-high);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+.dev-only-settings-row {
+  width: calc(100% - 32px);
+  margin: 4px 16px;
+  padding: 12px;
+  min-height: 74px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--secondary-container) 32%, var(--surface));
+}
+.update-settings-entry.attention small,
+.dev-only-settings-row small {
+  margin-top: -10px;
+}
+.settings-section-label {
+  padding: 18px 28px 8px;
+}
+.source-choice-list {
+  display: grid;
+  gap: 10px;
+}
+.source-choice-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--surface-container);
+  border: 1px solid var(--outline-variant);
+  color: var(--on-surface);
+}
+.source-choice-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--primary);
+}
+.source-choice-icon svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+}
+.source-choice-card b,
+.source-choice-card small {
+  display: block;
+}
+.source-choice-card b {
+  font-size: .96rem;
+  font-weight: 800;
+}
+.source-choice-card small {
+  margin-top: 3px;
+  color: var(--on-surface-variant);
+  font-size: .78rem;
+  line-height: 1.35;
+}
+.source-choice-card input[type='checkbox'] {
+  appearance: none;
+  width: 58px;
+  height: 32px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--on-surface-variant) 28%, transparent);
+  box-shadow: inset 0 0 0 2px var(--outline-variant);
+  position: relative;
+}
+.source-choice-card input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--outline);
+  transition: transform .18s ease, background-color .18s ease;
+}
+.source-choice-card input[type='checkbox']:checked {
+  background: var(--primary);
+  box-shadow: none;
+}
+.source-choice-card input[type='checkbox']:checked::after {
+  transform: translateX(26px);
+  background: var(--on-primary);
+}
+.source-details > summary {
+  background: var(--surface);
+}
+@media (max-width: 390px) {
+  .settings-section-label { padding: 16px 22px 8px; }
+  .update-settings-entry.attention,
+  .dev-only-settings-row {
+    width: calc(100% - 24px);
+    margin-inline: 12px;
+  }
+  .source-choice-card {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .source-choice-icon {
+    width: 38px;
+    height: 38px;
+  }
+}
+
+/* v0.12.18 update and permission UI polish */
+.app-logo-update-button {
+  overflow: visible;
+}
+.app-logo-mark-content {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.app-logo-mark-content svg {
+  width: 100% !important;
+  height: 100% !important;
+}
+.app-logo-update-button.update-available::after {
+  content: none !important;
+}
+.app-logo-update-icon {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  border: 2px solid var(--surface);
+  box-shadow: 0 6px 12px color-mix(in srgb, #000 18%, transparent);
+}
+.app-logo-update-icon svg,
+.appbar-update-chip svg,
+.app-update-status-icon svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+}
+.appbar-update-chip span {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 0;
+  background: transparent;
+}
+.info-button,
+.update-install-info-button,
+.micronutrient-dialog-title .info-button,
+.analysis-card-header .info-button {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: var(--primary) !important;
+  box-shadow: none !important;
+}
+.info-button:active,
+.info-button:focus-visible,
+.info-button:hover {
+  background: color-mix(in srgb, var(--primary) 8%, transparent) !important;
+  color: var(--primary) !important;
+}
+.dialog-title-row,
+.update-dialog-title-row {
+  align-items: flex-start;
+}
+.dialog-title-row h2,
+.update-dialog-title-copy h2 {
+  margin-bottom: 0;
+  line-height: 1.15;
+}
+.dialog-title-actions {
+  align-self: flex-start;
+  min-height: 36px;
+  padding-top: 0;
+}
+.update-dialog-title-copy {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.update-dialog .update-release-copy {
+  margin: 0;
+  font-size: .94rem;
+}
+.update-dialog .update-release-copy small {
+  margin-top: 2px;
+  font-weight: 500;
+}
+.app-update-status-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--on-surface-variant);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
+}
+.app-update-status-card.attention .app-update-status-icon {
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--outline-variant));
+}
+.app-update-status-card.latest .app-update-status-icon {
+  background: color-mix(in srgb, #34c759 10%, var(--surface));
+  color: #16833a;
+  border-color: color-mix(in srgb, #34c759 28%, var(--outline-variant));
+}
+.app-update-status-orb {
+  display: none !important;
+}
+.settings-row.update-settings-entry.attention,
+.settings-row.dev-only-settings-row {
+  align-items: center;
+  row-gap: 2px;
+  min-height: 72px;
+  padding-block: 12px;
+}
+.settings-row.update-settings-entry.attention small,
+.settings-row.dev-only-settings-row small {
+  margin-top: 0 !important;
+  align-self: start;
+}
+.settings-section-label {
+  padding-top: 18px;
+  padding-bottom: 8px;
+}
+.permission-management-hint {
+  margin: 12px 0 0;
+}
+.permission-dialog-actions {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 10px !important;
+}
+.source-choice-card-simple {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+@media (max-width: 420px) {
+  .dialog-title-actions .info-button,
+  .dialog-title-actions .dialog-close-icon {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+  }
+  .settings-dialog {
+    padding-top: 22px;
+  }
+  .source-choice-card-simple {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+/* v0.12.19 final mobile settings/update layout polish */
+.dialog-title-row,
+.update-dialog-title-row {
+  align-items: center !important;
+}
+.dialog-title-actions {
+  align-self: center !important;
+  align-items: center !important;
+}
+.update-dialog-title-row {
+  display: grid !important;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px;
+}
+.update-dialog-icon {
+  align-self: start;
+  margin-top: 2px;
+}
+.update-dialog-title-copy .modal-kicker {
+  margin: 0;
+  color: var(--primary);
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.update-install-note.warning-callout {
+  margin: 0 0 12px !important;
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 12px 14px !important;
+}
+.update-install-note.warning-callout .warning-callout-icon {
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+.settings-row.update-settings-entry.attention,
+.settings-row.dev-only-settings-row {
+  width: 100% !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  min-height: 64px !important;
+  padding-block: 10px !important;
+}
+.settings-row.update-settings-entry.attention {
+  color: var(--primary);
+}
+.settings-row.update-settings-entry.attention .settings-row-icon {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.source-connection-card {
+  padding: 0;
+  background: var(--surface-container);
+}
+.source-connection-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  color: var(--on-surface);
+}
+.source-connection-toggle > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.source-connection-toggle b,
+.source-connection-toggle small {
+  display: block;
+}
+.source-connection-toggle small {
+  color: var(--on-surface-variant);
+  font-size: .78rem;
+  line-height: 1.35;
+  font-weight: 700;
+}
+.source-connection-toggle .settings-row-icon {
+  position: static;
+  align-self: center;
+}
+.source-connection-toggle input[type='checkbox'] {
+  justify-self: end;
+}
+.source-details {
+  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 55%, transparent);
+  padding: 0 16px 14px;
+}
+.source-details > summary {
+  margin: 0 -16px 10px;
+  padding: 10px 16px !important;
+  background: transparent !important;
+  font-weight: 800;
+}
+.source-details > summary small {
+  display: none;
+}
+.github-source-form,
+.github-source-list {
+  padding-inline: 0 !important;
+}
+.github-source-row {
+  background: transparent !important;
+  border-color: color-mix(in srgb, var(--outline-variant) 55%, transparent) !important;
+}
+.onboarding-card {
+  padding: 18px !important;
+}
+.onboarding-compact-head {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.onboarding-compact-head .onboarding-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+}
+.onboarding-compact-head .eyebrow,
+.onboarding-compact-head h2 {
+  margin: 0;
+}
+.onboarding-compact-head h2 {
+  font-size: 1.18rem;
+  line-height: 1.15;
+}
+.onboarding-form,
+.onboarding-permissions {
+  margin-top: 12px !important;
+  gap: 10px !important;
+}
+.compact-onboarding-actions {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px !important;
+  margin-top: 14px !important;
+}
+.compact-onboarding-actions > button {
+  min-height: 40px;
+  width: 100%;
+  justify-content: center;
+}
+.compact-onboarding-actions > .filled-button:last-child {
+  grid-column: 1 / -1;
+}
+.permission-status-card {
+  align-items: center;
+}
+.permission-status-card .text-button {
+  justify-self: end;
+  white-space: normal;
+  text-align: right;
+}
+@media (max-width: 420px) {
+  .update-dialog-title-row {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .dialog-title-actions .info-button,
+  .dialog-title-actions .dialog-close-icon {
+    width: 34px !important;
+    height: 34px !important;
+    min-width: 34px !important;
+  }
+  .app-update-status-icon.update-dialog-icon {
+    width: 38px;
+    height: 38px;
+  }
+  .compact-onboarding-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* v0.12.20 final release UI alignment polish */
+.app-logo-update-icon {
+  isolation: isolate;
+  overflow: visible;
+}
+.app-logo-update-icon::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  z-index: -1;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  animation: nutrino-update-icon-ping 1.45s ease-out infinite;
+}
+@keyframes nutrino-update-icon-ping {
+  0% { transform: scale(.65); opacity: .8; }
+  72% { transform: scale(1.42); opacity: 0; }
+  100% { transform: scale(1.42); opacity: 0; }
+}
+.appbar-update-chip span {
+  border-radius: 999px !important;
+}
+.update-dialog-title-copy .modal-kicker {
+  display: none !important;
+}
+.update-dialog-title-row {
+  grid-template-columns: 38px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+.update-dialog-icon {
+  align-self: center !important;
+  margin-top: 0 !important;
+}
+.update-dialog-title-copy {
+  gap: 4px !important;
+}
+.update-dialog-title-copy h2 {
+  font-size: 1.28rem !important;
+  line-height: 1.16 !important;
+}
+.update-dialog .dialog-title-actions {
+  align-self: center !important;
+  align-items: center !important;
+  min-height: 36px;
+}
+.update-install-note.warning-callout {
+  margin-top: 12px !important;
+  margin-bottom: 14px !important;
+}
+.update-install-info-button {
+  align-self: center !important;
+}
+.settings-row.update-settings-entry.attention,
+.settings-row.dev-only-settings-row {
+  width: calc(100% - 32px) !important;
+  margin: 6px 16px !important;
+  border-radius: 18px !important;
+  align-items: center !important;
+  min-height: 72px !important;
+  padding: 12px !important;
+  row-gap: 3px !important;
+}
+.settings-row.update-settings-entry.attention {
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface-container-high)) !important;
+  color: var(--on-surface) !important;
+  box-shadow: inset 3px 0 0 var(--primary) !important;
+}
+.settings-row.update-settings-entry.attention .settings-row-icon {
+  background: transparent !important;
+  color: var(--primary) !important;
+}
+.settings-row.dev-only-settings-row {
+  background: color-mix(in srgb, var(--secondary-container) 38%, var(--surface)) !important;
+  color: var(--on-surface) !important;
+  box-shadow: none !important;
+}
+.settings-row.update-settings-entry.attention small,
+.settings-row.dev-only-settings-row small {
+  margin-top: 0 !important;
+}
+.source-connection-card {
+  background: var(--surface-container) !important;
+  border-color: color-mix(in srgb, var(--outline-variant) 60%, transparent) !important;
+}
+.source-connection-toggle {
+  min-height: 72px;
+  padding: 12px 16px !important;
+}
+.source-connection-toggle input[type='checkbox'] {
+  appearance: none;
+  width: 62px;
+  height: 34px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--on-surface-variant) 28%, transparent);
+  box-shadow: inset 0 0 0 2px var(--outline-variant);
+  position: relative;
+}
+.source-connection-toggle input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--outline);
+  transition: transform .18s ease, background-color .18s ease;
+}
+.source-connection-toggle input[type='checkbox']:checked {
+  background: var(--primary);
+  box-shadow: none;
+}
+.source-connection-toggle input[type='checkbox']:checked::after {
+  transform: translateX(28px);
+  background: var(--on-primary);
+}
+.source-details > summary::after {
+  content: none !important;
+}
+.source-details-chevron {
+  display: inline-grid !important;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--on-surface-variant);
+  transition: transform .18s ease;
+}
+.source-details-chevron svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+}
+.source-details[open] > summary .source-details-chevron {
+  transform: rotate(180deg);
+}
+.source-details > summary {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: center !important;
+}
+@media (max-width: 420px) {
+  .settings-row.update-settings-entry.attention,
+  .settings-row.dev-only-settings-row {
+    width: calc(100% - 24px) !important;
+    margin-inline: 12px !important;
+  }
+  .update-dialog-title-row {
+    grid-template-columns: 36px minmax(0, 1fr) auto !important;
+  }
+  .update-dialog-title-copy h2 {
+    font-size: 1.22rem !important;
+  }
+}
+
+/* v0.12.21 mobile update/settings spacing polish */
+.update-dialog-title-row {
+  grid-template-columns: 38px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+.update-dialog-title-row > h2 {
+  min-width: 0;
+  margin: 0 !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.22rem !important;
+  line-height: 1.15 !important;
+}
+.update-dialog-description {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 0 !important;
+  padding-left: 48px;
+  color: var(--on-surface-variant);
+  line-height: 1.35;
+}
+.update-dialog-description small {
+  margin: 0 !important;
+  overflow-wrap: anywhere;
+  color: var(--on-surface-variant);
+  font-weight: 500;
+}
+.update-dialog .update-install-note.warning-callout {
+  margin-top: 14px !important;
+}
+.settings-row {
+  grid-template-columns: 44px minmax(0, 1fr) auto !important;
+  column-gap: 8px !important;
+  padding-inline: 22px !important;
+}
+.settings-row > .settings-row-icon,
+.settings-row > span:first-child {
+  width: 40px !important;
+  height: 40px !important;
+}
+.settings-row small {
+  grid-column: 2 / 4 !important;
+}
+.permission-status-card {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.permission-dialog-actions {
+  margin-top: 4px;
+}
+.source-connection-toggle {
+  padding: 16px 16px 12px !important;
+  gap: 10px !important;
+}
+.source-details {
+  padding: 8px 16px 12px !important;
+}
+.source-details > summary {
+  margin: 0 -16px 8px !important;
+  padding: 8px 16px !important;
+}
+.source-details .button-row {
+  margin-bottom: 0 !important;
+}
+.github-source-list {
+  padding-bottom: 0 !important;
+}
+@media (max-width: 420px) {
+  .update-dialog-title-row {
+    grid-template-columns: 36px minmax(0, 1fr) auto !important;
+    gap: 8px !important;
+  }
+  .update-dialog-description {
+    padding-left: 44px;
+  }
+  .settings-row {
+    grid-template-columns: 42px minmax(0, 1fr) auto !important;
+    column-gap: 7px !important;
+    padding-inline: 20px !important;
+  }
+}
+
+
+/* v0.12.22 profile source details balanced spacing */
+.source-details {
+  gap: 8px !important;
+  padding: 8px 16px !important;
+}
+.source-details > summary {
+  margin: 0 -16px !important;
+  padding: 8px 16px !important;
+}
+.source-details .helper,
+.source-details .field-label,
+.source-details .channel-chip,
+.source-details .button-row {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+.source-details .github-source-form,
+.source-details .github-source-list {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
 }

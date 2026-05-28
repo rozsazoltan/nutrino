@@ -1,7 +1,10 @@
 use std::{
     collections::{HashMap, HashSet},
+    fs::File,
+    io::{Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
 };
 
@@ -16,7 +19,7 @@ use axum::{
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, PhysicalPosition, PhysicalSize, State, WindowEvent};
+use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tokio::sync::oneshot;
@@ -24,7 +27,7 @@ use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 const APP_NAME: &str = "Nutrino";
-const APP_VERSION: &str = "0.12.11";
+const APP_VERSION: &str = env!("NUTRINO_APP_VERSION");
 
 struct ServerRuntime {
     port: u16,
@@ -37,6 +40,7 @@ struct AppState {
     db_path: PathBuf,
     server: Mutex<Option<ServerRuntime>>,
     connected_devices: ConnectedDeviceRegistry,
+    app_handle: tauri::AppHandle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +51,7 @@ struct DesktopSettings {
     auto_start_server: bool,
     close_to_tray: bool,
     start_hidden_to_tray: bool,
+    check_prerelease_updates: bool,
     window_x: Option<i32>,
     window_y: Option<i32>,
     window_width: Option<u32>,
@@ -103,6 +108,18 @@ struct HealthResponse {
     dev_mode: bool,
     catalog_revision: i64,
     connected_devices: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UpdateCheckRequest {
+    client_version: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UpdateCheckResponse {
+    accepted: bool,
+    server_version: String,
 }
 
 
@@ -490,6 +507,7 @@ struct ApiState {
     auth_required: bool,
     dev_mode: bool,
     connected_devices: ConnectedDeviceRegistry,
+    app_handle: tauri::AppHandle,
 }
 
 
@@ -508,6 +526,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let db_path = database_path(app.handle())?;
             init_database(&db_path)?;
@@ -515,6 +534,7 @@ pub fn run() {
                 db_path: db_path.clone(),
                 server: Mutex::new(None),
                 connected_devices: Arc::new(Mutex::new(HashMap::new())),
+                app_handle: app.handle().clone(),
             });
 
             if let Some(window) = app.get_webview_window("main") {
@@ -649,9 +669,149 @@ pub fn run() {
             merge_catalog_item,
             list_catalog_duplicate_suggestions,
             list_connected_devices,
+            download_and_open_update_installer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running nutrino Desktop");
+}
+
+
+#[tauri::command]
+async fn download_and_open_update_installer(app: tauri::AppHandle, url: String, asset_name: Option<String>) -> std::result::Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || download_and_open_update_installer_blocking(&app, &url, asset_name))
+        .await
+        .map_err(|error| format!("Update installer task failed: {error}"))?
+}
+
+fn download_and_open_update_installer_blocking(app: &tauri::AppHandle, url: &str, asset_name: Option<String>) -> std::result::Result<String, String> {
+    let url = url.trim();
+    if !url.starts_with("https://") {
+        return Err("Update download URL must use HTTPS.".to_string());
+    }
+
+    let file_name = safe_update_asset_name(asset_name, url);
+    let updates_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| format!("Could not resolve update cache directory: {error}"))?
+        .join("updates");
+    std::fs::create_dir_all(&updates_dir)
+        .map_err(|error| format!("Could not create update cache directory: {error}"))?;
+    let installer_path = updates_dir.join(file_name);
+
+    let mut response = reqwest::blocking::Client::builder()
+        .user_agent(format!("Nutrino/{APP_VERSION} updater"))
+        .build()
+        .map_err(|error| format!("Could not create update downloader: {error}"))?
+        .get(url)
+        .send()
+        .map_err(|error| format!("Could not download update: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Update download failed: {error}"))?;
+
+    let mut file = File::create(&installer_path)
+        .map_err(|error| format!("Could not create update installer file: {error}"))?;
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = response
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not read update download: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|error| format!("Could not write update installer: {error}"))?;
+    }
+    file.flush()
+        .map_err(|error| format!("Could not finish update installer file: {error}"))?;
+
+    open_downloaded_update_installer(&installer_path)?;
+    Ok(installer_path.to_string_lossy().to_string())
+}
+
+fn safe_update_asset_name(asset_name: Option<String>, url: &str) -> String {
+    let raw = asset_name
+        .and_then(|name| {
+            let trimmed = name.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        })
+        .or_else(|| url.rsplit('/').next().map(|value| value.split('?').next().unwrap_or(value).to_string()))
+        .unwrap_or_else(|| "nutrino-update-installer".to_string());
+
+    let safe = raw
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') { ch } else { '-' })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+
+    if safe.is_empty() {
+        "nutrino-update-installer".to_string()
+    } else {
+        safe
+    }
+}
+
+fn open_downloaded_update_installer(path: &Path) -> std::result::Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
+        if extension == "msi" {
+            Command::new("msiexec")
+                .arg("/i")
+                .arg(path)
+                .arg("/passive")
+                .arg("/norestart")
+                .spawn()
+                .map_err(|error| format!("Could not start Windows MSI installer: {error}"))?;
+        } else if matches!(extension.as_str(), "exe" | "msix" | "appinstaller") {
+            Command::new("cmd")
+                .arg("/C")
+                .arg("start")
+                .arg("")
+                .arg(path)
+                .spawn()
+                .map_err(|error| format!("Could not start Windows update installer: {error}"))?;
+        } else {
+            return Err(format!("Unsupported Windows update installer type: .{extension}"));
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|error| format!("Could not open macOS update installer: {error}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let lower_name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
+        if lower_name.ends_with(".appimage") {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(path)
+                .map_err(|error| format!("Could not inspect AppImage permissions: {error}"))?
+                .permissions();
+            permissions.set_mode(permissions.mode() | 0o755);
+            std::fs::set_permissions(path, permissions)
+                .map_err(|error| format!("Could not make AppImage executable: {error}"))?;
+            Command::new(path)
+                .spawn()
+                .map_err(|error| format!("Could not start AppImage update: {error}"))?;
+        } else {
+            Command::new("xdg-open")
+                .arg(path)
+                .spawn()
+                .map_err(|error| format!("Could not open Linux package installer: {error}"))?;
+        }
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Automatic installer launch is not supported on this platform.".to_string())
 }
 
 fn database_path(app: &tauri::AppHandle) -> Result<PathBuf> {
@@ -1116,6 +1276,7 @@ fn read_desktop_settings(path: &Path) -> Result<DesktopSettings> {
         auto_start_server: read_bool_from_conn(&conn, "auto_start_server", false),
         close_to_tray: read_bool_from_conn(&conn, "close_to_tray", false),
         start_hidden_to_tray: read_bool_from_conn(&conn, "start_hidden_to_tray", false),
+        check_prerelease_updates: read_bool_from_conn(&conn, "check_prerelease_updates", false),
         window_x: read_i32_setting(&conn, "window_x"),
         window_y: read_i32_setting(&conn, "window_y"),
         window_width: read_u32_setting(&conn, "window_width"),
@@ -1131,6 +1292,7 @@ fn write_desktop_settings(path: &Path, settings: &DesktopSettings) -> Result<()>
     set_setting(&conn, "auto_start_server", &settings.auto_start_server.to_string())?;
     set_setting(&conn, "close_to_tray", &settings.close_to_tray.to_string())?;
     set_setting(&conn, "start_hidden_to_tray", &settings.start_hidden_to_tray.to_string())?;
+    set_setting(&conn, "check_prerelease_updates", &settings.check_prerelease_updates.to_string())?;
     if let Some(value) = settings.window_x { set_setting(&conn, "window_x", &value.to_string())?; }
     if let Some(value) = settings.window_y { set_setting(&conn, "window_y", &value.to_string())?; }
     if let Some(value) = settings.window_width { set_setting(&conn, "window_width", &value.to_string())?; }
@@ -1202,10 +1364,12 @@ async fn start_api_server_internal(port: u16, state: &AppState) -> Result<Server
         auth_required,
         dev_mode: dev_mode(),
         connected_devices: state.connected_devices.clone(),
+        app_handle: state.app_handle.clone(),
     };
 
     let router = Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/update/check", post(update_check_requested))
         .route("/api/v1/sync/pull", get(sync_pull))
         .route("/api/v1/sync/push", post(sync_push))
         .route("/api/v1/foods", get(api_list_foods).post(api_create_food))
@@ -2765,12 +2929,7 @@ fn server_status(state: &AppState) -> Result<ServerStatus> {
 }
 
 fn app_channel() -> String {
-    match std::env::var("NUTRINO_APP_CHANNEL").unwrap_or_default().to_lowercase().as_str() {
-        "dev" => "dev".into(),
-        "stable" => "stable".into(),
-        _ if cfg!(debug_assertions) => "dev".into(),
-        _ => "stable".into(),
-    }
+    env!("NUTRINO_APP_CHANNEL").to_string()
 }
 
 fn dev_mode() -> bool {
@@ -2799,6 +2958,21 @@ async fn health(
         catalog_revision: db_catalog_revision(&state.db_path).unwrap_or(0),
         connected_devices: active_connected_device_count(&state.connected_devices),
     })
+}
+
+async fn update_check_requested(
+    AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateCheckRequest>,
+) -> Result<Json<UpdateCheckResponse>, StatusCode> {
+    authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/update/check");
+    let _ = state.app_handle.emit("nutrino-update-check-requested", payload);
+    Ok(Json(UpdateCheckResponse {
+        accepted: true,
+        server_version: APP_VERSION.to_string(),
+    }))
 }
 
 async fn sync_pull(

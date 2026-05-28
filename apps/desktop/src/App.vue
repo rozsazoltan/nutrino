@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { lucideSvg, type IconName } from './icons';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { readFile, writeFile } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
 import * as QRCode from 'qrcode';
 import { commands } from './lib/commands';
+import { checkNutrinoUpdates, type UpdateCheckResult } from './lib/releases';
 import type { ActivityDefinition, ActivityInput, CatalogDuplicateSuggestion, ConnectedDevice, DesktopSettings, Food, FoodInput, Ingredient, IngredientInput, LocalizedNameMap, Recipe, RecipeDetail, RecipeInput, RecipeInputItem, ServerStatus, SkippedSyncItem, SyncInboxEntry, SyncPushPayload } from './types';
 
 type Tab = 'dashboard' | 'ingredients' | 'foods' | 'recipes' | 'activities' | 'server' | 'settings';
@@ -66,10 +69,16 @@ const foodSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const recipeQuery = ref('');
 const recipeSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const settings = ref<DesktopSettings | null>(null);
-const appVersion = '0.12.11';
 const appChannel = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
+const appVersion = appChannel === 'dev' ? __NUTRINO_DEV_VERSION__ : __NUTRINO_RELEASE_VERSION__;
 const appName = appChannel === 'dev' ? 'Nutrino Dev' : 'Nutrino';
 document.title = appName;
+const updateBusy = ref(false);
+const updateDialogOpen = ref(false);
+const updateCheckResult = ref<UpdateCheckResult | null>(null);
+const updateAvailable = computed(() => updateCheckResult.value?.status === 'available' && Boolean(updateCheckResult.value.release));
+const updateRemindLaterKey = `nutrino.desktop.${appChannel}.update.remindLater.v1`;
+let updateCheckUnlisten: UnlistenFn | null = null;
 
 type AppLanguage = 'system' | 'en' | 'hu' | 'de' | 'fr' | 'ru' | 'uk' | 'zh' | 'sk' | 'ro' | 'cs' | 'sl' | 'hr' | 'pl' | 'es' | 'pt';
 type LanguageOption = { code: AppLanguage; englishName: string; nativeName: string; locale: string; aliases: string[] };
@@ -4373,6 +4382,50 @@ for (const [language, values] of Object.entries(desktopNutrientTranslations)) {
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
 }
 
+const desktopUpdateTranslations: Record<string, Record<string, string>> = {
+  en: {
+    'ui.appUpdates': 'App updates',
+    'ui.appUpdatesBody': 'Check GitHub Releases for a newer Nutrino desktop version.',
+    'ui.checkUpdates': 'Check for updates',
+    'ui.checkingUpdates': 'Checking…',
+    'ui.includePrereleaseUpdates': 'Watch pre-releases',
+    'ui.includePrereleaseUpdatesHint': 'Off by default; stable releases are checked unless enabled.',
+    'ui.updateAvailable': 'Update available',
+    'ui.updateAvailableBody': 'A newer Nutrino release is available.',
+    'ui.installUpdate': 'Install update',
+    'ui.remindLater': 'Remind me later',
+    'ui.remindLaterSaved': 'Update reminder postponed.',
+    'ui.latestInstalled': 'You are on the latest version.',
+    'ui.updateCheckFailed': 'Update check failed',
+    'ui.updateInstallerStarted': 'Update installer started.',
+    'ui.updateInstallerFailed': 'Could not start the update installer',
+    'ui.updateInstallerFallback': 'Could not start the installer directly; opening the download instead',
+    'ui.mobileRequestedDesktopUpdateCheck': 'Mobile requested a desktop update check.',
+  },
+  hu: {
+    'ui.appUpdates': 'App frissítések',
+    'ui.appUpdatesBody': 'Új Nutrino desktop verzió keresése GitHub Releases alapján.',
+    'ui.checkUpdates': 'Frissítés keresése',
+    'ui.checkingUpdates': 'Ellenőrzés…',
+    'ui.includePrereleaseUpdates': 'Pre-release figyelése',
+    'ui.includePrereleaseUpdatesHint': 'Alapból kikapcsolva; bekapcsolás nélkül csak stabil kiadásokat néz.',
+    'ui.updateAvailable': 'Frissítés érhető el',
+    'ui.updateAvailableBody': 'Újabb Nutrino kiadás érhető el.',
+    'ui.installUpdate': 'Frissítés telepítése',
+    'ui.remindLater': 'Emlékeztess később',
+    'ui.remindLaterSaved': 'Frissítési emlékeztető elhalasztva.',
+    'ui.latestInstalled': 'A legfrissebb verzió van fent.',
+    'ui.updateCheckFailed': 'A frissítés ellenőrzése sikertelen',
+    'ui.updateInstallerStarted': 'A frissítő telepítő elindult.',
+    'ui.updateInstallerFailed': 'Nem sikerült elindítani a frissítő telepítőt',
+    'ui.updateInstallerFallback': 'A telepítő közvetlen indítása nem sikerült; megnyitom a letöltést',
+    'ui.mobileRequestedDesktopUpdateCheck': 'A mobil frissítéskeresést kért a desktop appnak.',
+  },
+};
+for (const [language, values] of Object.entries(desktopUpdateTranslations)) {
+  translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
+}
+
 const effectiveLanguage = computed<Exclude<AppLanguage, 'system'>>(() => {
   if (desktopLanguage.value !== 'system') return desktopLanguage.value;
   const detected = String(navigator.language || 'en').slice(0, 2).toLowerCase() as Exclude<AppLanguage, 'system'>;
@@ -4855,6 +4908,107 @@ function setMessage(value: string) {
       if (message.value === value) message.value = '';
     }, 6500);
   }
+}
+
+function detectDesktopUpdateTarget() {
+  const platform = String(navigator.platform || navigator.userAgent || '').toLowerCase();
+  if (platform.includes('win')) return 'windows' as const;
+  if (platform.includes('mac')) return 'macos' as const;
+  if (platform.includes('linux')) return 'linux' as const;
+  return 'desktop' as const;
+}
+
+function updateReleaseTitle(result = updateCheckResult.value): string {
+  if (!result?.release) return t('ui.appUpdates');
+  return `${t('ui.updateAvailable')} ${result.release.version}`;
+}
+
+function updateReleaseBody(result = updateCheckResult.value): string {
+  if (!result?.release) return t('ui.latestInstalled');
+  return `${t('ui.updateAvailableBody')} ${t('ui.versionLabel')} ${appVersion} → ${result.release.version}.`;
+}
+
+function updateReleaseAssetLabel(result = updateCheckResult.value): string {
+  return result?.release?.assetName ? result.release.assetName : '';
+}
+
+function updateRemindLaterActive(result: UpdateCheckResult): boolean {
+  if (!result.release) return false;
+  try {
+    const saved = JSON.parse(localStorage.getItem(updateRemindLaterKey) || '{}') as { tag?: string; until?: number };
+    return saved.tag === result.release.tag && Number(saved.until || 0) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+async function checkForAppUpdates(options: { quiet?: boolean; manual?: boolean; ignoreRemindLater?: boolean } = {}) {
+  if (updateBusy.value) return;
+  updateBusy.value = true;
+  try {
+    const result = await checkNutrinoUpdates(appVersion, {
+      includePrereleases: settings.value?.check_prerelease_updates === true,
+      target: detectDesktopUpdateTarget(),
+    });
+    updateCheckResult.value = result;
+    if (result.status === 'available' && (options.ignoreRemindLater || options.manual || !updateRemindLaterActive(result))) {
+      updateDialogOpen.value = true;
+      return;
+    }
+    if (options.manual && !options.quiet) setMessage(t('ui.latestInstalled'));
+  } catch (error) {
+    if (!options.quiet || options.manual) setMessage(`${t('ui.updateCheckFailed')}: ${String(error)}`);
+  } finally {
+    updateBusy.value = false;
+  }
+}
+
+async function openExternalUrl(url?: string) {
+  const target = String(url || '').trim();
+  if (!target) return;
+  try {
+    await openUrl(target);
+  } catch {
+    const opened = window.open(target, '_blank', 'noopener,noreferrer');
+    if (!opened) window.location.href = target;
+  }
+}
+
+async function installAvailableUpdate() {
+  const release = updateCheckResult.value?.release;
+  if (!release || updateBusy.value) return;
+  const url = release.downloadUrl || release.url;
+  updateBusy.value = true;
+  try {
+    await commands.downloadAndOpenUpdateInstaller(url, release.assetName || `nutrino-${release.version}`);
+    updateDialogOpen.value = false;
+    setMessage(t('ui.updateInstallerStarted'));
+  } catch (error) {
+    updateDialogOpen.value = true;
+    setMessage(`${t('ui.updateInstallerFailed')}: ${String(error)}`);
+  } finally {
+    updateBusy.value = false;
+  }
+}
+
+function remindUpdateLater() {
+  const release = updateCheckResult.value?.release;
+  if (release) {
+    localStorage.setItem(updateRemindLaterKey, JSON.stringify({
+      tag: release.tag,
+      until: Date.now() + 24 * 60 * 60 * 1000,
+    }));
+  }
+  updateDialogOpen.value = false;
+  setMessage(t('ui.remindLaterSaved'));
+}
+
+function openUpdateCenter() {
+  if (updateAvailable.value) {
+    updateDialogOpen.value = true;
+    return;
+  }
+  void checkForAppUpdates({ manual: true, ignoreRemindLater: true });
 }
 
 function typeLabel(value: string) {
@@ -6282,6 +6436,14 @@ async function toggleSetting(key: keyof DesktopSettings) {
   } catch (error) { setMessage(String(error)); }
 }
 
+async function saveDesktopSettingsNow() {
+  if (!settings.value) return;
+  try {
+    settings.value = await commands.saveDesktopSettings(settings.value);
+    setMessage(t('ui.settingsSaved'));
+  } catch (error) { setMessage(String(error)); }
+}
+
 async function rememberWindowNow() {
   try {
     settings.value = await commands.rememberCurrentWindow();
@@ -6446,7 +6608,11 @@ async function importAppDataZip() {
     for (const food of currentFoods) await commands.deleteFood(food.id);
     restoreDesktopLocalStorage(data.desktopLocalStorage);
     if (typeof data.serverPassword === 'string') await commands.setServerPassword(data.serverPassword);
-    if (data.settings) await commands.saveDesktopSettings(data.settings);
+    if (data.settings) {
+      const restoredSettings = { ...data.settings } as DesktopSettings;
+      restoredSettings.check_prerelease_updates = data.settings.check_prerelease_updates === true;
+      await commands.saveDesktopSettings(restoredSettings);
+    }
     for (const ingredient of data.ingredients ?? []) {
       await commands.saveIngredient({
         id: ingredient.id,
@@ -6520,6 +6686,15 @@ async function importAppDataZip() {
 
 async function initializeDesktop() {
   await refreshAll();
+  void checkForAppUpdates({ quiet: true });
+  try {
+    updateCheckUnlisten = await listen('nutrino-update-check-requested', () => {
+      setMessage(t('ui.mobileRequestedDesktopUpdateCheck'));
+      void checkForAppUpdates({ quiet: true, ignoreRemindLater: true });
+    });
+  } catch {
+    updateCheckUnlisten = null;
+  }
   onboardingPort.value = port.value;
   if (!localStorage.getItem(desktopOnboardingKey)) onboardingOpen.value = true;
   connectedDevicesTimer = window.setInterval(refreshConnectedDevices, 5000);
@@ -6556,6 +6731,7 @@ async function factoryResetDesktop() {
       auto_start_server: false,
       close_to_tray: false,
       start_hidden_to_tray: false,
+      check_prerelease_updates: false,
       window_x: null,
       window_y: null,
       window_width: null,
@@ -6578,6 +6754,10 @@ onMounted(initializeDesktop);
 onBeforeUnmount(() => {
   if (messageTimer) window.clearTimeout(messageTimer);
   if (connectedDevicesTimer) window.clearInterval(connectedDevicesTimer);
+  if (updateCheckUnlisten) {
+    updateCheckUnlisten();
+    updateCheckUnlisten = null;
+  }
 });
 </script>
 
@@ -6592,11 +6772,14 @@ onBeforeUnmount(() => {
             <h1 class="text-2xl font-bold md:text-3xl">{{ appName }}</h1>
           </div>
         </div>
-        <div class="server-pill" :class="serverRunning ? 'server-pill-running' : 'server-pill-stopped'">
-          <span class="server-dot" />
-          <span class="font-semibold">{{ t('ui.status_24a23') }}</span>
-          <span>{{ serverRunning ? t('ui.apiRunning') : t('ui.apiStopped') }}</span>
-          <span v-if="serverRunning" class="server-device-count">{{ connectedDeviceCount }} {{ t(connectedDeviceCount === 1 ? 'ui.deviceSingular' : 'ui.devicePlural') }}</span>
+        <div class="desktop-header-statuses">
+          <div class="server-pill" :class="serverRunning ? 'server-pill-running' : 'server-pill-stopped'">
+            <span class="server-dot" />
+            <span class="font-semibold">{{ t('ui.status_24a23') }}</span>
+            <span>{{ serverRunning ? t('ui.apiRunning') : t('ui.apiStopped') }}</span>
+            <span v-if="serverRunning" class="server-device-count">{{ connectedDeviceCount }} {{ t(connectedDeviceCount === 1 ? 'ui.deviceSingular' : 'ui.devicePlural') }}</span>
+          </div>
+          <button v-if="updateAvailable" class="desktop-update-chip" type="button" @click="openUpdateCenter"><span v-html="icon('refreshCw')"></span>{{ t('ui.updateAvailable') }} {{ updateCheckResult?.release?.version }}</button>
         </div>
       </div>
     </header>
@@ -7049,6 +7232,35 @@ onBeforeUnmount(() => {
               </div>
             </section>
 
+            <section class="settings-section-card update-settings-section">
+              <div class="settings-section-head">
+                <div>
+                  <p class="desktop-kicker">{{ t('ui.appUpdates') }}</p>
+                  <h3>{{ t('ui.appUpdatesBody') }}</h3>
+                </div>
+              </div>
+              <article class="desktop-update-settings-panel">
+                <div class="desktop-update-status-card" :class="{ attention: updateAvailable, latest: updateCheckResult?.status === 'latest' }">
+                  <span class="desktop-update-status-icon" v-html="icon(updateAvailable ? 'download' : 'refreshCw')"></span>
+                  <div>
+                    <b>{{ updateAvailable ? updateReleaseTitle(updateCheckResult) : updateCheckResult?.status === 'latest' ? t('ui.latestInstalled') : t('ui.appUpdates') }}</b>
+                    <small>{{ updateAvailable ? updateReleaseBody(updateCheckResult) : `${t('ui.versionLabel')} ${appVersion}` }}</small>
+                    <small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small>
+                  </div>
+                </div>
+                <label class="mobile-setting-row settings-row-v040">
+                  <span class="mobile-setting-icon" v-html="icon('refresh')"></span>
+                  <span class="mobile-setting-copy"><b>{{ t('ui.includePrereleaseUpdates') }}</b><small>{{ t('ui.includePrereleaseUpdatesHint') }}</small></span>
+                  <span class="toggle compact" :class="{ enabled: settings.check_prerelease_updates }"></span>
+                  <input v-model="settings.check_prerelease_updates" class="sr-only" type="checkbox" @change="saveDesktopSettingsNow" />
+                </label>
+                <div class="desktop-update-actions">
+                  <button class="btn-secondary" type="button" :disabled="updateBusy" @click="checkForAppUpdates({ manual: true, ignoreRemindLater: true })">{{ updateBusy ? t('ui.checkingUpdates') : t('ui.checkUpdates') }}</button>
+                  <button v-if="updateAvailable" class="btn-primary" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('ui.checkingUpdates') : t('ui.installUpdate') }}</button>
+                </div>
+              </article>
+            </section>
+
             <section class="settings-section-card">
               <div class="settings-section-head">
                 <div>
@@ -7154,6 +7366,28 @@ onBeforeUnmount(() => {
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="updateDialogOpen && updateCheckResult?.release" class="modal-backdrop" @click.self="remindUpdateLater">
+        <section class="modal-card update-modal desktop-update-modal">
+          <div class="desktop-update-modal-head">
+            <span class="desktop-update-modal-icon" v-html="icon('download')"></span>
+            <div class="desktop-update-modal-copy">
+              <p class="modal-kicker">{{ t('ui.appUpdates') }}</p>
+              <h2>{{ updateReleaseTitle() }}</h2>
+              <div class="desktop-update-release-details">
+                <p class="muted update-release-copy">{{ updateReleaseBody() }}</p>
+                <small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small>
+              </div>
+            </div>
+          </div>
+          <div class="dialog-actions desktop-update-modal-actions">
+            <button class="btn-secondary" type="button" @click="remindUpdateLater">{{ t('ui.remindLater') }}</button>
+            <button class="btn-primary" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('ui.checkingUpdates') : t('ui.installUpdate') }}</button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <div v-if="qrDialog" class="modal-backdrop" @click.self="qrDialog = null">
         <section class="modal-card qr-modal">
           <div class="modal-title-row"><div><p class="modal-kicker">{{ t('ui.catalogQr_0d8f3') }}</p><h2>{{ qrDialog.title }}</h2><p class="muted">{{ t('ui.scanThisWithTheMobileApp_231a6') }}</p></div></div>
@@ -7163,9 +7397,9 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="activeQrPart()" class="qr-preview" v-html="activeQrPartSvg()"></div>
           <div v-if="qrDialog.parts.length > 1" class="qr-stepper">
-            <button class="btn-secondary" type="button" :disabled="qrDialog.activeIndex === 0" @click="setQrPart(qrDialog.activeIndex - 1)">{{ t('ui.previous_dd1f7') }}</button>
+            <button class="btn-secondary qr-nav-button" type="button" :disabled="qrDialog.activeIndex === 0" @click="setQrPart(qrDialog.activeIndex - 1)"><span v-html="icon('chevronLeft')"></span>{{ t('ui.previous_dd1f7') }}</button>
             <span>{{ qrDialog.activeIndex + 1 }} / {{ qrDialog.parts.length }}</span>
-            <button class="btn-secondary" type="button" :disabled="qrDialog.activeIndex >= qrDialog.parts.length - 1" @click="setQrPart(qrDialog.activeIndex + 1)">{{ t('ui.next_10ac3') }}</button>
+            <button class="btn-secondary qr-nav-button" type="button" :disabled="qrDialog.activeIndex >= qrDialog.parts.length - 1" @click="setQrPart(qrDialog.activeIndex + 1)">{{ t('ui.next_10ac3') }}<span v-html="icon('chevronRight')"></span></button>
           </div>
           <textarea class="input textarea-input" rows="3" readonly :value="activeQrPartPayload()"></textarea>
           <div class="dialog-actions"><button class="btn-primary" @click="qrDialog = null">{{ t('ui.done_f9296') }}</button></div>

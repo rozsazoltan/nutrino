@@ -255,6 +255,19 @@ Optional: signed iOS when Apple signing secrets are configured
 
 Desktop jobs run on their native GitHub-hosted runners. Android runs on Ubuntu with the Android SDK/NDK installed by the workflow. iOS runs on macOS only when signing secrets are available.
 
+### Android signing
+
+Stable Android APK updates require every release to be signed with the same key. Configure these GitHub Actions secrets before publishing APKs that users should install over an existing stable app:
+
+```text
+ANDROID_KEYSTORE_BASE64
+ANDROID_KEYSTORE_PASSWORD
+ANDROID_KEY_ALIAS
+ANDROID_KEY_PASSWORD
+```
+
+`ANDROID_KEYSTORE_BASE64` is the base64-encoded `.jks` or `.keystore` file. The release workflow writes it into the generated Android project for the build only; the keystore and `keystore.properties` are ignored by git. Without these secrets, Nutrino falls back to Android debug signing for local sideload builds, but GitHub release APKs may not install over previous stable releases because the signing key can change between runners.
+
 Nutrino does not create tool-style moving tags such as `latest`, `vX` or `vX.Y`. The workflow creates or updates only the normal release tag:
 
 ```text

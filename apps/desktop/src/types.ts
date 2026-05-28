@@ -316,6 +316,7 @@ export interface DesktopSettings {
   auto_start_server: boolean;
   close_to_tray: boolean;
   start_hidden_to_tray: boolean;
+  check_prerelease_updates: boolean;
   window_x?: number | null;
   window_y?: number | null;
   window_width?: number | null;

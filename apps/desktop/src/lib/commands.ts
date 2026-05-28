@@ -62,4 +62,5 @@ export const commands = {
   mergeCatalogItem: (kind: string, aliasId: string, canonicalId: string) => invoke<void>('merge_catalog_item', { kind, aliasId, canonicalId }),
   listCatalogDuplicateSuggestions: () => invoke<CatalogDuplicateSuggestion[]>('list_catalog_duplicate_suggestions'),
   listConnectedDevices: () => invoke<ConnectedDevice[]>('list_connected_devices'),
+  downloadAndOpenUpdateInstaller: (url: string, assetName?: string) => invoke<string>('download_and_open_update_installer', { url, assetName }),
 };
