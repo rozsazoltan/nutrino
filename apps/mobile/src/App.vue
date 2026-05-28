@@ -48,7 +48,8 @@ type MealNoteSuggestion = { key: string; title: string; description: string; kca
 type HealthEditorMode = 'new' | 'recurrence' | 'duplicate' | 'edit';
 type HealthQuickTime = 'now' | 'minus10' | 'minus60' | 'custom';
 type HealthAnalysisRangeKey = '30' | '180' | '360' | 'all' | 'custom';
-type BackupIncludeOptions = { catalog: boolean; foodDiary: boolean; healthDiary: boolean };
+type ActivityAnalysisRangeKey = '7' | '14' | '30';
+type BackupIncludeOptions = { catalog: boolean; foodDiary: boolean; healthDiary: boolean; healthMedia: boolean };
 
 type OptionalNutrientDefinition = {
   key: string;
@@ -62,8 +63,8 @@ type OptionalNutrientDefinition = {
 type NutrientInsightDialog = { kind: 'day' } | { kind: 'meal'; mealType: MealType };
 type NutrientChartMode = 'important' | 'optional';
 type NutrientChartSlice = { label: string; value: number; amount: string; note?: string; share: number; color: string };
-type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'deficit';
-type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-breakfast' | 'log-lunch' | 'log-dinner' | 'open-analysis' | 'dismiss';
+type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'deficit' | 'health-review';
+type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-breakfast' | 'log-lunch' | 'log-dinner' | 'open-analysis' | 'open-health-review' | 'dismiss';
 type NutrinoNotificationExtra = { nutrino: true; kind: NutrinoNotificationKind; mealType?: MealType; scheduledTime?: string };
 type NutrinoNotificationEvent = {
   actionId?: string;
@@ -102,6 +103,7 @@ const NOTIFICATION_ACTION_TYPES = {
   mealLunch: 'nutrino-meal-lunch-actions',
   mealDinner: 'nutrino-meal-dinner-actions',
   deficit: 'nutrino-deficit-actions',
+  healthReview: 'nutrino-health-review-actions',
 } as const;
 const REMINDER_NOTIFICATION_IDS = {
   daily: 130100,
@@ -109,10 +111,13 @@ const REMINDER_NOTIFICATION_IDS = {
   mealMorning: 130301,
   mealNoon: 130302,
   mealAfternoon: 130303,
+  healthReview: 130400,
 } as const;
+const HEALTH_REVIEW_REMINDER_TIME = '20:30';
 
 const nutrientChartPalette = ['#31c96f', '#e7b341', '#ef5350', '#5f82ff', '#26a69a', '#ab47bc', '#ff8a65', '#7cb342', '#26c6da', '#ec407a', '#9ccc65'];
 const healthTrendPalette = ['#31c96f', '#5f82ff', '#ef5350', '#e7b341', '#26a69a', '#ab47bc', '#ff8a65', '#7cb342'];
+const activityAnalysisPalette = ['#31c96f', '#5f82ff', '#e7b341', '#ef5350', '#26a69a', '#ab47bc', '#ff8a65', '#7cb342', '#26c6da', '#ec407a'];
 const healthAnalysisRanges: Array<{ key: HealthAnalysisRangeKey; days: number | null; labelKey: string }> = [
   { key: '30', days: 30, labelKey: 'last30Days' },
   { key: '180', days: 180, labelKey: 'last180Days' },
@@ -210,12 +215,15 @@ const healthEditorOpen = ref(false);
 const healthEditorMode = ref<HealthEditorMode>('new');
 const healthEditorId = ref<string | null>(null);
 const healthRecurrenceSourceId = ref<string | null>(null);
+const healthRecurrenceSearch = ref('');
 const healthQuickTime = ref<HealthQuickTime>('now');
 const healthAnalysisRange = ref<HealthAnalysisRangeKey>('30');
 const healthCustomRangeOpen = ref(false);
 const healthCustomStartDate = ref('');
 const healthCustomEndDate = ref(dateKey());
 const healthSelectedEventId = ref<string | null>(null);
+const healthEventPickerOpen = ref(false);
+const healthEventPickerSearch = ref('');
 const healthForm = reactive({
   title: '',
   description: '',
@@ -223,8 +231,12 @@ const healthForm = reactive({
   notes: '',
   date: selectedDate.value,
   time: '12:00',
+  ongoing: false,
+  resolvedDate: '',
+  resolvedTime: '',
   attachments: [] as HealthAttachment[],
 });
+const healthPreviewAttachment = ref<HealthAttachment | null>(null);
 const search = ref('');
 const mealEntryMode = ref<MealEntryMode>('catalog');
 const noteTitle = ref('');
@@ -264,6 +276,8 @@ const updateInstallInfoOpen = ref(false);
 const updateCheckResult = ref<UpdateCheckResult | null>(null);
 const updateAvailable = computed(() => updateCheckResult.value?.status === 'available' && Boolean(updateCheckResult.value.release));
 const analysisOpen = ref(false);
+const activityAnalysisOpen = ref(false);
+const activityAnalysisRange = ref<ActivityAnalysisRangeKey>('14');
 const deficitInfoOpen = ref(false);
 const micronutrientInfoOpen = ref(false);
 const nutrientInsightsDialog = ref<NutrientInsightDialog | null>(null);
@@ -300,6 +314,8 @@ const editingIntakeId = ref<string | null>(null);
 const editingActivityLogId = ref<string | null>(null);
 const highlightedReviewIntakeId = ref<string | null>(null);
 const mealNoteReviewOpen = ref(false);
+const healthReviewOpen = ref(false);
+const highlightedHealthReviewEntryId = ref<string | null>(null);
 let highlightedReviewTimer: number | undefined;
 const lastBackPressAt = ref(0);
 const androidBackExitWindowMs = 5000;
@@ -336,10 +352,14 @@ type StoredBackupProfile = BackupProfileSummary & { state: AppState };
 const backupProfilesOpen = ref(false);
 const backupProfiles = ref<BackupProfileSummary[]>([]);
 const backupOptionsOpen = ref(false);
+const exportBusy = ref(false);
+const exportProgress = ref(0);
+const exportStatus = ref('');
 const backupIncludeOptions = reactive<BackupIncludeOptions>({
   catalog: true,
   foodDiary: true,
   healthDiary: true,
+  healthMedia: true,
 });
 
 const nutrinoLogoSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true"> <rect width="64" height="64" rx="18" fill="#0D2514"/> <g fill="#33E36A"> <circle cx="18" cy="14" r="5"/> <circle cx="18" cy="26" r="5"/> <circle cx="18" cy="38" r="5"/> <circle cx="18" cy="50" r="5"/> <circle cx="29" cy="24" r="5"/> <circle cx="35" cy="34" r="5"/> <circle cx="46" cy="14" r="5"/> <circle cx="46" cy="26" r="5"/> <circle cx="46" cy="38" r="5"/> <circle cx="46" cy="50" r="5"/> </g> </svg>';
@@ -497,11 +517,105 @@ const mealIconSvg: Record<string, string> = {
 
 let pendingStateSaveTimer: number | undefined;
 let pendingStateSaveIdle: number | undefined;
+type HealthMediaRecord = { id: string; data_url: string; preview_data_url?: string | null; updated_at: number };
+const healthMediaDbName = 'nutrino.mobile.health-media.v1';
+const healthMediaStoreName = 'attachments';
 
 function runWhenIdle(callback: () => void, timeout = 1400) {
   const idle = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number }).requestIdleCallback;
   if (typeof idle === 'function') return idle(callback, { timeout });
   return window.setTimeout(callback, 0);
+}
+
+function stateSnapshotForLocalPersistence(): AppState {
+  return {
+    ...state,
+    healthEntries: (state.healthEntries || []).map((entry) => ({
+      ...entry,
+      attachments: entry.attachments.map((attachment) => ({
+        ...attachment,
+        data_url: '',
+        preview_data_url: null,
+      })),
+    })),
+  };
+}
+
+function serializeStateForLocalPersistence() {
+  return JSON.stringify(stateSnapshotForLocalPersistence());
+}
+
+function openHealthMediaDb(): Promise<IDBDatabase> {
+  if (!('indexedDB' in window)) return Promise.reject(new Error('IndexedDB is not available'));
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(healthMediaDbName, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(healthMediaStoreName)) {
+        db.createObjectStore(healthMediaStoreName, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('Could not open health media store'));
+  });
+}
+
+async function withHealthMediaStore<T>(mode: IDBTransactionMode, callback: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  const db = await openHealthMediaDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(healthMediaStoreName, mode);
+    const request = callback(tx.objectStore(healthMediaStoreName));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('Health media store request failed'));
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error ?? new Error('Health media store transaction failed'));
+    };
+  });
+}
+
+async function saveHealthAttachmentMedia(attachment: HealthAttachment) {
+  if (!attachment.data_url) return;
+  await withHealthMediaStore('readwrite', (store) => store.put({
+    id: attachment.id,
+    data_url: attachment.data_url,
+    preview_data_url: attachment.preview_data_url || null,
+    updated_at: Date.now(),
+  } satisfies HealthMediaRecord));
+}
+
+async function saveHealthEntryMedia(entry: HealthEntry) {
+  for (const attachment of entry.attachments) {
+    await saveHealthAttachmentMedia(attachment);
+    await yieldToUi();
+  }
+}
+
+async function hydrateHealthAttachmentMedia() {
+  const ids = [...new Set((state.healthEntries || [])
+    .flatMap((entry) => entry.attachments)
+    .filter((attachment) => !attachment.data_url)
+    .map((attachment) => attachment.id))];
+  if (!ids.length) return;
+  const records = new Map<string, HealthMediaRecord>();
+  for (const id of ids) {
+    try {
+      const record = await withHealthMediaStore<HealthMediaRecord | undefined>('readonly', (store) => store.get(id) as IDBRequest<HealthMediaRecord | undefined>);
+      if (record?.data_url) records.set(id, record);
+    } catch {
+      return;
+    }
+    await yieldToUi();
+  }
+  if (!records.size) return;
+  state.healthEntries = state.healthEntries.map((entry) => ({
+    ...entry,
+    attachments: entry.attachments.map((attachment) => {
+      const record = records.get(attachment.id);
+      return record ? { ...attachment, data_url: record.data_url, preview_data_url: record.preview_data_url || attachment.preview_data_url || null } : attachment;
+    }),
+  }));
 }
 
 function scheduleStateSave() {
@@ -514,7 +628,7 @@ function scheduleStateSave() {
   pendingStateSaveTimer = window.setTimeout(() => {
     pendingStateSaveIdle = runWhenIdle(() => {
       try {
-        saveStateJson(JSON.stringify(state));
+        saveStateJson(serializeStateForLocalPersistence());
       } catch (error) {
         console.warn('Could not persist mobile state', error);
       }
@@ -526,7 +640,7 @@ function flushStateSave() {
   if (pendingStateSaveTimer) window.clearTimeout(pendingStateSaveTimer);
   pendingStateSaveTimer = undefined;
   try {
-    saveStateJson(JSON.stringify(state));
+    saveStateJson(serializeStateForLocalPersistence());
   } catch (error) {
     console.warn('Could not persist mobile state', error);
   }
@@ -554,6 +668,8 @@ watch(() => state.settings.health_diary_enabled, (enabled) => {
   if (diaryTab.value === 'health') diaryTab.value = 'food';
   healthEditorOpen.value = false;
   healthAnalysisModalOpen.value = false;
+  healthPreviewAttachment.value = null;
+  healthReviewOpen.value = false;
   healthSearch.value = '';
 });
 watch(() => state.settings.desktop_api_enabled, (enabled) => {
@@ -814,6 +930,18 @@ function handleBackNavigation(event?: PopStateEvent) {
     return;
   }
 
+  if (healthEventPickerOpen.value) {
+    healthEventPickerOpen.value = false;
+    keepBackInsideApp();
+    return;
+  }
+
+  if (healthAnalysisModalOpen.value) {
+    healthAnalysisModalOpen.value = false;
+    keepBackInsideApp();
+    return;
+  }
+
   if (healthEditorOpen.value) {
     closeHealthEditor();
     keepBackInsideApp();
@@ -892,6 +1020,12 @@ function handleBackNavigation(event?: PopStateEvent) {
 
   if (analysisOpen.value) {
     analysisOpen.value = false;
+    keepBackInsideApp();
+    return;
+  }
+
+  if (activityAnalysisOpen.value) {
+    activityAnalysisOpen.value = false;
     keepBackInsideApp();
     return;
   }
@@ -992,7 +1126,7 @@ async function finishOnboarding() {
   state.settings.desktop_sync_prompted = true;
   onboardingOpen.value = false;
   onboardingStep.value = 0;
-  saveState(JSON.parse(JSON.stringify(state)) as AppState);
+  saveStateJson(serializeStateForLocalPersistence());
   await nextTick();
   startOnboardingTour();
 }
@@ -1068,6 +1202,7 @@ function toggleProfilePurpose(key: ProfilePurpose) {
   if (selected.has(key)) selected.delete(key);
   else selected.add(key);
   state.profile.usage_purposes = [...selected];
+  if (key === 'health_issue_logging') state.settings.health_diary_enabled = selected.has(key);
 }
 
 function toggleOnboardingPurpose(key: ProfilePurpose) {
@@ -1088,6 +1223,7 @@ function profilePurposeSummary() {
 
 onMounted(() => {
   void navigator.storage?.persist?.();
+  void hydrateHealthAttachmentMedia();
   void refreshBackupProfiles();
   void ensureDailyBackupProfile();
   void syncGitHubDailyIfDue();
@@ -1600,16 +1736,12 @@ const filteredHealthEntries = computed(() => {
   const query = healthSearch.value.trim();
   const source = currentDayHealthEntries.value;
   if (!query) return source;
-  const normalizedDate = query.replace(/\./g, '-');
   return source.filter((entry) => matchesSearchQuery(
     query,
     entry.title,
     entry.description,
     entry.notes,
     t(healthCategoryLabelKey(entry.category)),
-    dateKey(new Date(entry.occurred_at)),
-    formatDateTime(entry.occurred_at),
-    normalizedDate,
   ));
 });
 const reusableHealthEvents = computed(() => {
@@ -1620,10 +1752,40 @@ const reusableHealthEvents = computed(() => {
   }
   return [...byEvent.values()].sort((a, b) => b.occurred_at - a.occurred_at);
 });
+const reusableHealthEventOptions = computed(() => {
+  const query = healthRecurrenceSearch.value.trim();
+  const source = reusableHealthEvents.value;
+  if (!query) return [...source].sort((a, b) => b.occurred_at - a.occurred_at);
+  return source
+    .filter((entry) => matchesSearchQuery(
+      query,
+      healthEventEntry(entry).title,
+      healthEventEntry(entry).description,
+      healthEventEntry(entry).notes,
+      healthCategoryLabel(healthEventEntry(entry).category),
+      dateKey(new Date(entry.occurred_at)),
+    ))
+    .sort((a, b) => healthEventEntry(a).title.localeCompare(healthEventEntry(b).title, currentLocale(), { sensitivity: 'base' }));
+});
+const pendingHealthReviewEntries = computed(() => activeHealthEntries.value
+  .filter((entry) => healthEntryNeedsReview(entry))
+  .sort((a, b) => a.occurred_at - b.occurred_at));
 const healthAnalysisEntries = computed(() => filterHealthEntriesByRange(activeHealthEntries.value, healthAnalysisRange.value, healthCustomStartDate.value, healthCustomEndDate.value));
 const healthAnalysisSummary = computed(() => buildHealthAnalysisSummary());
+const healthRangeAverageDurationDays = computed(() => {
+  const durations = healthAnalysisEntries.value.map((entry) => healthEntryDurationDays(entry)).filter((value) => Number.isFinite(value));
+  return durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
+});
 const healthPeriodSummaryRows = computed(() => buildHealthPeriodSummaryRows());
 const healthEventFrequencyRows = computed(() => buildHealthEventFrequencyRows(healthAnalysisEntries.value));
+const healthEventPickerRows = computed(() => {
+  const query = healthEventPickerSearch.value.trim();
+  const rows = healthEventFrequencyRows.value;
+  if (!query) return rows;
+  return rows
+    .filter((row) => matchesSearchQuery(query, row.title, row.categoryLabel, row.status))
+    .sort((a, b) => a.title.localeCompare(b.title, currentLocale(), { sensitivity: 'base' }));
+});
 const selectedHealthEventAnalysis = computed(() => {
   if (!healthEventFrequencyRows.value.length) return null;
   return healthEventFrequencyRows.value.find((row) => row.eventId === healthSelectedEventId.value) || healthEventFrequencyRows.value[0];
@@ -1634,7 +1796,7 @@ const selectedHealthEventEntries = computed(() => {
   return healthAnalysisEntries.value.filter((entry) => entry.event_id === eventId).sort((a, b) => a.occurred_at - b.occurred_at);
 });
 const selectedHealthEventStats = computed(() => buildSelectedHealthEventStats());
-const healthCategoryChartRows = computed(() => buildHealthCategoryChartRows(selectedHealthEventEntries.value));
+const healthCategoryChartRows = computed(() => buildHealthCategoryChartRows(healthAnalysisEntries.value));
 const healthRecurrenceChartRows = computed(() => buildHealthRecurrenceChartRows());
 const healthSelectedEventTrendRows = computed(() => buildHealthSelectedEventTrendRows());
 const calendarCells = computed(() => buildCalendar(calendarMonth.value));
@@ -1726,6 +1888,11 @@ const selectedDiaryDateLabel = computed(() => new Intl.DateTimeFormat(currentLoc
 const currentDeficitStreak = computed(() => calculateDeficitStreak(selectedDate.value));
 const bestDeficitStreak = computed(() => calculateBestDeficitStreak(30));
 const analysisDailyRows = computed(() => buildDailyAnalysisRows(14, selectedDate.value));
+const activityAnalysisRows = computed(() => buildActivityAnalysisRows(Number(activityAnalysisRange.value), selectedDate.value));
+const activityAnalysisTypeRows = computed(() => buildActivityAnalysisTypeRows(activityAnalysisRows.value));
+const activityAnalysisActiveDays = computed(() => activityAnalysisRows.value.filter((row) => row.totalMinutes > 0).length);
+const activityAnalysisTotalMinutes = computed(() => activityAnalysisRows.value.reduce((sum, row) => sum + row.totalMinutes, 0));
+const activityAnalysisTotalKcal = computed(() => activityAnalysisRows.value.reduce((sum, row) => sum + row.totalKcal, 0));
 const analysisWeightRows = computed(() => buildWeightTrendRows(weightTrendMode.value, 12, selectedDate.value));
 const weightChartPoints = computed(() => buildWeightChartPoints(analysisWeightRows.value));
 const calorieChartMax = computed(() => Math.max(1, ...analysisDailyRows.value.map((row) => Math.max(row.consumedKcal, row.dailyLimitKcal, row.effectiveLimitKcal))));
@@ -7058,26 +7225,26 @@ const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, strin
     markAgain: 'Happened again', healthEntrySheetHint: 'Log symptoms, signs or unusual observations with optional context.', newHealthEvent: 'New event', previousHealthEvent: 'Previous event', choosePreviousEvent: 'Choose a previous event',
     now: 'Now', tenMinutesAgo: '10 min ago', oneHourAgo: '1 hour ago', customDateTime: 'Custom', date: 'Date', time: 'Time',
     healthTitle: 'Title, e.g. left knee pain', healthDescription: 'Description', healthCategory: 'Category', healthNotes: 'Optional notes', addPhoto: 'Photo', addVideo: 'Video', photoAttachment: 'Photo', videoAttachment: 'Video', attachments: 'attachments',
-    healthTitleRequired: 'Health entry title is required.', healthEntrySaved: 'Health entry saved.', healthEntryUpdated: 'Health entry updated.', searchHealthDiary: 'Search title, description or date', noHealthEntries: 'No health entries for this day.', noHealthSearchResults: 'No matching health entries.',
+    healthTitleRequired: 'Health entry title is required.', healthEntrySaved: 'Health entry saved.', healthEntryUpdated: 'Health entry updated.', searchHealthDiary: 'Search this day', healthSearchCurrentDay: 'Current day search', healthSearchHint: 'Searches title, description, category and notes only on the selected day.', noHealthEntries: 'No health entries for this day.', noHealthSearchResults: 'No matching health entries.', healthHomeHint: 'Today’s health notes',
     healthAnalysis: 'Health analysis', last30Days: 'Last 30 days', last180Days: 'Last 180 days', last360Days: 'Last 360 days', allTime: 'All time', recurringEvents: 'Recurring events', recurrenceChart: 'Recurrence chart', healthNoInsight: 'Add health entries to see recurring patterns.', healthRecurringInsight: 'recurring pattern(s), most often', healthRecentInsight: 'health note(s) in the last 30 days, most often',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready health summary exported.', selectedDayHealthNote: 'Health entries for the selected day are shown below.', none: 'none', healthDiaryTracking: 'Track health data', healthDiaryTrackingHint: 'Enable the separate health diary, symptom logging and health analysis.', healthDiaryDisabled: 'Health diary is disabled in Settings.', healthEventsShort: 'events', healthAnalysisWindow: 'Analysis window', healthEventFrequency: 'Event frequency', healthFrequencyColumns: '30 / 180 / 360 days / all', healthSelectedEventTrend: 'Monthly frequency for the selected event',
-    backupOptions: 'Backup contents', backupOptionsBody: 'Choose what should be included in this ZIP backup. Everything is selected by default.', backupIncludeCatalog: 'Activity + saved food items', backupIncludeCatalogHint: 'Local and synced foods, ingredients, recipes, activities and catalog sources.', backupIncludeFoodDiary: 'Food diary', backupIncludeFoodDiaryHint: 'Meal entries, activity logs and weight logs.', backupIncludeHealthDiary: 'Health diary', backupIncludeHealthDiaryHint: 'Health entries with recurrence links and attachments.', backupSelectAtLeastOne: 'Select at least one backup content group.',
+    backupOptions: 'Backup contents', backupOptionsBody: 'Choose what should be included in this ZIP backup. Everything is selected by default.', backupIncludeCatalog: 'Activity + saved food items', backupIncludeCatalogHint: 'Local and synced foods, ingredients, recipes, activities and catalog sources.', backupIncludeFoodDiary: 'Food diary', backupIncludeFoodDiaryHint: 'Meal entries, activity logs and weight logs.', backupIncludeHealthDiary: 'Health diary', backupIncludeHealthDiaryHint: 'Health entries with recurrence links and attachments.', backupIncludeHealthMedia: 'Health attachments', backupIncludeHealthMediaHint: 'Photos and videos attached to health entries. Turn off for a smaller backup.', backupSelectAtLeastOne: 'Select at least one backup content group.', backupExportInProgress: 'Preparing export', backupPreparing: 'Preparing backup data...', backupPacking: 'Packing ZIP file...', backupPackingMedia: 'Packing health photos and videos...', backupOpeningPicker: 'Opening file picker...',
     appPurpose: 'App purpose', profilePurposeMissing: 'Choose at least one purpose.', selectAtLeastOnePurpose: 'Select at least one purpose.', onboardingPurposeIntro: 'What do you want to use Nutrino for? Select at least one option.',
     purposeWeightLoss: 'Weight loss', purposeWeightLossHint: 'Track a calorie deficit and progress.', purposeWeightGain: 'Weight gain', purposeWeightGainHint: 'Track enough intake and weight changes.', purposeHealthyEating: 'Healthy eating', purposeHealthyEatingHint: 'Focus on nutrients and balanced days.', purposeMealLogging: 'Meal logging', purposeMealLoggingHint: 'Keep a simple food diary.', purposeHealthLogging: 'Health issue logging', purposeHealthLoggingHint: 'Track symptoms and recurring signs.',
-    healthAnalysisDayHint: 'Open analysis for the selected day, recurrence context and longer-term trends.', healthClinicalContext: 'Clinical context', healthClinicalContextHint: 'Focuses on recurrence, timing, attachments and category mix. Useful for preparing a concise doctor visit summary.', healthDayPatternAnalysis: 'Selected day patterns', healthDayPatternHint: 'Today / all-time count / average recurrence interval.', healthAverageInterval: 'avg every', healthRecurringSignal: 'recurring', healthNewEvent: 'new', healthNotFrequent: 'not frequent', healthClinicalDisclaimer: 'This summary is a structured diary view, not a diagnosis. Share severe, worsening or urgent symptoms with a clinician.', healthCategoryPain: 'Pain', healthCategoryDigestive: 'Digestive', healthCategoryStool: 'Stool changes', healthCategorySkin: 'Skin', healthCategoryRespiratory: 'Respiratory', healthCategorySleep: 'Sleep', healthCategoryMood: 'Mood', healthCategoryInjury: 'Injury', healthCategoryEnergy: 'Energy', healthCategoryOther: 'Other',
+    healthAnalysisDayHint: 'Open analysis for the selected day, recurrence context and longer-term trends.', healthClinicalContext: 'Clinical context', healthClinicalContextHint: 'Focuses on recurrence, timing, attachments and category mix. Useful for preparing a concise doctor visit summary.', healthDayPatternAnalysis: 'Selected day patterns', healthDayPatternHint: 'Today / all-time count / average recurrence interval.', healthAverageInterval: 'avg every', healthRecurringSignal: 'recurring', healthNewEvent: 'new', healthNotFrequent: 'not frequent', healthClinicalDisclaimer: 'This summary is a structured diary view, not a diagnosis. Share severe, worsening or urgent symptoms with a clinician.', healthStillOngoing: 'Still ongoing', healthStillOngoingHint: 'Ask again tomorrow if this symptom has not resolved.', healthResolvedAt: 'Resolved at', healthNeedsReview: 'needs review', healthResolvedSameDay: 'same day', healthEntriesToReview: 'Health entries to review', healthEntriesToReviewHint: 'Confirm whether symptoms resolved or are still ongoing.', noHealthEntriesToReview: 'No health entries need review.', healthReviewReminderTitle: 'Health diary review', healthReviewReminderBody: 'Review unresolved health entries and symptom duration.', healthOngoing: 'Ongoing', healthAverageDuration: 'Avg duration', searchPreviousHealthEvents: 'Search previous health events', healthNoPreviousEvents: 'No previous health events yet.', healthAttachmentStorageHint: 'Attachments are stored in local app data and can be included or omitted from ZIP backups.', healthAttachmentPreview: 'Preview attachment', healthAttachmentName: 'Attachment name', healthAttachmentMissingData: 'This backup does not contain the attachment file data.', healthAttachmentPreviewUnavailable: 'This photo format cannot be previewed on this device.', lastUsed: 'last used', ignore: 'Ignore', activityAnalysis: 'Activity analysis', activityAnalysisHint: 'Each day shows total active minutes and one pie chart split by activity type.', activityAnalysisRange: 'Activity analysis range', activeDays: 'Active days', activityTypeBreakdown: 'Minutes by activity type', minutesShort: 'min', healthCategoryPain: 'Pain', healthCategoryDigestive: 'Digestive', healthCategoryStool: 'Stool changes', healthCategorySkin: 'Skin', healthCategoryRespiratory: 'Respiratory', healthCategorySleep: 'Sleep', healthCategoryMood: 'Mood', healthCategoryInjury: 'Injury', healthCategoryEnergy: 'Energy', healthCategoryOther: 'Other',
   },
   hu: {
     foodDiary: 'Étel', healthDiary: 'Egészségnapló', addHealthEntry: 'Egészségbejegyzés', editHealthEntry: 'Egészségbejegyzés szerkesztése', duplicateHealthEntry: 'Egészségbejegyzés duplikálása',
     markAgain: 'Újra megtörtént', healthEntrySheetHint: 'Tünetek, jelek vagy szokatlan megfigyelések rögzítése opcionális kontextussal.', newHealthEvent: 'Új esemény', previousHealthEvent: 'Korábbi esemény', choosePreviousEvent: 'Válassz korábbi eseményt',
     now: 'Most', tenMinutesAgo: '10 perce', oneHourAgo: '1 órája', customDateTime: 'Egyedi', date: 'Dátum', time: 'Idő',
     healthTitle: 'Cím, pl. bal térdfájdalom', healthDescription: 'Leírás', healthCategory: 'Kategória', healthNotes: 'Opcionális jegyzetek', addPhoto: 'Fotó', addVideo: 'Videó', photoAttachment: 'Fotó', videoAttachment: 'Videó', attachments: 'csatolmány',
-    healthTitleRequired: 'Az egészségbejegyzés címe kötelező.', healthEntrySaved: 'Egészségbejegyzés mentve.', healthEntryUpdated: 'Egészségbejegyzés frissítve.', searchHealthDiary: 'Keresés cím, leírás vagy dátum szerint', noHealthEntries: 'Nincs egészségbejegyzés erre a napra.', noHealthSearchResults: 'Nincs találat az egészségnaplóban.',
+    healthTitleRequired: 'Az egészségbejegyzés címe kötelező.', healthEntrySaved: 'Egészségbejegyzés mentve.', healthEntryUpdated: 'Egészségbejegyzés frissítve.', searchHealthDiary: 'Keresés ezen a napon', healthSearchCurrentDay: 'Keresés az aktuális napon', healthSearchHint: 'Csak a kiválasztott nap címeiben, leírásaiban, kategóriáiban és jegyzeteiben keres.', noHealthEntries: 'Nincs egészségbejegyzés erre a napra.', noHealthSearchResults: 'Nincs találat az egészségnaplóban.', healthHomeHint: 'Mai egészségjegyzetek',
     healthAnalysis: 'Egészség analízis', last30Days: 'Utolsó 30 nap', last180Days: 'Utolsó 180 nap', last360Days: 'Utolsó 360 nap', allTime: 'Összes idő', recurringEvents: 'Visszatérő események', recurrenceChart: 'Ismétlődés diagram', healthNoInsight: 'Adj hozzá egészségbejegyzéseket a visszatérő mintákhoz.', healthRecurringInsight: 'visszatérő minta, leggyakrabban', healthRecentInsight: 'egészségjegyzet az utolsó 30 napban, leggyakrabban',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready egészség összefoglaló exportálva.', selectedDayHealthNote: 'A kiválasztott nap egészségbejegyzései lent láthatók.', none: 'nincs', healthDiaryTracking: 'Egészségügyi adatok vezetése', healthDiaryTrackingHint: 'Külön egészségnapló, tünetrögzítés és egészség analízis bekapcsolása.', healthDiaryDisabled: 'Az egészségnapló ki van kapcsolva a beállításokban.', healthEventsShort: 'esemény', healthAnalysisWindow: 'Elemzési időszak', healthEventFrequency: 'Esemény gyakoriság', healthFrequencyColumns: '30 / 180 / 360 nap / összes', healthSelectedEventTrend: 'A kiválasztott esemény havi gyakorisága',
-    backupOptions: 'Backup tartalma', backupOptionsBody: 'Válaszd ki, mi kerüljön ebbe a ZIP mentésbe. Alapból minden be van pipálva.', backupIncludeCatalog: 'Aktivitás + étel mentett tételek', backupIncludeCatalogHint: 'Helyi és szinkronizált ételek, alapanyagok, receptek, aktivitások és katalógusforrások.', backupIncludeFoodDiary: 'Étel napló', backupIncludeFoodDiaryHint: 'Étkezések, aktivitásnaplók és súlynapló.', backupIncludeHealthDiary: 'Egészségügyi napló', backupIncludeHealthDiaryHint: 'Egészségbejegyzések ismétlődési kapcsolatokkal és csatolmányokkal.', backupSelectAtLeastOne: 'Legalább egy backup tartalmi csoportot válassz ki.',
+    backupOptions: 'Backup tartalma', backupOptionsBody: 'Válaszd ki, mi kerüljön ebbe a ZIP mentésbe. Alapból minden be van pipálva.', backupIncludeCatalog: 'Aktivitás + étel mentett tételek', backupIncludeCatalogHint: 'Helyi és szinkronizált ételek, alapanyagok, receptek, aktivitások és katalógusforrások.', backupIncludeFoodDiary: 'Étel napló', backupIncludeFoodDiaryHint: 'Étkezések, aktivitásnaplók és súlynapló.', backupIncludeHealthDiary: 'Egészségügyi napló', backupIncludeHealthDiaryHint: 'Egészségbejegyzések ismétlődési kapcsolatokkal és csatolmányokkal.', backupIncludeHealthMedia: 'Egészségügyi csatolmányok', backupIncludeHealthMediaHint: 'Az egészségbejegyzésekhez csatolt fotók és videók. Kisebb backuphoz kapcsold ki.', backupSelectAtLeastOne: 'Legalább egy backup tartalmi csoportot válassz ki.', backupExportInProgress: 'Export készítése', backupPreparing: 'Backup adatok előkészítése...', backupPacking: 'ZIP fájl csomagolása...', backupPackingMedia: 'Egészségügyi fotók és videók csomagolása...', backupOpeningPicker: 'Fájlkezelő megnyitása...',
     appPurpose: 'App használati cél', profilePurposeMissing: 'Válassz legalább egy célt.', selectAtLeastOnePurpose: 'Válassz legalább egy célt.', onboardingPurposeIntro: 'Mire szeretnéd használni a Nutrinót? Válassz legalább egy opciót.',
     purposeWeightLoss: 'Fogyás', purposeWeightLossHint: 'Deficit és haladás követése.', purposeWeightGain: 'Tömegnövelés', purposeWeightGainHint: 'Elég bevitel és súlyváltozás követése.', purposeHealthyEating: 'Egészséges étkezés', purposeHealthyEatingHint: 'Tápanyagok és kiegyensúlyozott napok.', purposeMealLogging: 'Étkezésnapló', purposeMealLoggingHint: 'Egyszerű ételnapló vezetése.', purposeHealthLogging: 'Egészségprobléma naplózás', purposeHealthLoggingHint: 'Tünetek és visszatérő jelek követése.',
-    healthAnalysisDayHint: 'Elemzés megnyitása a kiválasztott naphoz, ismétlődési kontextussal és hosszabb távú trendekkel.', healthClinicalContext: 'Klinikai kontextus', healthClinicalContextHint: 'Ismétlődésre, időzítésre, csatolmányokra és kategória-eloszlásra fókuszál. Orvosi konzultáció előkészítéséhez hasznos.', healthDayPatternAnalysis: 'Kiválasztott napi minták', healthDayPatternHint: 'Mai / összes előfordulás / átlagos ismétlődési távolság.', healthAverageInterval: 'átlagosan ennyi naponta:', healthRecurringSignal: 'visszatérő', healthNewEvent: 'új', healthNotFrequent: 'nem gyakori', healthClinicalDisclaimer: 'Ez strukturált naplóösszefoglaló, nem diagnózis. Súlyosbodó, erős vagy sürgős tünettel fordulj orvoshoz.', healthCategoryPain: 'Fájdalom', healthCategoryDigestive: 'Emésztés', healthCategoryStool: 'Székletváltozás', healthCategorySkin: 'Bőr', healthCategoryRespiratory: 'Légzés', healthCategorySleep: 'Alvás', healthCategoryMood: 'Hangulat', healthCategoryInjury: 'Sérülés', healthCategoryEnergy: 'Energia', healthCategoryOther: 'Egyéb',
+    healthAnalysisDayHint: 'Elemzés megnyitása a kiválasztott naphoz, ismétlődési kontextussal és hosszabb távú trendekkel.', healthClinicalContext: 'Klinikai kontextus', healthClinicalContextHint: 'Ismétlődésre, időzítésre, csatolmányokra és kategória-eloszlásra fókuszál. Orvosi konzultáció előkészítéséhez hasznos.', healthDayPatternAnalysis: 'Kiválasztott napi minták', healthDayPatternHint: 'Mai / összes előfordulás / átlagos ismétlődési távolság.', healthAverageInterval: 'átlagosan ennyi naponta:', healthRecurringSignal: 'visszatérő', healthNewEvent: 'új', healthNotFrequent: 'nem gyakori', healthClinicalDisclaimer: 'Ez strukturált naplóösszefoglaló, nem diagnózis. Súlyosbodó, erős vagy sürgős tünettel fordulj orvoshoz.', healthStillOngoing: 'Még nem múlt el', healthStillOngoingHint: 'Ha még tart, holnap újra rákérdez az app.', healthResolvedAt: 'Elmúlt ekkor', healthNeedsReview: 'átnézendő', healthResolvedSameDay: 'azonos nap', healthEntriesToReview: 'Átnézendő egészségügyi bejegyzések', healthEntriesToReviewHint: 'Jelöld, hogy elmúlt-e a tünet, vagy még tart.', noHealthEntriesToReview: 'Nincs átnézendő egészségügyi bejegyzés.', healthReviewReminderTitle: 'Egészségnapló átnézés', healthReviewReminderBody: 'Nézd át a nyitott egészségbejegyzéseket és a tünetek időtartamát.', healthOngoing: 'Még tart', healthAverageDuration: 'Átlag időtartam', searchPreviousHealthEvents: 'Korábbi egészségesemények keresése', healthNoPreviousEvents: 'Még nincs korábbi egészségesemény.', healthAttachmentStorageHint: 'A csatolmányok helyi appadatként vannak tárolva, és ZIP backupba betehetők vagy kihagyhatók.', healthAttachmentPreview: 'Csatolmány megtekintése', healthAttachmentName: 'Csatolmány neve', healthAttachmentMissingData: 'Ez a backup nem tartalmazza a csatolmány fájladatát.', healthAttachmentPreviewUnavailable: 'Ezt a fotóformátumot ezen az eszközön nem lehet előnézetben megjeleníteni.', lastUsed: 'utoljára', ignore: 'Figyelmen kívül hagyás', activityAnalysis: 'Aktivitás analízis', activityAnalysisHint: 'Minden napnál látszik az aktív perc összesen, és egy kördiagram típusok szerinti percmegosztással.', activityAnalysisRange: 'Aktivitás elemzési időszak', activeDays: 'Aktív napok', activityTypeBreakdown: 'Percek aktivitástípus szerint', minutesShort: 'perc', healthCategoryPain: 'Fájdalom', healthCategoryDigestive: 'Emésztés', healthCategoryStool: 'Székletváltozás', healthCategorySkin: 'Bőr', healthCategoryRespiratory: 'Légzés', healthCategorySleep: 'Alvás', healthCategoryMood: 'Hangulat', healthCategoryInjury: 'Sérülés', healthCategoryEnergy: 'Energia', healthCategoryOther: 'Egyéb',
   },
 };
 translations.en = { ...translations.en, ...normalizeTranslationValues(mobileHealthDiaryTranslations.en || {}) };
@@ -7274,7 +7441,7 @@ function selectedLanguageLabel() {
 
 function setLanguage(code: AppLanguage) {
   state.settings.language = code;
-  saveState(state);
+  saveStateJson(serializeStateForLocalPersistence());
 }
 
 function ensureLocalNameI18n(): LocalizedNameMap {
@@ -8549,10 +8716,90 @@ function healthRecurrenceCount(entry: HealthEntry) {
 
 function healthEntrySubtitle(entry: HealthEntry) {
   const count = healthRecurrenceCount(entry);
-  const parts = [formatDateTime(entry.occurred_at), healthCategoryLabel(entry.category)];
+  const parts = [formatDateTime(entry.occurred_at), healthCategoryLabel(entry.category), healthDurationText(entry)];
   if (count > 1) parts.push(`${count}x`);
   if (entry.attachments.length) parts.push(`${entry.attachments.length} ${t('attachments')}`);
   return parts.join(' · ');
+}
+
+function healthAutoResolvedAt(entry: HealthEntry, now = Date.now()) {
+  if (entry.ongoing === true) return null;
+  const end = dayEndMs(dateKey(new Date(entry.occurred_at))) - 1;
+  return now > end ? end : null;
+}
+
+function healthEntryResolvedAt(entry: HealthEntry, now = Date.now()) {
+  const explicit = Number(entry.resolved_at || 0);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.max(explicit, entry.occurred_at);
+  return healthAutoResolvedAt(entry, now);
+}
+
+function healthEntryDurationDays(entry: HealthEntry, now = Date.now()) {
+  const end = healthEntryResolvedAt(entry, now) ?? now;
+  return Math.max(1, Math.ceil((end - entry.occurred_at + 1) / 86400000));
+}
+
+function healthDurationText(entry: HealthEntry) {
+  if (entry.ongoing === true && !entry.resolved_at) return t('healthStillOngoing');
+  const resolvedAt = healthEntryResolvedAt(entry);
+  if (!resolvedAt) return t('healthNeedsReview');
+  const days = healthEntryDurationDays(entry, resolvedAt);
+  return days <= 1 ? t('healthResolvedSameDay') : `${days} ${t('days')}`;
+}
+
+function healthEntryNeedsReview(entry: HealthEntry) {
+  if (!healthDiaryEnabled.value || entry.deleted_at) return false;
+  if (healthEntryResolvedAt(entry)) return false;
+  const today = todayKey.value;
+  if (entry.review_dismissed_at && dateKey(new Date(entry.review_dismissed_at)) === today) return false;
+  if (entry.ongoing === true) return dateKey(new Date(entry.last_reviewed_at || 0)) !== today;
+  return dateKey(new Date(entry.occurred_at)) === today;
+}
+
+function healthReviewSubtitle(entry: HealthEntry) {
+  const started = formatDateTime(entry.occurred_at);
+  return `${started} · ${healthCategoryLabel(entry.category)} · ${healthDurationText(entry)}`;
+}
+
+function ignoreHealthReview(entry: HealthEntry) {
+  const now = Date.now();
+  state.healthEntries = state.healthEntries.map((item) => item.id === entry.id ? {
+    ...item,
+    review_dismissed_at: now,
+    updated_at: now,
+  } : item);
+  queueReminderScheduleRefresh();
+}
+
+function openHealthReviewDay(entry: HealthEntry) {
+  const key = dateKey(new Date(entry.occurred_at));
+  selectedDate.value = key;
+  calendarMonth.value = new Date(dayStartMs(key));
+  unlockedDiaryDate.value = key;
+  activeTab.value = 'diary';
+  diaryTab.value = 'health';
+  healthReviewOpen.value = true;
+  highlightedHealthReviewEntryId.value = entry.id;
+  if (highlightedReviewTimer) window.clearTimeout(highlightedReviewTimer);
+  highlightedReviewTimer = window.setTimeout(() => {
+    if (highlightedHealthReviewEntryId.value === entry.id) highlightedHealthReviewEntryId.value = null;
+  }, 6500);
+  showToast(activeLanguage.value === 'hu' ? `${key} nap betöltve.` : `${key} loaded.`);
+  void nextTick(() => {
+    const target = document.getElementById(`health-entry-${entry.id}`);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    else scrollToPageTop();
+  });
+}
+
+function openHealthReviewEntry(entry: HealthEntry) {
+  openHealthReviewDay(entry);
+  healthEditorMode.value = 'edit';
+  healthEditorId.value = entry.id;
+  healthRecurrenceSourceId.value = entry.event_id;
+  fillHealthFormFromEntry(entry);
+  if (!entry.ongoing && !entry.resolved_at) setHealthFormResolvedTimestamp(Date.now());
+  healthEditorOpen.value = true;
 }
 
 function setHealthFormTimestamp(value: number) {
@@ -8568,6 +8815,25 @@ function healthFormOccurredAt() {
   return Number.isFinite(value) ? value : Date.now();
 }
 
+function setHealthFormResolvedTimestamp(value: number | null) {
+  if (!value || !Number.isFinite(value)) {
+    healthForm.resolvedDate = '';
+    healthForm.resolvedTime = '';
+    return;
+  }
+  const date = new Date(value);
+  healthForm.resolvedDate = dateKey(date);
+  healthForm.resolvedTime = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function healthFormResolvedAt(): number | null {
+  if (healthForm.ongoing || !healthForm.resolvedDate || !healthForm.resolvedTime) return null;
+  const [year, month, day] = healthForm.resolvedDate.split('-').map(Number);
+  const [hour, minute] = healthForm.resolvedTime.split(':').map(Number);
+  const value = new Date(year || new Date().getFullYear(), (month || 1) - 1, day || 1, hour || 0, minute || 0, 0, 0).getTime();
+  return Number.isFinite(value) ? Math.max(value, healthFormOccurredAt()) : null;
+}
+
 function applyHealthQuickTime(option: HealthQuickTime) {
   healthQuickTime.value = option;
   if (option === 'custom') return;
@@ -8581,9 +8847,12 @@ function resetHealthForm(timestamp = timestampForLogDay(activeLogDateKey.value))
   healthForm.description = '';
   healthForm.category = 'other';
   healthForm.notes = '';
+  healthForm.ongoing = false;
+  setHealthFormResolvedTimestamp(null);
   healthForm.attachments = [];
   healthEditorId.value = null;
   healthRecurrenceSourceId.value = null;
+  healthRecurrenceSearch.value = '';
   applyHealthQuickTime('now');
   if (activeLogDateKey.value !== todayKey.value) {
     healthQuickTime.value = 'custom';
@@ -8591,12 +8860,14 @@ function resetHealthForm(timestamp = timestampForLogDay(activeLogDateKey.value))
   }
 }
 
-function fillHealthFormFromEntry(entry: HealthEntry, timestamp = entry.occurred_at) {
+function fillHealthFormFromEntry(entry: HealthEntry, timestamp = entry.occurred_at, includeAttachments = true) {
   healthForm.title = entry.title;
   healthForm.description = entry.description;
   healthForm.category = entry.category;
   healthForm.notes = entry.notes || '';
-  healthForm.attachments = entry.attachments.map((attachment) => ({ ...attachment, id: generateId('health-attachment') }));
+  healthForm.ongoing = entry.ongoing === true;
+  setHealthFormResolvedTimestamp(entry.resolved_at || null);
+  healthForm.attachments = includeAttachments ? entry.attachments.map((attachment) => ({ ...attachment })) : [];
   healthQuickTime.value = 'custom';
   setHealthFormTimestamp(timestamp);
 }
@@ -8616,9 +8887,10 @@ function openHealthRecurrence(entry?: HealthEntry) {
   const source = entry || reusableHealthEvents.value[0];
   healthEditorMode.value = 'recurrence';
   resetHealthForm();
+  healthRecurrenceSearch.value = '';
   if (source) {
     healthRecurrenceSourceId.value = source.event_id;
-    fillHealthFormFromEntry(healthEventEntry(source), timestampForLogDay(activeLogDateKey.value));
+    fillHealthFormFromEntry(healthEventEntry(source), timestampForLogDay(activeLogDateKey.value), false);
   }
   healthEditorOpen.value = true;
   nextTick(() => scrollFocusedInputIntoView());
@@ -8641,7 +8913,7 @@ function duplicateHealthEntry(entry: HealthEntry) {
   healthEditorMode.value = 'duplicate';
   healthEditorId.value = null;
   healthRecurrenceSourceId.value = entry.event_id;
-  fillHealthFormFromEntry(entry, timestampForLogDay(activeLogDateKey.value));
+  fillHealthFormFromEntry(entry, timestampForLogDay(activeLogDateKey.value), false);
   healthEditorOpen.value = true;
   nextTick(() => scrollFocusedInputIntoView());
 }
@@ -8656,14 +8928,19 @@ function selectedHealthRecurrenceSource() {
   return eventId ? reusableHealthEvents.value.find((entry) => entry.event_id === eventId) || null : null;
 }
 
+function selectHealthRecurrenceEvent(entry: HealthEntry) {
+  healthRecurrenceSourceId.value = entry.event_id;
+  if (healthEditorMode.value === 'recurrence') fillHealthFormFromEntry(healthEventEntry(entry), healthFormOccurredAt(), false);
+}
+
 function chooseHealthRecurrenceSource(event: Event) {
   const eventId = (event.target as HTMLSelectElement | null)?.value || '';
   healthRecurrenceSourceId.value = eventId || null;
   const source = eventId ? reusableHealthEvents.value.find((entry) => entry.event_id === eventId) : null;
-  if (source && healthEditorMode.value === 'recurrence') fillHealthFormFromEntry(healthEventEntry(source), healthFormOccurredAt());
+  if (source && healthEditorMode.value === 'recurrence') fillHealthFormFromEntry(healthEventEntry(source), healthFormOccurredAt(), false);
 }
 
-function saveHealthEntry() {
+async function saveHealthEntry() {
   const title = healthForm.title.trim();
   if (!title) return showToast(t('healthTitleRequired'));
   const description = healthForm.description.trim();
@@ -8671,6 +8948,7 @@ function saveHealthEntry() {
   const occurredAt = healthFormOccurredAt();
   const existing = healthEditorId.value ? state.healthEntries.find((entry) => entry.id === healthEditorId.value) : null;
   const source = selectedHealthRecurrenceSource();
+  if (healthEditorMode.value === 'recurrence' && !source) return showToast(t('choosePreviousEvent'));
   const id = existing?.id || generateId('health-entry');
   const eventId = healthEditorMode.value === 'new'
     ? id
@@ -8678,6 +8956,7 @@ function saveHealthEntry() {
   const recurrenceOfId = healthEditorMode.value === 'new'
     ? null
     : source?.id || existing?.recurrence_of_id || null;
+  const resolvedAt = healthFormResolvedAt();
   const payload: HealthEntry = {
     id,
     profile_id: state.profile.id,
@@ -8689,13 +8968,23 @@ function saveHealthEntry() {
     category: healthForm.category,
     notes: healthForm.notes.trim() || null,
     attachments: healthForm.attachments.map((attachment) => ({ ...attachment })),
+    ongoing: healthForm.ongoing === true,
+    resolved_at: healthForm.ongoing ? null : resolvedAt,
+    last_reviewed_at: healthForm.ongoing || resolvedAt ? now : existing?.last_reviewed_at ?? null,
+    review_dismissed_at: existing?.review_dismissed_at ?? null,
     created_at: existing?.created_at || now,
     updated_at: now,
     deleted_at: null,
   };
+  try {
+    await saveHealthEntryMedia(payload);
+  } catch (error) {
+    console.warn('Could not persist health attachment media', error);
+  }
   if (existing) state.healthEntries = state.healthEntries.map((entry) => entry.id === existing.id ? payload : entry);
   else state.healthEntries.push(payload);
   closeHealthEditor();
+  queueReminderScheduleRefresh();
   showToast(t(healthEditorMode.value === 'edit' ? 'healthEntryUpdated' : 'healthEntrySaved'));
 }
 
@@ -8705,21 +8994,87 @@ function removeHealthEntry(id: string) {
   state.healthEntries = state.healthEntries.map((entry) => entry.id === id ? { ...entry, deleted_at: now, updated_at: now } : entry);
 }
 
-function readHealthAttachmentFile(file: File, type: 'photo' | 'video'): Promise<HealthAttachment> {
+function healthAttachmentDisplayName(attachment: HealthAttachment) {
+  return String(attachment.display_name || attachment.name || '').trim();
+}
+
+function healthAttachmentFileFingerprint(file: File, type: 'photo' | 'video') {
+  return `${type}:${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function healthAttachmentSignature(attachment: HealthAttachment) {
+  return attachment.fingerprint || `${attachment.type}:${attachment.name}:${attachment.size}:${String(attachment.data_url || '').slice(0, 80)}`;
+}
+
+function openHealthAttachmentPreview(attachment: HealthAttachment) {
+  if (!attachment.data_url) {
+    showToast(t('healthAttachmentMissingData'));
+    return;
+  }
+  healthPreviewAttachment.value = attachment;
+}
+
+function healthAttachmentIsHeic(attachment: Pick<HealthAttachment, 'name' | 'mime_type'>) {
+  return /image\/hei[cf]/i.test(attachment.mime_type || '') || /\.(hei[cf])$/i.test(attachment.name || '');
+}
+
+function healthAttachmentPreviewSource(attachment: HealthAttachment) {
+  if (attachment.type === 'video') return attachment.data_url;
+  return attachment.preview_data_url || (healthAttachmentIsHeic(attachment) ? '' : attachment.data_url);
+}
+
+function guessHealthAttachmentMime(file: File, type: 'photo' | 'video') {
+  if (file.type) return file.type;
+  if (/\.(heic)$/i.test(file.name)) return 'image/heic';
+  if (/\.(heif)$/i.test(file.name)) return 'image/heif';
+  return type === 'photo' ? 'image/*' : 'video/*';
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve({
-      id: generateId('health-attachment'),
-      type,
-      name: file.name || `${type}-${Date.now()}`,
-      mime_type: file.type || (type === 'photo' ? 'image/*' : 'video/*'),
-      size: file.size,
-      data_url: String(reader.result || ''),
-      created_at: Date.now(),
-    });
+    reader.onload = () => resolve(String(reader.result || ''));
     reader.onerror = () => reject(reader.error || new Error('Could not read file'));
     reader.readAsDataURL(file);
   });
+}
+
+async function createPhotoPreviewDataUrl(file: File) {
+  if (!/\.(hei[cf])$/i.test(file.name) && !/image\/hei[cf]/i.test(file.type || '')) return null;
+  if (typeof createImageBitmap !== 'function') return null;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxDimension = 1800;
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return canvas.toDataURL('image/jpeg', 0.9);
+  } catch {
+    return null;
+  }
+}
+
+async function readHealthAttachmentFile(file: File, type: 'photo' | 'video'): Promise<HealthAttachment> {
+  const dataUrl = await readFileAsDataUrl(file);
+  const mime = guessHealthAttachmentMime(file, type);
+  const previewDataUrl = type === 'photo' ? await createPhotoPreviewDataUrl(file) : null;
+  return {
+    id: generateId('health-attachment'),
+    type,
+    name: file.name || `${type}-${Date.now()}`,
+    display_name: file.name || `${type}-${Date.now()}`,
+    mime_type: mime,
+    size: file.size,
+    data_url: dataUrl,
+    preview_data_url: previewDataUrl,
+    fingerprint: healthAttachmentFileFingerprint(file, type),
+    created_at: Date.now(),
+  };
 }
 
 async function addHealthAttachments(event: Event, type: 'photo' | 'video') {
@@ -8727,9 +9082,14 @@ async function addHealthAttachments(event: Event, type: 'photo' | 'video') {
   const files = Array.from(input?.files || []).slice(0, Math.max(0, 8 - healthForm.attachments.length));
   if (!files.length) return;
   const loaded: HealthAttachment[] = [];
+  const seen = new Set(healthForm.attachments.map(healthAttachmentSignature));
   for (const file of files) {
     await yieldToUi();
-    loaded.push(await readHealthAttachmentFile(file, type));
+    const attachment = await readHealthAttachmentFile(file, type);
+    const signature = healthAttachmentSignature(attachment);
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    loaded.push(attachment);
   }
   healthForm.attachments = [...healthForm.attachments, ...loaded].slice(0, 8);
   if (input) input.value = '';
@@ -8748,6 +9108,7 @@ function healthRangeDays(range: HealthAnalysisRangeKey) {
 }
 
 function healthRangeLabel(range: HealthAnalysisRangeKey) {
+  if (range === 'custom') return t('customDateTime');
   const option = healthAnalysisRanges.find((item) => item.key === range);
   return t(option?.labelKey || 'allTime');
 }
@@ -8798,6 +9159,9 @@ function buildHealthAnalysisSummary() {
   const topCategory = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1])[0];
   const latest = latestHealthEntry(entries);
   const topEvent = buildHealthEventFrequencyRows(entries)[0] || null;
+  const ongoing = entries.filter((entry) => entry.ongoing === true && !healthEntryResolvedAt(entry)).length;
+  const durations = entries.map((entry) => healthEntryDurationDays(entry)).filter((value) => Number.isFinite(value));
+  const averageDurationDays = durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
   return {
     total: entries.length,
     recent: recent.length,
@@ -8808,6 +9172,8 @@ function buildHealthAnalysisSummary() {
     topCategory: topCategory ? healthCategoryLabel(topCategory[0]) : t('none'),
     topEventTitle: topEvent?.title || t('none'),
     latest,
+    ongoing,
+    averageDurationDays,
   };
 }
 
@@ -8925,6 +9291,12 @@ function openHealthAnalysisModal() {
   if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
   if (!healthCustomEndDate.value) healthCustomEndDate.value = dateKey();
   healthAnalysisModalOpen.value = true;
+}
+
+function selectHealthAnalysisEvent(eventId: string) {
+  healthSelectedEventId.value = eventId;
+  healthEventPickerOpen.value = false;
+  healthEventPickerSearch.value = '';
 }
 
 function setHealthAnalysisRange(range: HealthAnalysisRangeKey) {
@@ -9061,10 +9433,14 @@ function buildHealthAiSummary() {
       description: entry.description,
       category: entry.category,
       notes: entry.notes || '',
+      ongoing: entry.ongoing === true,
+      resolved_at: healthEntryResolvedAt(entry) ? new Date(healthEntryResolvedAt(entry) || 0).toISOString() : null,
+      duration_days: healthEntryDurationDays(entry),
+      needs_review: healthEntryNeedsReview(entry),
       attachments: entry.attachments.map((attachment) => ({
         id: attachment.id,
         type: attachment.type,
-        name: attachment.name,
+        name: healthAttachmentDisplayName(attachment),
         mime_type: attachment.mime_type,
         size: attachment.size,
       })),
@@ -9121,6 +9497,103 @@ async function exportHealthAiSummary() {
 
 function activityType(activity: ActivityDefinition) {
   return activity.type ?? activity.activity_type ?? 'custom';
+}
+
+function activityDefinitionForLog(entry: ActivityLog) {
+  return entry.activity_id ? state.activities.find((activity) => activity.id === entry.activity_id) || null : null;
+}
+
+function activityTypeForLog(entry: ActivityLog) {
+  const definition = activityDefinitionForLog(entry);
+  if (definition) return activityType(definition) || 'custom';
+  if (entry.source === 'watch') return 'watch';
+  if (entry.source === 'manual') return 'manual';
+  return 'custom';
+}
+
+function activityTypeLabel(type: string) {
+  if (type === 'watch') return t('watch');
+  if (type === 'manual') return t('manual');
+  if (type === 'custom') return activeLanguage.value === 'hu' ? 'Egyedi' : 'Custom';
+  return type
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toLocaleUpperCase(currentLocale()));
+}
+
+function activityColorForType(type: string, fallbackIndex = 0) {
+  let hash = 0;
+  for (const char of type) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return activityAnalysisPalette[(hash || fallbackIndex) % activityAnalysisPalette.length];
+}
+
+function activityPieBackground(segments: Array<{ color: string; percent: number }>) {
+  if (!segments.length) return 'conic-gradient(var(--surface-container-highest) 0 100%)';
+  let cursor = 0;
+  const stops = segments.map((segment, index) => {
+    const start = cursor;
+    const end = index === segments.length - 1 ? 100 : Math.min(100, cursor + segment.percent);
+    cursor = end;
+    return `${segment.color} ${start}% ${end}%`;
+  });
+  return `conic-gradient(${stops.join(', ')})`;
+}
+
+function buildActivityAnalysisRows(days: number, centerKey = selectedDate.value) {
+  return buildCenteredDateKeys(centerKey, Math.max(1, days)).map((key) => {
+    const entries = dayActivities(key).sort((a, b) => a.performed_at - b.performed_at);
+    const byType = new Map<string, { type: string; label: string; minutes: number; kcal: number; color: string }>();
+    for (const entry of entries) {
+      const type = activityTypeForLog(entry);
+      const current = byType.get(type) || {
+        type,
+        label: activityTypeLabel(type),
+        minutes: 0,
+        kcal: 0,
+        color: activityColorForType(type, byType.size),
+      };
+      current.minutes += Math.max(0, Math.round(Number(entry.duration_min || 0)));
+      current.kcal += Math.max(0, Math.round(Number(entry.kcal || 0)));
+      byType.set(type, current);
+    }
+    const totalMinutes = [...byType.values()].reduce((sum, row) => sum + row.minutes, 0);
+    const segments = [...byType.values()]
+      .sort((a, b) => b.minutes - a.minutes || a.label.localeCompare(b.label, currentLocale(), { sensitivity: 'base' }))
+      .map((row) => ({
+        ...row,
+        percent: totalMinutes ? Math.round(row.minutes / totalMinutes * 1000) / 10 : 0,
+      }));
+    return {
+      key,
+      label: formatDate(dayStartMs(key)),
+      selected: key === selectedDate.value,
+      entries,
+      totalMinutes,
+      totalKcal: entries.reduce((sum, entry) => sum + Math.max(0, Math.round(Number(entry.kcal || 0))), 0),
+      segments,
+    };
+  });
+}
+
+function buildActivityAnalysisTypeRows(rows: ReturnType<typeof buildActivityAnalysisRows>) {
+  const byType = new Map<string, { type: string; label: string; minutes: number; kcal: number; color: string }>();
+  for (const row of rows) {
+    for (const segment of row.segments) {
+      const current = byType.get(segment.type) || { type: segment.type, label: segment.label, minutes: 0, kcal: 0, color: segment.color };
+      current.minutes += segment.minutes;
+      current.kcal += segment.kcal;
+      byType.set(segment.type, current);
+    }
+  }
+  const total = Math.max(1, [...byType.values()].reduce((sum, row) => sum + row.minutes, 0));
+  return [...byType.values()]
+    .sort((a, b) => b.minutes - a.minutes || a.label.localeCompare(b.label, currentLocale(), { sensitivity: 'base' }))
+    .map((row) => ({ ...row, percent: Math.round(row.minutes / total * 1000) / 10 }));
+}
+
+function openActivityAnalysis() {
+  activityAnalysisOpen.value = true;
 }
 
 function activityDisplayName(activity: ActivityDefinition) {
@@ -9856,7 +10329,8 @@ async function ensureNotificationPermissionForReminders() {
   if (!state.settings.daily_reminder
     && !state.settings.daily_weight_reminder_enabled
     && !state.settings.meal_reminders_enabled
-    && !state.settings.calorie_limit_warning_enabled) {
+    && !state.settings.calorie_limit_warning_enabled
+    && !state.settings.health_diary_enabled) {
     return;
   }
 
@@ -9885,6 +10359,8 @@ function notificationScheduleSignature(): string {
     state.settings.meal_reminder_noon_time,
     state.settings.meal_reminder_afternoon_time,
     state.settings.calorie_limit_warning_enabled,
+    state.settings.health_diary_enabled,
+    state.healthEntries.filter((entry) => !entry.deleted_at && !entry.resolved_at && entry.ongoing === true).length,
   ].join('|');
 }
 
@@ -9894,6 +10370,7 @@ function notificationPermissionSignature(): string {
     state.settings.daily_weight_reminder_enabled,
     state.settings.meal_reminders_enabled,
     state.settings.calorie_limit_warning_enabled,
+    state.settings.health_diary_enabled,
   ].join('|');
 }
 
@@ -10071,10 +10548,15 @@ function weightNotificationActionLabel(): string {
   return activeLanguage.value === 'hu' ? 'Súly rögzítése' : 'Log weight';
 }
 
+function healthReviewNotificationActionLabel(): string {
+  return activeLanguage.value === 'hu' ? 'Átnézés' : 'Review';
+}
+
 function notificationActionMetadata(kind?: NutrinoNotificationKind, mealType?: MealType): { actionId?: NutrinoNotificationAction; actionTitle?: string } {
   if (kind === 'weight') return { actionId: 'log-weight', actionTitle: weightNotificationActionLabel() };
   if (kind === 'meal' && mealType) return { actionId: mealNotificationActionId(mealType), actionTitle: mealNotificationActionLabel(mealType) };
   if (kind === 'deficit') return { actionId: 'open-analysis', actionTitle: notificationActionTitle('openAnalysis', 'Open analysis') };
+  if (kind === 'health-review') return { actionId: 'open-health-review', actionTitle: healthReviewNotificationActionLabel() };
   return {};
 }
 
@@ -10109,6 +10591,12 @@ async function registerNotificationActionTypes() {
       id: NOTIFICATION_ACTION_TYPES.deficit,
       actions: [
         { id: 'open-analysis', title: notificationActionTitle('openAnalysis', 'Open analysis'), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.healthReview,
+      actions: [
+        { id: 'open-health-review', title: healthReviewNotificationActionLabel(), requiresAuthentication: false, foreground: true },
       ],
     },
   ]);
@@ -10182,6 +10670,17 @@ function scheduledReminderDefinitions(): ScheduledReminderConfig[] {
         actionTypeId: mealNotificationActionType('dinner'),
       },
     );
+  }
+  if (state.settings.health_diary_enabled && pendingHealthReviewEntries.value.length) {
+    reminders.push({
+      id: REMINDER_NOTIFICATION_IDS.healthReview,
+      key: 'health.review',
+      time: HEALTH_REVIEW_REMINDER_TIME,
+      title: t('healthReviewReminderTitle'),
+      body: t('healthReviewReminderBody'),
+      kind: 'health-review',
+      actionTypeId: NOTIFICATION_ACTION_TYPES.healthReview,
+    });
   }
   return reminders.filter((reminder) => parseReminderTime(reminder.time));
 }
@@ -10291,7 +10790,7 @@ async function initializeNotifications() {
 
 function normalizeNotificationAction(action: unknown): NutrinoNotificationAction {
   const value = String(action || 'tap');
-  return ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'dismiss'].includes(value)
+  return ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'open-health-review', 'dismiss'].includes(value)
     ? value as NutrinoNotificationAction
     : 'tap';
 }
@@ -10331,7 +10830,7 @@ function normalizeNotificationExtra(extra: unknown): Partial<NutrinoNotification
   };
   const result: Partial<NutrinoNotificationExtra> = {};
   if (merged.nutrino === true) result.nutrino = true;
-  if (['daily', 'weight', 'meal', 'deficit'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
+  if (['daily', 'weight', 'meal', 'deficit', 'health-review'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
   if (['breakfast', 'lunch', 'dinner', 'snack'].includes(String(merged.mealType))) result.mealType = merged.mealType as MealType;
   if (typeof merged.scheduledTime === 'string') result.scheduledTime = merged.scheduledTime;
   return result;
@@ -10350,6 +10849,7 @@ function notificationExtraFromId(notificationId: number | undefined): Partial<Nu
   if (notificationId === REMINDER_NOTIFICATION_IDS.mealMorning) return { nutrino: true, kind: 'meal', mealType: 'breakfast' };
   if (notificationId === REMINDER_NOTIFICATION_IDS.mealNoon) return { nutrino: true, kind: 'meal', mealType: 'lunch' };
   if (notificationId === REMINDER_NOTIFICATION_IDS.mealAfternoon) return { nutrino: true, kind: 'meal', mealType: 'dinner' };
+  if (notificationId === REMINDER_NOTIFICATION_IDS.healthReview) return { nutrino: true, kind: 'health-review' };
   return {};
 }
 
@@ -10390,6 +10890,13 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
   }
   if (effectiveAction === 'open-analysis') {
     analysisOpen.value = true;
+    scrollToPageTop();
+    return;
+  }
+  if (effectiveAction === 'open-health-review' || (action === 'tap' && extra.kind === 'health-review')) {
+    activeTab.value = 'diary';
+    diaryTab.value = healthDiaryEnabled.value ? 'health' : 'food';
+    healthReviewOpen.value = true;
     scrollToPageTop();
     return;
   }
@@ -10462,9 +10969,21 @@ function markReminderSent(key: string) {
 }
 
 function checkReminderNotifications() {
-  if (nativeReminderSchedulesActive.value) return;
   const today = todayKey.value;
   const now = new Date();
+  if (state.settings.health_diary_enabled && pendingHealthReviewEntries.value.length && currentTimeMatchesReminderMinute(HEALTH_REVIEW_REMINDER_TIME, now)) {
+    const key = `${today}.health-review.${HEALTH_REVIEW_REMINDER_TIME}`;
+    if (!reminderAlreadySent(key)) {
+      markReminderSent(key);
+      notifyUser(t('healthReviewReminderTitle'), t('healthReviewReminderBody'), {
+        kind: 'health-review',
+        actionTypeId: NOTIFICATION_ACTION_TYPES.healthReview,
+        scheduledTime: HEALTH_REVIEW_REMINDER_TIME,
+      });
+    }
+  }
+
+  if (nativeReminderSchedulesActive.value) return;
 
   if (state.settings.daily_reminder && currentTimeMatchesReminderMinute(state.settings.daily_reminder_time, now)) {
     const key = `${today}.daily.${state.settings.daily_reminder_time}`;
@@ -10532,7 +11051,8 @@ function buildCalendar(monthDate: Date) {
       today: key === todayKey.value,
       selected: key === selectedDate.value,
       future: isFuture,
-      hasEntries: !isFuture && (intakes.length > 0 || activities.length > 0 || healthEntries.length > 0),
+      hasEntries: !isFuture && (intakes.length > 0 || activities.length > 0),
+      hasHealthEntries: !isFuture && healthEntries.length > 0,
       bmi: !isFuture && weight ? bmi(weight.weight_kg, state.profile.height_cm) : 0,
       weightKg: !isFuture ? weight?.weight_kg ?? null : null,
     };
@@ -11522,7 +12042,7 @@ async function pruneBackupProfiles() {
 
 async function createBackupProfile(reason = t('manualBackupProfile'), forcedKind?: BackupProfileKind): Promise<BackupProfileSummary> {
   await waitForIdle();
-  const serializedState = JSON.stringify(state);
+  const serializedState = serializeStateForLocalPersistence();
   await yieldToUi();
   const snapshot = normalizeImportedState(JSON.parse(serializedState) as Partial<AppState>);
   await yieldToUi();
@@ -11658,11 +12178,11 @@ function applyImportedState(text: string) {
   onboardingStep.value = 0;
   settingsDialog.value = null;
   settingsOpen.value = false;
-  saveState(JSON.parse(JSON.stringify(state)) as AppState);
+  saveStateJson(serializeStateForLocalPersistence());
 }
 
 function defaultBackupIncludeOptions(): BackupIncludeOptions {
-  return { catalog: true, foodDiary: true, healthDiary: true };
+  return { catalog: true, foodDiary: true, healthDiary: true, healthMedia: true };
 }
 
 function resetBackupIncludeOptions() {
@@ -11670,6 +12190,7 @@ function resetBackupIncludeOptions() {
   backupIncludeOptions.catalog = defaults.catalog;
   backupIncludeOptions.foodDiary = defaults.foodDiary;
   backupIncludeOptions.healthDiary = defaults.healthDiary;
+  backupIncludeOptions.healthMedia = defaults.healthMedia;
 }
 
 function selectedBackupIncludeOptions(): BackupIncludeOptions {
@@ -11677,6 +12198,7 @@ function selectedBackupIncludeOptions(): BackupIncludeOptions {
     catalog: backupIncludeOptions.catalog === true,
     foodDiary: backupIncludeOptions.foodDiary === true,
     healthDiary: backupIncludeOptions.healthDiary === true,
+    healthMedia: backupIncludeOptions.healthMedia === true,
   };
 }
 
@@ -11685,7 +12207,7 @@ function backupIncludesAny(options: BackupIncludeOptions) {
 }
 
 function stateForBackupIncludeOptions(options: BackupIncludeOptions): AppState {
-  const snapshot = JSON.parse(JSON.stringify(state)) as AppState;
+  const snapshot = JSON.parse(JSON.stringify(stateSnapshotForLocalPersistence())) as AppState;
   if (!options.catalog) {
     snapshot.foods = [];
     snapshot.ingredients = [];
@@ -11702,8 +12224,52 @@ function stateForBackupIncludeOptions(options: BackupIncludeOptions): AppState {
   }
   if (!options.healthDiary) {
     snapshot.healthEntries = [];
+  } else if (!options.healthMedia) {
+    snapshot.healthEntries = snapshot.healthEntries.map((entry) => ({
+      ...entry,
+      attachments: entry.attachments.map((attachment) => ({ ...attachment, data_url: '', preview_data_url: null, backup_path: null })),
+    }));
+  } else {
+    snapshot.healthEntries = snapshot.healthEntries.map((entry) => {
+      const sourceEntry = state.healthEntries.find((item) => item.id === entry.id);
+      return {
+        ...entry,
+        attachments: entry.attachments.map((attachment, index) => {
+          const sourceAttachment = sourceEntry?.attachments.find((item) => item.id === attachment.id);
+          return {
+            ...attachment,
+            data_url: '',
+            preview_data_url: null,
+            backup_path: sourceAttachment?.data_url ? healthMediaBackupPath(entry, attachment, index) : null,
+          };
+        }),
+      };
+    }));
   }
   return snapshot;
+}
+
+async function addHealthMediaFilesToBackupZip(zip: JSZip, includeOptions: BackupIncludeOptions) {
+  if (!includeOptions.healthDiary || !includeOptions.healthMedia) return;
+  let added = 0;
+  const entries = (state.healthEntries || []).filter((entry) => !entry.deleted_at);
+  for (const entry of entries) {
+    for (const [index, attachment] of entry.attachments.entries()) {
+      const payload = dataUrlBase64Payload(attachment.data_url);
+      if (!payload) continue;
+      zip.file(healthMediaBackupPath(entry, attachment, index), payload.base64, {
+        base64: true,
+        binary: true,
+        createFolders: true,
+      });
+      added += 1;
+      if (added % 2 === 0) {
+        exportStatus.value = t('backupPackingMedia');
+        exportProgress.value = Math.min(36, 18 + added);
+        await yieldToUi();
+      }
+    }
+  }
 }
 
 function backupIncludeSummary(options: BackupIncludeOptions) {
@@ -11711,7 +12277,29 @@ function backupIncludeSummary(options: BackupIncludeOptions) {
     options.catalog ? t('backupIncludeCatalog') : null,
     options.foodDiary ? t('backupIncludeFoodDiary') : null,
     options.healthDiary ? t('backupIncludeHealthDiary') : null,
+    options.healthDiary && options.healthMedia ? t('backupIncludeHealthMedia') : null,
   ].filter(Boolean).join(' · ');
+}
+
+function safeBackupPathSegment(value: string, fallback = 'file') {
+  const safe = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return safe || fallback;
+}
+
+function healthMediaBackupPath(entry: HealthEntry, attachment: HealthAttachment, index = 0) {
+  const extension = safeBackupPathSegment((attachment.name || '').split('.').pop() || (attachment.type === 'video' ? 'mp4' : 'jpg'), 'bin');
+  const base = safeBackupPathSegment(healthAttachmentDisplayName(attachment).replace(/\.[^.]+$/, ''), `attachment-${index + 1}`);
+  return `health-media/${safeBackupPathSegment(entry.id)}/${safeBackupPathSegment(attachment.id)}-${base}.${extension}`;
+}
+
+function dataUrlBase64Payload(dataUrl: string) {
+  const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.*)$/s);
+  return match ? { mime: match[1], base64: match[2] } : null;
 }
 
 function openBackupOptionsDialog() {
@@ -11728,6 +12316,9 @@ async function confirmBackupOptionsExport() {
 
 async function buildMobileBackupZip(includeOptions = defaultBackupIncludeOptions()) {
   await waitForIdle();
+  exportStatus.value = t(includeOptions.healthDiary && includeOptions.healthMedia ? 'backupPackingMedia' : 'backupPacking');
+  exportProgress.value = 12;
+  if (includeOptions.healthDiary && includeOptions.healthMedia) await hydrateHealthAttachmentMedia();
   const zip = new JSZip();
   const exportedAt = new Date().toISOString();
   const exportedState = stateForBackupIncludeOptions(includeOptions);
@@ -11741,10 +12332,15 @@ async function buildMobileBackupZip(includeOptions = defaultBackupIncludeOptions
     includedData: includeOptions,
   }, null, 2));
   await yieldToUi();
+  exportProgress.value = 26;
+  await addHealthMediaFilesToBackupZip(zip, includeOptions);
+  await yieldToUi();
   zip.file('mobile-app-data.json', JSON.stringify(exportedState, null, 2));
   zip.file('README.txt', `nutrino mobile app backup\nVersion: ${appVersion}\nExported at: ${exportedAt}\nIncluded data: ${backupIncludeSummary(includeOptions) || 'none'}\nThis ZIP was validated before export. If the exported file is 0 B, restore from Settings > Backup profiles.\n`);
   await yieldToUi();
+  exportProgress.value = 38;
   const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'STORE' }, (metadata) => {
+    if (metadata.percent) exportProgress.value = Math.min(76, 38 + Math.round(metadata.percent * 0.38));
     if (metadata.percent && Math.round(metadata.percent) % 20 === 0) void yieldToUi();
   });
   assertValidZipBytes(bytes);
@@ -11771,6 +12367,19 @@ function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
   return buffer;
+}
+
+async function bytesToNumberArrayChunked(bytes: Uint8Array, progressStart = 70, progressEnd = 88) {
+  const result = new Array<number>(bytes.length);
+  const chunkSize = 128 * 1024;
+  const span = Math.max(0, progressEnd - progressStart);
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const end = Math.min(bytes.length, offset + chunkSize);
+    for (let index = offset; index < end; index += 1) result[index] = bytes[index];
+    exportProgress.value = Math.round(progressStart + (end / Math.max(1, bytes.length)) * span);
+    await yieldToUi();
+  }
+  return result;
 }
 
 function fallbackDownloadAppData(bytes: Uint8Array, filename = mobileBackupFileName()) {
@@ -11832,7 +12441,9 @@ async function shareMobileBackupZipStrict(bytes: Uint8Array, filename = mobileBa
 
 async function exportBackupZipWithAndroidDocumentPicker(bytes: Uint8Array, filename = mobileBackupFileName()) {
   assertValidZipBytes(bytes);
-  const result = await invoke<string>('export_mobile_backup_via_android_picker', { filename, bytes: Array.from(bytes) });
+  exportStatus.value = t('backupOpeningPicker');
+  await nextTick();
+  const result = await invoke<string>('export_mobile_backup_via_android_picker', { filename, bytes: await bytesToNumberArrayChunked(bytes, 78, 92) });
   if (result === 'EXPORT_CANCELED') throw new DOMException(t('exportCanceled'), 'AbortError');
   return result;
 }
@@ -11847,7 +12458,7 @@ async function importBackupZipWithAndroidDocumentPicker(): Promise<Uint8Array | 
 
 async function writeBackupZipToNativeAppFile(bytes: Uint8Array, filename = mobileBackupFileName()) {
   assertValidZipBytes(bytes);
-  const path = await invoke<string>('write_mobile_backup_file', { filename, bytes: Array.from(bytes) });
+  const path = await invoke<string>('write_mobile_backup_file', { filename, bytes: await bytesToNumberArrayChunked(bytes, 78, 92) });
   const savedBytes = normalizeBackupBytes(await invoke<number[]>('read_mobile_backup_file', { path }));
   assertValidZipBytes(savedBytes);
   if (savedBytes.length !== bytes.length) {
@@ -11957,8 +12568,32 @@ async function pickBackupBytesForImport(): Promise<Uint8Array | null> {
   return null;
 }
 
+async function backupDataTextWithMedia(zip: JSZip, dataText: string) {
+  const parsed = JSON.parse(dataText) as Partial<AppState>;
+  const entries = Array.isArray((parsed as any).healthEntries) ? (parsed as any).healthEntries as HealthEntry[] : [];
+  let changed = false;
+  for (const entry of entries) {
+    if (!Array.isArray(entry.attachments)) continue;
+    for (const attachment of entry.attachments) {
+      if (attachment.data_url || !attachment.backup_path) continue;
+      const file = zip.file(attachment.backup_path);
+      if (!file) continue;
+      const base64 = await file.async('base64');
+      attachment.data_url = `data:${attachment.mime_type || (attachment.type === 'video' ? 'video/*' : 'image/*')};base64,${base64}`;
+      changed = true;
+      await yieldToUi();
+    }
+  }
+  return changed ? JSON.stringify(parsed) : dataText;
+}
+
 async function exportAppDataWithOptions(filename = mobileBackupFileName(), backupReason = t('exportBackupProfile'), successMessage = t('appDataExportCreated'), includeOptions = defaultBackupIncludeOptions()) {
+  if (exportBusy.value) return;
   refreshTodayKey();
+  exportBusy.value = true;
+  exportProgress.value = 4;
+  exportStatus.value = t('backupPreparing');
+  await nextTick();
   let localProfileSaved = false;
   try {
     await createBackupProfile(backupReason);
@@ -11971,6 +12606,9 @@ ${t('continueExternalExport')}`)) return;
   try {
     const bytes = await buildMobileBackupZip(includeOptions);
     assertValidZipBytes(bytes);
+    exportStatus.value = t('backupOpeningPicker');
+    exportProgress.value = Math.max(exportProgress.value, 78);
+    await nextTick();
 
     if (isMobileRuntime()) {
       try {
@@ -11981,6 +12619,7 @@ ${t('continueExternalExport')}`)) return;
         } else {
           await shareMobileBackupZipStrict(bytes, filename);
         }
+        exportProgress.value = 100;
         showToast(`${successMessage} (${formatBytes(bytes.length)})`);
       } catch (shareError) {
         const shareErrorName = typeof shareError === 'object' && shareError && 'name' in shareError
@@ -11999,6 +12638,7 @@ ${t('continueExternalExport')}`)) return;
     try {
       const savedToSelectedLocation = await writeBackupZipToSelectedLocation(bytes, filename);
       if (!savedToSelectedLocation) return showToast(t('exportCanceled'));
+      exportProgress.value = 100;
       showToast(`${successMessage} (${formatBytes(bytes.length)})`);
       return;
     } catch (writeError) {
@@ -12008,6 +12648,12 @@ ${t('continueExternalExport')}`)) return;
     }
   } catch (error) {
     showToast(`${t('exportFailed')}: ${String(error)}${localProfileSaved ? ` ${t('backupProfileStillAvailable')}` : ''}`);
+  } finally {
+    window.setTimeout(() => {
+      exportBusy.value = false;
+      exportProgress.value = 0;
+      exportStatus.value = '';
+    }, 350);
   }
 }
 
@@ -12026,8 +12672,9 @@ async function importAppDataWithOptions(confirmMessage = t('confirmImportOverwri
     assertValidZipBytes(bytes);
     const zip = await JSZip.loadAsync(bytes);
     const manifestText = await zip.file('manifest.json')?.async('string');
-    const dataText = await zip.file('mobile-app-data.json')?.async('string');
-    if (!dataText) throw new Error(t('invalidBackupFile'));
+    const rawDataText = await zip.file('mobile-app-data.json')?.async('string');
+    if (!rawDataText) throw new Error(t('invalidBackupFile'));
+    const dataText = await backupDataTextWithMedia(zip, rawDataText);
     if (manifestText) {
       const manifest = JSON.parse(manifestText) as { app?: string; formatVersion?: number; exportType?: string; channel?: string };
       if (manifest.app !== 'nutrino' || manifest.formatVersion !== 1 || manifest.exportType !== 'mobile-app') {
@@ -12037,6 +12684,13 @@ async function importAppDataWithOptions(confirmMessage = t('confirmImportOverwri
     if (!window.confirm(confirmMessage)) return showToast(t('importCanceled'));
     await createBackupProfile(beforeReason);
     applyImportedState(dataText);
+    for (const entry of state.healthEntries || []) {
+      try {
+        await saveHealthEntryMedia(entry);
+      } catch {
+        // Keep imported diary data even if a media item cannot be cached locally.
+      }
+    }
     await createBackupProfile(afterReason);
     showToast(successMessage);
   } catch (error) {
@@ -12264,7 +12918,8 @@ function setTab(tab: Tab) {
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
           <span><b>{{ t(section.key) }}</b><small>{{ sectionHint(section) }}</small></span>
           <span class="section-summary-text">{{ sectionSummaryText(section) }}</span>
-          <span v-if="state.settings.show_micronutrients && section.key !== 'activity'" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
+          <span v-if="section.key === 'activity'" class="meal-micro-button" role="button" :aria-label="t('activityAnalysis')" :title="t('activityAnalysis')" @click.stop.prevent="openActivityAnalysis" v-html="lucideSvg('chartPie')"></span>
+          <span v-else-if="state.settings.show_micronutrients" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
           <span class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
@@ -12283,16 +12938,16 @@ function setTab(tab: Tab) {
         </div>
       </article>
       <article v-if="healthDiaryEnabled" class="card meal-card home-health-card">
-        <div class="meal-header home-health-header">
+        <button class="meal-header home-health-header" type="button" @click="openNewHealthEntry">
           <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
-          <span><b>{{ t('healthDiary') }}</b><small>{{ t('purposeHealthLoggingHint') }}</small></span>
+          <span><b>{{ t('healthDiary') }}</b><small>{{ t('healthHomeHint') }}</small></span>
           <span class="section-summary-text">{{ healthHomeSummaryText() }}</span>
-          <button class="meal-micro-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthAnalysisModal" v-html="lucideSvg('chartPie')"></button>
-          <button class="plus-button" type="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click="openNewHealthEntry">+</button>
-        </div>
+          <span class="meal-micro-button" role="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click.stop.prevent="openHealthAnalysisModal" v-html="lucideSvg('flaskConical')"></span>
+          <span class="plus-button" role="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click.stop.prevent="openNewHealthEntry">+</span>
+        </button>
         <div class="entry-list">
-          <div v-for="entry in currentDayHealthEntries.slice(0, 4)" :key="`home-health-entry-${entry.id}`" class="entry-row">
-            <div><b>{{ entry.title }}</b><small>{{ healthCategoryLabel(entry.category) }} · {{ formatDateTime(entry.occurred_at) }}</small></div>
+          <div v-for="row in currentDayHealthAnalysisRows.slice(0, 4)" :key="`home-health-row-${row.eventId}`" class="entry-row">
+            <div><b>{{ row.title }}</b><small>{{ row.todayCount }}x · {{ row.status }} · {{ healthIntervalText(row) }}</small></div>
           </div>
           <p v-if="!currentDayHealthEntries.length" class="empty-line">{{ t('noHealthEntries') }}</p>
         </div>
@@ -12331,6 +12986,36 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
+      <article v-if="healthDiaryEnabled" class="card meal-note-review-card health-review-card" :class="{ collapsed: !healthReviewOpen }">
+        <button class="meal-note-review-head" type="button" :aria-expanded="healthReviewOpen" @click="healthReviewOpen = !healthReviewOpen">
+          <span class="meal-note-review-copy">
+            <h2>{{ t('healthEntriesToReview') }}</h2>
+            <small>{{ t('healthEntriesToReviewHint') }}</small>
+          </span>
+          <span class="meal-note-review-actions">
+            <span class="meal-note-review-count">{{ pendingHealthReviewEntries.length }}</span>
+            <span class="meal-note-review-chevron" :class="{ open: healthReviewOpen }" v-html="lucideSvg('chevronDown')"></span>
+          </span>
+        </button>
+        <div v-if="healthReviewOpen" class="meal-note-review-body">
+          <div v-if="pendingHealthReviewEntries.length" class="meal-note-review-list">
+            <div v-for="entry in pendingHealthReviewEntries" :key="`health-review-${entry.id}`" class="meal-note-review-row">
+              <div>
+                <b>{{ entry.title }}</b>
+                <small>{{ healthReviewSubtitle(entry) }}</small>
+                <small v-if="entry.description">{{ entry.description }}</small>
+              </div>
+              <div class="entry-actions">
+                <button class="text-button" @click="openHealthReviewDay(entry)">{{ t('openDay') }}</button>
+                <button class="text-button" @click="openHealthReviewEntry(entry)">{{ t('edit') }}</button>
+                <button class="text-button" @click="ignoreHealthReview(entry)">{{ t('ignore') }}</button>
+              </div>
+            </div>
+          </div>
+          <p v-else class="empty-line">{{ t('noHealthEntriesToReview') }}</p>
+        </div>
+      </article>
+
       <article class="card calendar-card">
         <div class="calendar-header">
           <button class="icon-button" @click="moveCalendar(-1)" v-html="lucideSvg('chevronLeft')"></button>
@@ -12348,7 +13033,10 @@ function setTab(tab: Tab) {
           >
             <span class="calendar-date-number">{{ cell.day }}</span>
             <em v-if="cell.weightKg || cell.bmi" class="calendar-day-weight"><span v-if="cell.weightKg">{{ Number(cell.weightKg).toFixed(1) }} kg</span><span v-if="cell.bmi">BMI {{ cell.bmi }}</span></em>
-            <i v-if="cell.hasEntries"></i>
+            <span v-if="cell.hasEntries || cell.hasHealthEntries" class="calendar-dot-row">
+              <i v-if="cell.hasEntries" class="calendar-entry-dot"></i>
+              <i v-if="cell.hasHealthEntries" class="calendar-health-dot"></i>
+            </span>
           </button>
         </div>
       </article>
@@ -12367,7 +13055,7 @@ function setTab(tab: Tab) {
         <div class="diary-date-sticky-actions">
           <button v-if="diaryTab === 'food' && state.settings.show_micronutrients" class="icon-button analysis-open-button" type="button" :aria-label="t('dayMicronutrients')" :title="t('dayMicronutrients')" @click="openDayMicronutrients" v-html="lucideSvg('flaskConical')"></button>
           <button v-if="diaryTab === 'food'" class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="openAnalysis" v-html="lucideSvg('chartPie')"></button>
-          <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthAnalysisModal" v-html="lucideSvg('chartPie')"></button>
+          <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthAnalysisModal" v-html="lucideSvg('flaskConical')"></button>
           <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click="openNewHealthEntry" v-html="lucideSvg('plus')"></button>
           <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('next')" :title="t('next')" @click="moveSelectedDate(1)" v-html="lucideSvg('chevronRight')"></button>
         </div>
@@ -12429,7 +13117,8 @@ function setTab(tab: Tab) {
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
           <span><b>{{ t(section.key) }}</b><small>{{ section.key === 'activity' ? `${activitiesForSection().length} ${t('activities')}` : `${entriesForSection(section).length} ${t('entries')}` }}</small></span>
           <span class="section-summary-text">{{ sectionSummaryText(section) }}</span>
-          <span v-if="state.settings.show_micronutrients && section.key !== 'activity'" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
+          <span v-if="section.key === 'activity'" class="meal-micro-button" role="button" :aria-label="t('activityAnalysis')" :title="t('activityAnalysis')" @click.stop.prevent="openActivityAnalysis" v-html="lucideSvg('chartPie')"></span>
+          <span v-else-if="state.settings.show_micronutrients" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
           <span v-if="selectedDayUnlocked" class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
@@ -12450,38 +13139,43 @@ function setTab(tab: Tab) {
       </template>
 
       <template v-else-if="healthDiaryEnabled">
-        <article class="card health-summary-card">
-          <div class="health-summary-head">
-            <span class="health-summary-icon" v-html="lucideSvg('heartPulse')"></span>
-            <div>
-              <h2>{{ t('healthDiary') }}</h2>
-              <p>{{ healthInsightText() }}</p>
-            </div>
+        <article class="card day-edit-card health-day-toolbar">
+          <div>
+            <b>{{ t('healthDiary') }}</b>
+            <small>{{ currentDayHealthClinicalSummary.entries }} {{ t('entries') }} · {{ currentDayHealthClinicalSummary.uniqueEvents }} {{ t('healthEventsShort') }}</small>
           </div>
-          <div class="health-summary-grid">
-            <div><span>{{ t('entries') }}</span><b>{{ healthAnalysisSummary.total }}</b></div>
-            <div><span>{{ t('last30Days') }}</span><b>{{ healthAnalysisSummary.recent }}</b></div>
-            <div><span>{{ t('recurringEvents') }}</span><b>{{ healthAnalysisSummary.recurringEvents }}</b></div>
-          </div>
-          <div class="health-action-row">
-            <button class="outlined-button" type="button" @click="openHealthRecurrence()"><span v-html="lucideSvg('refreshCw')"></span>{{ t('markAgain') }}</button>
-            <button class="filled-button" type="button" @click="openNewHealthEntry"><span v-html="lucideSvg('plus')"></span>{{ t('addHealthEntry') }}</button>
+          <div class="entry-actions">
+            <button class="entry-icon-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthAnalysisModal" v-html="lucideSvg('flaskConical')"></button>
+            <button class="entry-icon-button" type="button" :aria-label="t('markAgain')" :title="t('markAgain')" @click="openHealthRecurrence()" v-html="lucideSvg('refreshCw')"></button>
+            <button class="entry-icon-button" type="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click="openNewHealthEntry" v-html="lucideSvg('plus')"></button>
           </div>
         </article>
 
         <article class="card health-search-card">
+          <div class="health-search-head">
+            <b>{{ t('healthSearchCurrentDay') }}</b>
+            <small>{{ formatDate(dayStartMs(selectedDate)) }} · {{ filteredHealthEntries.length }}/{{ currentDayHealthEntries.length }} {{ t('entries') }}</small>
+          </div>
           <div class="health-search-input">
             <span v-html="lucideSvg('search')"></span>
             <input v-model="healthSearch" class="input" type="search" :placeholder="t('searchHealthDiary')" />
+            <button v-if="healthSearch" class="entry-icon-button health-search-clear" type="button" :aria-label="t('close')" @click="healthSearch = ''" v-html="lucideSvg('x')"></button>
           </div>
+          <p class="helper compact-helper">{{ t('healthSearchHint') }}</p>
         </article>
 
         <article class="card health-analysis-card health-analysis-inline-card">
           <div class="analysis-card-header compact">
             <h2>{{ t('healthAnalysis') }}</h2>
-            <button class="text-button" type="button" @click="openHealthAnalysisModal"><span v-html="lucideSvg('chartPie')"></span>{{ t('openAnalysis') }}</button>
+            <button class="entry-icon-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="openHealthAnalysisModal" v-html="lucideSvg('flaskConical')"></button>
           </div>
-          <p class="helper big">{{ t('healthAnalysisDayHint') }}</p>
+          <div v-if="currentDayHealthAnalysisRows.length" class="health-day-analysis-list">
+            <div v-for="row in currentDayHealthAnalysisRows" :key="`day-health-analysis-${row.eventId}`" class="health-day-analysis-row">
+              <span><b>{{ row.title }}</b><small>{{ row.todayCount }}x · {{ row.status }} · {{ healthIntervalText(row) }}</small></span>
+              <i :style="{ background: row.color }"></i>
+            </div>
+          </div>
+          <p v-else class="helper big">{{ t('healthAnalysisDayHint') }}</p>
         </article>
 
         <article v-if="!selectedDayUnlocked" class="card day-edit-card">
@@ -12492,7 +13186,7 @@ function setTab(tab: Tab) {
           <button class="outlined-button unlock-button" @click="unlockSelectedDay"><span v-html="lucideSvg('lockOpen')"></span>{{ t('unlockDay') }}</button>
         </article>
 
-        <article v-for="entry in filteredHealthEntries" :key="entry.id" class="card health-entry-card">
+        <article v-for="entry in filteredHealthEntries" :id="`health-entry-${entry.id}`" :key="entry.id" class="card health-entry-card" :class="{ 'review-highlight': highlightedHealthReviewEntryId === entry.id }">
           <div class="health-entry-main">
             <span class="health-entry-icon" v-html="lucideSvg(healthCategoryIcon(entry.category))"></span>
             <div>
@@ -12501,7 +13195,7 @@ function setTab(tab: Tab) {
               <small>{{ healthEntrySubtitle(entry) }}</small>
               <small v-if="entry.notes">{{ entry.notes }}</small>
               <div v-if="entry.attachments.length" class="health-attachment-strip">
-                <span v-for="attachment in entry.attachments" :key="attachment.id" class="health-attachment-chip"><i v-html="lucideSvg(attachment.type === 'video' ? 'video' : 'camera')"></i>{{ attachment.name }}</span>
+                <button v-for="attachment in entry.attachments" :key="attachment.id" type="button" class="health-attachment-chip" @click="openHealthAttachmentPreview(attachment)"><i v-html="lucideSvg(attachment.type === 'video' ? 'video' : 'camera')"></i>{{ healthAttachmentDisplayName(attachment) }}</button>
               </div>
             </div>
           </div>
@@ -12585,11 +13279,10 @@ function setTab(tab: Tab) {
             <b>{{ t('appPurpose') }}</b>
             <small>{{ profilePurposeSummary() }}</small>
           </div>
-          <div class="purpose-choice-grid">
-            <button v-for="purpose in profilePurposeOptions" :key="purpose.key" type="button" class="purpose-choice-card" :class="{ selected: profilePurposeSelected(purpose.key) }" @click="toggleProfilePurpose(purpose.key)">
+          <div class="profile-purpose-chip-list">
+            <button v-for="purpose in profilePurposeOptions" :key="purpose.key" type="button" class="profile-purpose-chip" :class="{ selected: profilePurposeSelected(purpose.key) }" @click="toggleProfilePurpose(purpose.key)">
               <span v-html="lucideSvg(purpose.icon)"></span>
               <b>{{ t(purpose.labelKey) }}</b>
-              <small>{{ t(purpose.hintKey) }}</small>
             </button>
           </div>
         </div>
@@ -12846,10 +13539,6 @@ function setTab(tab: Tab) {
             </div>
             <div class="selected-item-actions selected-activity-actions">
               <button class="entry-icon-button" type="button" :title="t('changeSelection')" :aria-label="t('changeSelection')" @click="clearSelectedActivityForChange" v-html="lucideSvg('refreshCw')"></button>
-              <button class="entry-icon-button" type="button" :title="t('duplicate')" :aria-label="t('duplicate')" @click="duplicateActivityCatalogItem(selectedActivity)" v-html="lucideSvg('copy')"></button>
-              <button class="entry-icon-button" type="button" :disabled="catalogSourceCheckBusyId === selectedActivity.id" :title="t('checkSource')" :aria-label="t('checkSource')" @click="requestCatalogSourceCheck(selectedActivity)" v-html="lucideSvg('refreshCw')"></button>
-              <button class="entry-icon-button" type="button" :title="catalogItemIsLocked(selectedActivity) ? t('unlock') : t('lock')" :aria-label="catalogItemIsLocked(selectedActivity) ? t('unlock') : t('lock')" @click="toggleCatalogItemLock(selectedActivity)" v-html="lucideSvg(catalogItemIsLocked(selectedActivity) ? 'lock' : 'lockOpen')"></button>
-              <button class="entry-icon-button" type="button" :title="selectedActivity.inactive ? t('activate') : t('markInactive')" :aria-label="selectedActivity.inactive ? t('activate') : t('markInactive')" @click="toggleCatalogItemInactive(selectedActivity)" v-html="lucideSvg(selectedActivity.inactive ? 'eye' : 'eyeOff')"></button>
               <button class="entry-icon-button" type="button" :title="t('edit')" :aria-label="t('edit')" @click="editActivityCatalogItem(selectedActivity)" v-html="lucideSvg('pencil')"></button>
             </div>
           </article>
@@ -13091,6 +13780,62 @@ function setTab(tab: Tab) {
           </article>
         </div>
       </section>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="activityAnalysisOpen" class="dialog-backdrop app-overlay" @click.self="activityAnalysisOpen = false">
+        <article class="settings-dialog activity-analysis-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ t('activityAnalysis') }}</h2>
+            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="activityAnalysisOpen = false" v-html="lucideSvg('x')"></button>
+          </div>
+          <p class="helper big">{{ t('activityAnalysisHint') }}</p>
+          <div class="trend-mode-toggle activity-analysis-range-toggle" role="tablist" :aria-label="t('activityAnalysisRange')">
+            <button type="button" :class="{ active: activityAnalysisRange === '7' }" @click="activityAnalysisRange = '7'">7 {{ t('days') }}</button>
+            <button type="button" :class="{ active: activityAnalysisRange === '14' }" @click="activityAnalysisRange = '14'">14 {{ t('days') }}</button>
+            <button type="button" :class="{ active: activityAnalysisRange === '30' }" @click="activityAnalysisRange = '30'">30 {{ t('days') }}</button>
+          </div>
+          <div class="activity-analysis-summary">
+            <div><span>{{ t('activeDays') }}</span><b>{{ activityAnalysisActiveDays }}</b></div>
+            <div><span>{{ t('minutes') }}</span><b>{{ activityAnalysisTotalMinutes }}</b></div>
+            <div><span>{{ t('burned') }}</span><b>{{ activityAnalysisTotalKcal }} kcal</b></div>
+          </div>
+          <section v-if="activityAnalysisTypeRows.length" class="activity-type-summary-card">
+            <h3>{{ t('activityTypeBreakdown') }}</h3>
+            <div class="activity-type-list">
+              <div v-for="typeRow in activityAnalysisTypeRows" :key="`activity-type-${typeRow.type}`" class="activity-type-row">
+                <span class="activity-type-dot" :style="{ background: typeRow.color }"></span>
+                <span>{{ typeRow.label }}</span>
+                <b>{{ typeRow.minutes }} {{ t('minutes') }}</b>
+                <small>{{ typeRow.percent }}%</small>
+              </div>
+            </div>
+          </section>
+          <div class="activity-day-pie-list">
+            <article v-for="row in activityAnalysisRows" :key="`activity-day-${row.key}`" class="activity-day-pie-card" :class="{ selected: row.selected, empty: !row.totalMinutes }">
+              <div class="activity-day-pie-chart" :style="{ background: activityPieBackground(row.segments) }">
+                <span>{{ row.totalMinutes }}</span>
+                <small>{{ t('minutesShort') }}</small>
+              </div>
+              <div class="activity-day-pie-copy">
+                <div class="activity-day-pie-head">
+                  <b>{{ row.label }}</b>
+                  <small>{{ row.entries.length }} {{ t('activities') }} · {{ row.totalKcal }} kcal</small>
+                </div>
+                <div v-if="row.segments.length" class="activity-segment-list">
+                  <div v-for="segment in row.segments" :key="`activity-segment-${row.key}-${segment.type}`" class="activity-segment-row">
+                    <span class="activity-type-dot" :style="{ background: segment.color }"></span>
+                    <span>{{ segment.label }}</span>
+                    <b>{{ segment.minutes }} {{ t('minutes') }}</b>
+                    <small>{{ segment.percent }}%</small>
+                  </div>
+                </div>
+                <p v-else class="empty-line compact-empty-line">{{ t('noActivity') }}</p>
+              </div>
+            </article>
+          </div>
+        </article>
+      </div>
     </Teleport>
 
     <Teleport to="body">
@@ -13410,6 +14155,20 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="exportBusy" class="dialog-backdrop app-overlay export-progress-backdrop">
+        <article class="settings-dialog export-progress-dialog">
+          <span class="export-spinner" aria-hidden="true"></span>
+          <div>
+            <h2>{{ t('backupExportInProgress') }}</h2>
+            <p class="helper big">{{ exportStatus || t('backupPreparing') }}</p>
+          </div>
+          <div class="export-progress-track"><span :style="{ width: `${Math.max(6, Math.min(100, exportProgress))}%` }"></span></div>
+          <small>{{ Math.round(exportProgress) }}%</small>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <div v-if="backupOptionsOpen" class="dialog-backdrop app-overlay" @click.self="backupOptionsOpen = false">
         <article class="settings-dialog backup-options-dialog">
           <div class="dialog-title-row"><h2>{{ t('backupOptions') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="backupOptionsOpen = false" v-html="lucideSvg('x')"></button></div>
@@ -13426,6 +14185,10 @@ function setTab(tab: Tab) {
             <label class="source-choice-card source-choice-card-simple backup-option-card">
               <span><b>{{ t('backupIncludeHealthDiary') }}</b><small>{{ t('backupIncludeHealthDiaryHint') }}</small></span>
               <input v-model="backupIncludeOptions.healthDiary" type="checkbox" />
+            </label>
+            <label v-if="backupIncludeOptions.healthDiary" class="source-choice-card source-choice-card-simple backup-option-card">
+              <span><b>{{ t('backupIncludeHealthMedia') }}</b><small>{{ t('backupIncludeHealthMediaHint') }}</small></span>
+              <input v-model="backupIncludeOptions.healthMedia" type="checkbox" />
             </label>
           </div>
           <div class="dialog-actions">
@@ -13461,7 +14224,7 @@ function setTab(tab: Tab) {
           <label><span>{{ t('activityLevel') }}</span><select v-model="onboardingProfile.activity_level" class="input"><option value="sedentary">{{ t('sedentary') }}</option><option value="low_active">{{ t('lowActive') }}</option><option value="active">{{ t('active') }}</option><option value="very_active">{{ t('veryActive') }}</option></select></label>
           <label><span>{{ t('weeklyGoal') }}: {{ onboardingProfile.weekly_goal_kg }} {{ t('perWeek') }}</span><input v-model.number="onboardingProfile.weekly_goal_kg" class="tile-range" type="range" min="-1" max="1" step="0.25" /></label>
         </div>
-        <div v-else-if="onboardingStep === 2" class="onboarding-permissions">
+        <div v-if="onboardingStep === 2" class="onboarding-permissions">
           <h3>{{ t('syncPreferences') }}</h3>
           <p class="helper big">{{ t('syncPreferencesBody') }}</p>
           <div class="source-choice-list">
@@ -13469,7 +14232,7 @@ function setTab(tab: Tab) {
             <label class="source-choice-card source-choice-card-simple"><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
           </div>
         </div>
-        <div v-else-if="onboardingStep === 3" class="onboarding-permissions">
+        <div v-if="onboardingStep === 3" class="onboarding-permissions">
           <h3>{{ t('onboardingPermissions') }}</h3>
           <p class="helper big">{{ t('onboardingPermissionsBody') }}</p>
           <div class="permission-list compact">
@@ -13502,6 +14265,8 @@ function setTab(tab: Tab) {
             <div><span>{{ t('entries') }}</span><b>{{ healthAnalysisEntries.length }}</b></div>
             <div><span>{{ t('healthEventsShort') }}</span><b>{{ healthEventFrequencyRows.length }}</b></div>
             <div><span>{{ t('recurringEvents') }}</span><b>{{ healthRecurrenceChartRows.length }}</b></div>
+            <div><span>{{ t('healthOngoing') }}</span><b>{{ healthAnalysisEntries.filter((entry) => entry.ongoing && !healthEntryResolvedAt(entry)).length }}</b></div>
+            <div><span>{{ t('healthAverageDuration') }}</span><b>{{ healthRangeAverageDurationDays || '—' }}</b></div>
             <div><span>{{ t('attachments') }}</span><b>{{ healthAnalysisEntries.reduce((sum, entry) => sum + entry.attachments.length, 0) }}</b></div>
           </div>
           <div class="health-period-grid">
@@ -13511,11 +14276,27 @@ function setTab(tab: Tab) {
           </div>
           <section class="health-analysis-control-card">
             <div class="health-frequency-head"><h3>{{ t('healthEventFrequency') }}</h3><small>{{ t('healthFrequencyColumns') }}</small></div>
-            <select v-if="healthEventFrequencyRows.length" v-model="healthSelectedEventId" class="input">
-              <option v-for="row in healthEventFrequencyRows" :key="`health-event-option-${row.eventId}`" :value="row.eventId">{{ row.title }} · {{ row.count }}x · {{ row.categoryLabel }}</option>
-            </select>
+            <div v-if="healthEventFrequencyRows.length" class="health-event-picker">
+              <button class="health-event-picker-button" type="button" :aria-expanded="healthEventPickerOpen" @click="healthEventPickerOpen = !healthEventPickerOpen">
+                <span v-if="selectedHealthEventAnalysis"><b>{{ selectedHealthEventAnalysis.title }}</b><small>{{ selectedHealthEventAnalysis.count }}x · {{ selectedHealthEventAnalysis.categoryLabel }}</small></span>
+                <span v-else><b>{{ t('chooseHealthEvent') }}</b></span>
+                <i v-html="lucideSvg('chevronDown')"></i>
+              </button>
+              <div v-if="healthEventPickerOpen" class="health-event-picker-panel">
+                <div class="health-search-input">
+                  <span v-html="lucideSvg('search')"></span>
+                  <input v-model="healthEventPickerSearch" class="input" type="search" :placeholder="t('searchHealthEvents')" />
+                </div>
+                <div class="health-event-picker-list">
+                  <button v-for="row in healthEventPickerRows" :key="`health-event-option-${row.eventId}`" type="button" :class="{ selected: row.eventId === healthSelectedEventId }" @click="selectHealthAnalysisEvent(row.eventId)">
+                    <span><b>{{ row.title }}</b><small>{{ row.categoryLabel }} · {{ row.status }}</small></span>
+                    <strong>{{ row.count }}x</strong>
+                  </button>
+                </div>
+              </div>
+            </div>
             <p v-else class="empty-line">{{ t('noHealthEntries') }}</p>
-            <button class="outlined-button health-inline-icon-button" type="button" @click="setHealthAnalysisRange('custom')"><span v-html="lucideSvg('calendarRange')"></span>{{ t('customDateTime') }}</button>
+            <button class="outlined-button health-inline-icon-button" type="button" @click="setHealthAnalysisRange('custom')"><span v-html="lucideSvg('calendarDays')"></span>{{ t('customDateTime') }}</button>
             <div v-if="healthCustomRangeOpen" class="health-custom-range-grid">
               <label><span>{{ t('date') }}</span><input v-model="healthCustomStartDate" class="input" type="date" @input="healthAnalysisRange = 'custom'" /></label>
               <label><span>{{ t('today') }}</span><input v-model="healthCustomEndDate" class="input" type="date" @input="healthAnalysisRange = 'custom'" /></label>
@@ -13530,10 +14311,10 @@ function setTab(tab: Tab) {
               <div><span>{{ t('healthAverageInterval') }}</span><b>{{ selectedHealthEventStats.averageIntervalDays || '—' }}</b></div>
             </div>
           </section>
-          <div v-if="healthCategoryChartRows.length" class="health-bar-list">
+          <div v-if="healthCategoryChartRows.length" :key="`health-category-${healthAnalysisRange}-${healthSelectedEventId}-${healthAnalysisEntries.length}`" class="health-bar-list">
             <div v-for="row in healthCategoryChartRows" :key="`health-modal-category-${row.category}`" class="health-bar-row"><span class="health-bar-label"><i :style="{ background: row.color }"></i>{{ row.label }}</span><div class="health-bar-track"><span :style="{ width: `${row.percent}%`, background: row.color }"></span></div><b>{{ row.count }}</b></div>
           </div>
-          <div v-if="selectedHealthEventAnalysis" class="health-event-trend-card">
+          <div v-if="selectedHealthEventAnalysis" :key="`health-trend-${healthAnalysisRange}-${healthSelectedEventId}-${healthAnalysisEntries.length}`" class="health-event-trend-card">
             <div class="health-frequency-head"><h3>{{ selectedHealthEventAnalysis.title }}</h3><small>{{ t('healthSelectedEventTrend') }}</small></div>
             <div class="health-trend-bars"><div v-for="row in healthSelectedEventTrendRows" :key="`health-modal-trend-${row.key}`" class="health-trend-bar"><span><i :style="{ height: `${Math.max(4, row.percent)}%`, background: selectedHealthEventAnalysis.color }"></i></span><b>{{ row.count }}</b><small>{{ row.label }}</small></div></div>
           </div>
@@ -13559,13 +14340,19 @@ function setTab(tab: Tab) {
             <button type="button" :class="{ active: healthEditorMode === 'recurrence' }" @click="openHealthRecurrence()">{{ t('previousHealthEvent') }}</button>
           </div>
 
-          <label v-if="healthEditorMode === 'recurrence'" class="field-label">
-            {{ t('previousHealthEvent') }}
-            <select class="input" :value="healthRecurrenceSourceId || ''" @change="chooseHealthRecurrenceSource">
-              <option value="">{{ t('choosePreviousEvent') }}</option>
-              <option v-for="event in reusableHealthEvents" :key="event.event_id" :value="event.event_id">{{ healthEventEntry(event).title }} · {{ healthRecurrenceCount(event) }}x</option>
-            </select>
-          </label>
+          <section v-if="healthEditorMode === 'recurrence'" class="health-reuse-picker">
+            <div class="health-search-input">
+              <span v-html="lucideSvg('search')"></span>
+              <input v-model="healthRecurrenceSearch" class="input" type="search" :placeholder="t('searchPreviousHealthEvents')" />
+            </div>
+            <div v-if="reusableHealthEventOptions.length" class="health-reuse-list">
+              <button v-for="event in reusableHealthEventOptions" :key="event.event_id" type="button" :class="{ selected: healthRecurrenceSourceId === event.event_id }" @click="selectHealthRecurrenceEvent(event)">
+                <span v-html="lucideSvg(healthCategoryIcon(healthEventEntry(event).category))"></span>
+                <span><b>{{ healthEventEntry(event).title }}</b><small>{{ healthRecurrenceCount(event) }}x · {{ t('lastUsed') }} {{ formatDateTime(event.occurred_at) }}</small></span>
+              </button>
+            </div>
+            <p v-else class="empty-line">{{ t('healthNoPreviousEvents') }}</p>
+          </section>
 
           <div class="health-quick-time segmented-pill-toggle">
             <button type="button" :class="{ active: healthQuickTime === 'now' }" @click="applyHealthQuickTime('now')">{{ t('now') }}</button>
@@ -13588,15 +14375,30 @@ function setTab(tab: Tab) {
           </label>
           <textarea v-model="healthForm.notes" class="input note-textarea" rows="3" :placeholder="t('healthNotes')"></textarea>
 
+          <section class="health-resolution-card">
+            <label class="source-choice-card source-choice-card-simple health-resolution-toggle">
+              <span><b>{{ t('healthStillOngoing') }}</b><small>{{ t('healthStillOngoingHint') }}</small></span>
+              <input v-model="healthForm.ongoing" type="checkbox" />
+            </label>
+            <div v-if="!healthForm.ongoing" class="health-date-grid">
+              <label><span>{{ t('healthResolvedAt') }}</span><input v-model="healthForm.resolvedDate" class="input" type="date" /></label>
+              <label><span>{{ t('time') }}</span><input v-model="healthForm.resolvedTime" class="input" type="time" /></label>
+            </div>
+          </section>
+
           <div class="health-attachment-actions">
-            <label class="outlined-button health-file-button"><span v-html="lucideSvg('camera')"></span>{{ t('addPhoto') }}<input type="file" accept="image/*" multiple @change="addHealthAttachments($event, 'photo')" /></label>
+            <label class="outlined-button health-file-button"><span v-html="lucideSvg('camera')"></span>{{ t('addPhoto') }}<input type="file" accept="image/*,.heic,.heif,image/heic,image/heif" multiple @change="addHealthAttachments($event, 'photo')" /></label>
             <label class="outlined-button health-file-button"><span v-html="lucideSvg('video')"></span>{{ t('addVideo') }}<input type="file" accept="video/*" multiple @change="addHealthAttachments($event, 'video')" /></label>
           </div>
+          <p class="helper compact-helper">{{ t('healthAttachmentStorageHint') }}</p>
 
           <div v-if="healthForm.attachments.length" class="health-attachment-list">
             <article v-for="attachment in healthForm.attachments" :key="attachment.id" class="health-attachment-row">
-              <span v-html="lucideSvg(attachment.type === 'video' ? 'video' : 'camera')"></span>
-              <div><b>{{ attachment.name }}</b><small>{{ attachmentTypeLabel(attachment.type) }} · {{ formatBytes(attachment.size) }}</small></div>
+              <button class="health-attachment-preview-button" type="button" :aria-label="t('healthAttachmentPreview')" :title="t('healthAttachmentPreview')" @click="openHealthAttachmentPreview(attachment)">
+                <img v-if="attachment.type === 'photo' && healthAttachmentPreviewSource(attachment)" :src="healthAttachmentPreviewSource(attachment)" alt="" />
+                <span v-else v-html="lucideSvg(attachment.type === 'video' ? 'video' : 'camera')"></span>
+              </button>
+              <div><input v-model="attachment.display_name" class="attachment-name-input" type="text" :aria-label="t('healthAttachmentName')" :placeholder="attachment.name" /><small>{{ attachmentTypeLabel(attachment.type) }} · {{ formatBytes(attachment.size) }}</small></div>
               <button class="entry-icon-button danger" type="button" :aria-label="t('delete')" :title="t('delete')" @click="removeHealthAttachment(attachment.id)" v-html="lucideSvg('trash2')"></button>
             </article>
           </div>
@@ -13605,6 +14407,18 @@ function setTab(tab: Tab) {
             <button class="text-button" type="button" @click="closeHealthEditor">{{ t('cancel') }}</button>
             <button class="filled-button" type="button" @click="saveHealthEntry">{{ healthEditorMode === 'edit' ? t('update') : t('save') }}</button>
           </div>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="healthPreviewAttachment" class="dialog-backdrop app-overlay" @click.self="healthPreviewAttachment = null">
+        <article class="settings-dialog health-preview-dialog">
+          <div class="dialog-title-row"><h2>{{ healthAttachmentDisplayName(healthPreviewAttachment) }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" @click="healthPreviewAttachment = null" v-html="lucideSvg('x')"></button></div>
+          <img v-if="healthPreviewAttachment.type === 'photo' && healthAttachmentPreviewSource(healthPreviewAttachment)" class="health-preview-media" :src="healthAttachmentPreviewSource(healthPreviewAttachment)" :alt="healthAttachmentDisplayName(healthPreviewAttachment)" />
+          <video v-else-if="healthPreviewAttachment.type === 'video'" class="health-preview-media" :src="healthPreviewAttachment.data_url" controls playsinline></video>
+          <div v-else class="health-preview-unavailable"><span v-html="lucideSvg('camera')"></span><b>{{ t('healthAttachmentPreviewUnavailable') }}</b></div>
+          <p class="helper big">{{ attachmentTypeLabel(healthPreviewAttachment.type) }} · {{ formatBytes(healthPreviewAttachment.size) }}</p>
         </article>
       </div>
     </Teleport>

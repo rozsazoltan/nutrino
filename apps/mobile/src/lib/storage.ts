@@ -167,6 +167,20 @@ export function defaultState(): AppState {
 }
 
 function normalizeHealthEntry(entry: HealthEntry): HealthEntry {
+  const attachments = Array.isArray(entry.attachments) ? entry.attachments.map((attachment: any) => ({
+    id: String(attachment?.id || generateId('health-attachment')),
+    type: attachment?.type === 'video' ? 'video' as const : 'photo' as const,
+    name: String(attachment?.name || attachment?.display_name || 'attachment'),
+    display_name: attachment?.display_name ?? null,
+    mime_type: String(attachment?.mime_type || (attachment?.type === 'video' ? 'video/*' : 'image/*')),
+    size: Number(attachment?.size || 0),
+    data_url: String(attachment?.data_url || ''),
+    preview_data_url: attachment?.preview_data_url ? String(attachment.preview_data_url) : null,
+    backup_path: attachment?.backup_path ? String(attachment.backup_path) : null,
+    fingerprint: attachment?.fingerprint ? String(attachment.fingerprint) : null,
+    created_at: Number(attachment?.created_at || Date.now()),
+  })) : [];
+
   return {
     ...entry,
     profile_id: String(entry.profile_id || ''),
@@ -177,7 +191,11 @@ function normalizeHealthEntry(entry: HealthEntry): HealthEntry {
     occurred_at: Number(entry.occurred_at || entry.created_at || Date.now()),
     category: entry.category || 'other',
     notes: entry.notes ?? null,
-    attachments: Array.isArray(entry.attachments) ? entry.attachments : [],
+    attachments,
+    ongoing: entry.ongoing === true,
+    resolved_at: Number.isFinite(Number(entry.resolved_at)) ? Number(entry.resolved_at) : null,
+    last_reviewed_at: Number.isFinite(Number(entry.last_reviewed_at)) ? Number(entry.last_reviewed_at) : null,
+    review_dismissed_at: Number.isFinite(Number(entry.review_dismissed_at)) ? Number(entry.review_dismissed_at) : null,
     created_at: Number(entry.created_at || Date.now()),
     updated_at: Number(entry.updated_at || entry.created_at || Date.now()),
     deleted_at: entry.deleted_at ?? null,

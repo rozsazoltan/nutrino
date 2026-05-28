@@ -30,6 +30,8 @@
   --on-inverse-surface: #F0F1EB;
   --shadow: rgba(0,0,0,.18);
   --keyboard-offset: 0px;
+  --modal-edge-gap: 2.5rem;
+  --modal-total-edge-gap: 5rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -328,6 +330,10 @@ p { line-height: 1.45; }
 .pairing-card .helper { margin: 0 0 14px; }
 .pairing-card .field-label { margin-left: 0; margin-right: 0; }
 .keyboard-open .bottom-nav { transform: translateY(110%); }
+.keyboard-open {
+  --modal-edge-gap: 0px;
+  --modal-total-edge-gap: 0px;
+}
 .keyboard-open .app-shell { padding-bottom: calc(24px + var(--keyboard-offset)); }
 
 @media (max-width: 420px) { .meal-header { grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; padding: 14px 12px; } .section-summary-text { font-size: .74rem; min-width: 58px; } .section-summary-text::first-line { font-size: .82rem; } .plus-button { width: 32px; height: 32px; } .calendar-day { min-height: 58px; padding-inline: 1px; } .calendar-day em { font-size: .41rem; } .selected-day-nutrition span { font-size: .72rem; padding: 6px 8px; } }
@@ -5237,14 +5243,14 @@ select:focus {
   place-items: start center !important;
   overflow-y: auto !important;
   overscroll-behavior: contain !important;
-  padding: calc(5rem + env(safe-area-inset-top)) max(14px, env(safe-area-inset-left)) calc(5rem + env(safe-area-inset-bottom) + var(--keyboard-offset)) max(14px, env(safe-area-inset-right)) !important;
+  padding: calc(var(--modal-edge-gap) + env(safe-area-inset-top)) max(14px, env(safe-area-inset-left)) calc(var(--modal-edge-gap) + env(safe-area-inset-bottom) + var(--keyboard-offset)) max(14px, env(safe-area-inset-right)) !important;
   background: color-mix(in srgb, #000 58%, transparent) !important;
   backdrop-filter: blur(14px) saturate(1.05) !important;
 }
 .dialog-backdrop .settings-dialog,
 .dialog-backdrop .local-editor-dialog,
 .dialog-backdrop .scanner-dialog {
-  max-height: calc(100dvh - 10rem - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
+  max-height: calc(100dvh - var(--modal-total-edge-gap) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
   overflow-y: auto !important;
   overscroll-behavior: contain !important;
   margin: 0 auto !important;
@@ -5253,13 +5259,13 @@ select:focus {
   align-items: start !important;
   overflow-y: auto !important;
   overscroll-behavior: contain !important;
-  padding: calc(5rem + env(safe-area-inset-top)) max(14px, env(safe-area-inset-left)) calc(5rem + env(safe-area-inset-bottom) + var(--keyboard-offset)) max(14px, env(safe-area-inset-right)) !important;
+  padding: calc(var(--modal-edge-gap) + env(safe-area-inset-top)) max(14px, env(safe-area-inset-left)) calc(var(--modal-edge-gap) + env(safe-area-inset-bottom) + var(--keyboard-offset)) max(14px, env(safe-area-inset-right)) !important;
   background: color-mix(in srgb, #000 58%, transparent) !important;
   backdrop-filter: blur(14px) saturate(1.05) !important;
 }
 .sheet-backdrop:has(.health-entry-sheet) .health-entry-sheet {
   width: min(100%, 560px) !important;
-  max-height: calc(100dvh - 10rem - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
+  max-height: calc(100dvh - var(--modal-total-edge-gap) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
   margin: 0 auto !important;
   border-radius: 28px !important;
   overflow-y: auto !important;
@@ -5322,12 +5328,12 @@ select:focus {
 @media (max-width: 430px) {
   .dialog-backdrop,
   .sheet-backdrop:has(.health-entry-sheet) {
-    padding-top: calc(5rem + env(safe-area-inset-top)) !important;
-    padding-bottom: calc(5rem + env(safe-area-inset-bottom) + var(--keyboard-offset)) !important;
+    padding-top: calc(var(--modal-edge-gap) + env(safe-area-inset-top)) !important;
+    padding-bottom: calc(var(--modal-edge-gap) + env(safe-area-inset-bottom) + var(--keyboard-offset)) !important;
   }
   .dialog-backdrop .settings-dialog,
   .sheet-backdrop:has(.health-entry-sheet) .health-entry-sheet {
-    max-height: calc(100dvh - 10rem - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
+    max-height: calc(100dvh - var(--modal-total-edge-gap) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
   }
 }
 
@@ -5365,5 +5371,412 @@ select:focus {
 @media (max-width: 420px) {
   .health-custom-range-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* v0.13.5 health diary parity, review flow and media previews */
+.home-health-card {
+  padding: 0 !important;
+}
+.home-health-card .home-health-header {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  padding: 16px !important;
+  background: var(--surface-container) !important;
+}
+.home-health-card .entry-list {
+  padding: 0 14px 14px !important;
+}
+.calendar-dot-row {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  display: inline-flex;
+  gap: 4px;
+  transform: translateX(-50%);
+}
+.calendar-day .calendar-dot-row i {
+  position: static;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+}
+.calendar-entry-dot {
+  background: currentColor !important;
+}
+.calendar-health-dot {
+  background: var(--error) !important;
+}
+.calendar-day.selected .calendar-health-dot {
+  background: var(--error-container) !important;
+}
+.health-day-toolbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.health-day-toolbar .entry-actions {
+  margin: 0;
+}
+.health-day-analysis-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.health-day-analysis-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--surface);
+}
+.health-day-analysis-row b,
+.health-day-analysis-row small {
+  display: block;
+}
+.health-day-analysis-row small {
+  margin-top: 3px;
+  color: var(--on-surface-variant);
+  font-size: .76rem;
+}
+.health-day-analysis-row i {
+  height: 6px;
+  min-width: 8px;
+  border-radius: 999px;
+}
+.health-reuse-picker {
+  display: grid;
+  gap: 10px;
+}
+.health-reuse-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(34vh, 310px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.health-reuse-list button {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 16px;
+  color: var(--on-surface);
+  background: var(--surface-container);
+  text-align: left;
+}
+.health-reuse-list button.selected {
+  border-color: color-mix(in srgb, var(--primary) 70%, transparent);
+  background: color-mix(in srgb, var(--primary-container) 56%, var(--surface));
+}
+.health-reuse-list button > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  color: var(--primary);
+  background: var(--secondary-container);
+}
+.health-reuse-list svg {
+  width: 20px;
+  height: 20px;
+}
+.health-resolution-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 18px;
+  background: var(--surface-container);
+}
+.health-resolution-toggle {
+  padding: 10px 12px !important;
+  background: var(--surface) !important;
+}
+.compact-helper {
+  margin: -2px 0 0;
+  font-size: .78rem;
+}
+.health-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--on-surface);
+  background: var(--surface-container);
+  font-size: .76rem;
+  font-weight: 800;
+}
+.health-attachment-preview-button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  border-radius: 16px;
+  color: var(--primary);
+  background: var(--primary-container);
+}
+.health-attachment-preview-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.attachment-name-input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 70%, transparent);
+  border-radius: 0;
+  padding: 0 0 4px;
+  color: var(--on-surface);
+  background: transparent;
+  font-weight: 900;
+  outline: none;
+}
+.health-preview-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(94vw, 620px);
+}
+.health-preview-media {
+  display: block;
+  width: 100%;
+  max-height: min(58dvh, 560px);
+  object-fit: contain;
+  border-radius: 18px;
+  background: #000;
+}
+.profile-purpose-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.profile-purpose-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 999px;
+  color: var(--on-surface);
+  background: var(--surface-container);
+  font-size: .8rem;
+  font-weight: 900;
+}
+.profile-purpose-chip.selected {
+  border-color: color-mix(in srgb, var(--primary) 70%, transparent);
+  color: var(--on-primary-container);
+  background: color-mix(in srgb, var(--primary-container) 68%, var(--surface));
+}
+.profile-purpose-chip svg {
+  width: 17px;
+  height: 17px;
+  color: var(--primary);
+}
+.activity-analysis-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(94vw, 620px);
+}
+.activity-analysis-range-toggle {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.activity-analysis-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.activity-analysis-summary > div {
+  display: grid;
+  align-content: center;
+  min-height: 64px;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--surface-container);
+}
+.activity-analysis-summary span,
+.activity-type-row small,
+.activity-segment-row small,
+.activity-day-pie-head small {
+  color: var(--on-surface-variant);
+  font-size: .76rem;
+}
+.activity-analysis-summary b {
+  display: block;
+  margin-top: 4px;
+  color: var(--on-surface);
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+.activity-type-summary-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 58%, transparent);
+  border-radius: 18px;
+  background: var(--surface-container-low);
+}
+.activity-type-summary-card h3 {
+  margin: 0;
+  font-size: .95rem;
+}
+.activity-type-list,
+.activity-day-pie-list,
+.activity-segment-list {
+  display: grid;
+  gap: 8px;
+}
+.activity-type-row,
+.activity-segment-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 28px;
+}
+.activity-type-row span:nth-child(2),
+.activity-segment-row span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-type-row b,
+.activity-segment-row b {
+  color: var(--on-surface);
+  font-size: .78rem;
+  font-weight: 800;
+}
+.activity-type-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+}
+.activity-day-pie-card {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 62%, transparent);
+  border-radius: 18px;
+  background: var(--surface);
+}
+.activity-day-pie-card.selected {
+  border-color: color-mix(in srgb, var(--primary) 58%, var(--outline-variant));
+  background: color-mix(in srgb, var(--primary-container) 26%, var(--surface));
+}
+.activity-day-pie-card.empty {
+  opacity: .78;
+}
+.activity-day-pie-chart {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 78px;
+  height: 78px;
+  border-radius: 999px;
+  color: var(--on-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--outline-variant) 70%, transparent);
+}
+.activity-day-pie-chart::after {
+  position: absolute;
+  inset: 14px;
+  border-radius: inherit;
+  background: var(--surface);
+  content: "";
+}
+.activity-day-pie-card.selected .activity-day-pie-chart::after {
+  background: color-mix(in srgb, var(--primary-container) 32%, var(--surface));
+}
+.activity-day-pie-chart span,
+.activity-day-pie-chart small {
+  position: relative;
+  z-index: 1;
+  line-height: 1;
+}
+.activity-day-pie-chart span {
+  align-self: end;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+.activity-day-pie-chart small {
+  align-self: start;
+  margin-top: 3px;
+  color: var(--on-surface-variant);
+  font-size: .68rem;
+  font-weight: 800;
+}
+.activity-day-pie-copy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.activity-day-pie-head {
+  display: grid;
+  gap: 3px;
+}
+.activity-day-pie-head b {
+  font-size: .95rem;
+  font-weight: 900;
+}
+.compact-empty-line {
+  min-height: auto;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: .8rem;
+}
+.sheet-backdrop {
+  align-items: start !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  padding: calc(var(--modal-edge-gap) + env(safe-area-inset-top)) max(14px, env(safe-area-inset-left)) calc(var(--modal-edge-gap) + env(safe-area-inset-bottom) + var(--keyboard-offset)) max(14px, env(safe-area-inset-right)) !important;
+  background: color-mix(in srgb, #000 58%, transparent) !important;
+  backdrop-filter: blur(14px) saturate(1.05) !important;
+}
+.sheet-backdrop .bottom-sheet {
+  width: min(100%, 560px) !important;
+  max-height: calc(100dvh - var(--modal-total-edge-gap) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
+  margin: 0 auto !important;
+  border-radius: 28px !important;
+  overflow-y: auto !important;
+}
+@media (max-width: 420px) {
+  .home-health-card .home-health-header {
+    padding: 14px 12px !important;
+  }
+  .health-day-toolbar {
+    grid-template-columns: 1fr;
+  }
+  .activity-analysis-summary {
+    grid-template-columns: 1fr;
+  }
+  .activity-day-pie-card {
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+  }
+  .activity-day-pie-chart {
+    width: 70px;
+    height: 70px;
+  }
+  .activity-day-pie-chart::after {
+    inset: 12px;
+  }
+  .activity-type-row,
+  .activity-segment-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .activity-type-row small,
+  .activity-segment-row small {
+    display: none;
   }
 }

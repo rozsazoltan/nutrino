@@ -96,9 +96,13 @@ export interface HealthAttachment {
   id: string;
   type: HealthAttachmentType;
   name: string;
+  display_name?: string | null;
   mime_type: string;
   size: number;
   data_url: string;
+  preview_data_url?: string | null;
+  backup_path?: string | null;
+  fingerprint?: string | null;
   created_at: number;
 }
 
@@ -113,6 +117,10 @@ export interface HealthEntry {
   category: HealthCategoryType;
   notes?: string | null;
   attachments: HealthAttachment[];
+  ongoing?: boolean;
+  resolved_at?: number | null;
+  last_reviewed_at?: number | null;
+  review_dismissed_at?: number | null;
   created_at: number;
   updated_at: number;
   deleted_at?: number | null;
