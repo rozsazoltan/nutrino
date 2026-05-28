@@ -362,6 +362,7 @@ const settingsIconMap: Record<string, IconName> = {
   backup: 'archiveRestore',
   advanced: 'settings',
   api: 'server',
+  desktop: 'server',
   github: 'database',
 };
 
@@ -7889,8 +7890,7 @@ function formatDateTime(value: number) {
 }
 
 function updateReleaseTitle(result = updateCheckResult.value): string {
-  if (!result?.release) return t('appUpdates');
-  return `${t('updateAvailable')} ${result.release.version}`;
+  return result?.release ? t('updateAvailable') : t('appUpdates');
 }
 
 function updateReleaseBody(result = updateCheckResult.value): string {
@@ -8027,6 +8027,7 @@ function remindUpdateLater() {
 }
 
 function openUpdateCenter() {
+  updateInstallInfoOpen.value = false;
   if (updateAvailable.value) {
     updateDialogOpen.value = true;
     return;
@@ -8040,7 +8041,7 @@ function handleAndroidUpdateInstallerEvent(event: Event) {
     rememberPendingUpdateInstall();
     updateBusy.value = false;
     updateDialogOpen.value = true;
-    updateInstallInfoOpen.value = true;
+    updateInstallInfoOpen.value = false;
     showToast(t('androidInstallPermissionRequired'));
     return;
   }
@@ -11220,7 +11221,7 @@ function setTab(tab: Tab) {
         </div>
       </div>
       <div class="appbar-actions">
-        <button class="sync-chip" data-tour="sync" :disabled="syncBusy" @click="syncNow()">
+        <button v-if="state.settings.desktop_api_enabled !== false || state.settings.github_csv_enabled !== false" class="sync-chip" data-tour="sync" :disabled="syncBusy" @click="syncNow()">
           <span class="sync-dot" :class="serverOnline ? '' : githubCatalogAvailable ? 'available' : 'offline'"></span>
           {{ syncBusy ? t('syncing') : serverOnline ? t('online') : githubCatalogAvailable ? t('available') : t('offline') }}
         </button>
@@ -11557,10 +11558,10 @@ function setTab(tab: Tab) {
         </label>
       </article>
 
-      <article class="card pairing-card source-settings-card">
-        <label class="tracking-toggle-card"><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
+      <article class="card pairing-card source-settings-card source-connection-card">
+        <label class="source-connection-toggle"><span class="settings-row-icon" v-html="settingsIcon('desktop')"></span><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
         <details v-if="state.settings.desktop_api_enabled" class="source-details">
-          <summary><span>{{ t('connectionDetails') }}</span><small>{{ t('apiSettings') }}</small></summary>
+          <summary><span>{{ t('apiSettings') }}</span><span class="source-details-chevron" v-html="lucideSvg('chevronDown')"></span></summary>
           <p class="helper" v-if="devMode">{{ t('devApiHint') }}</p>
           <p class="channel-chip">{{ t('appChannel') }}: {{ appChannel }}</p>
           <label class="field-label">{{ t('apiUrl') }}</label>
@@ -11577,10 +11578,10 @@ function setTab(tab: Tab) {
         </details>
       </article>
 
-      <article class="card github-sync-card source-settings-card">
-        <label class="tracking-toggle-card"><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
+      <article class="card github-sync-card source-settings-card source-connection-card">
+        <label class="source-connection-toggle"><span class="settings-row-icon" v-html="settingsIcon('github')"></span><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
         <details v-if="state.settings.github_csv_enabled" class="source-details">
-          <summary><span>{{ t('catalogSourceDetails') }}</span><small>{{ t('githubCsvSources') }}</small></summary>
+          <summary><span>{{ t('githubCsvSources') }}</span><span class="source-details-chevron" v-html="lucideSvg('chevronDown')"></span></summary>
           <p class="helper">{{ t('githubCsvSourcesBody') }}</p>
           <div class="github-source-form">
             <input v-model="githubDraft.owner" class="input" :placeholder="t('githubOwnerPlaceholder')" autocomplete="off" autocapitalize="none" />
@@ -12059,7 +12060,9 @@ function setTab(tab: Tab) {
       <div v-if="updateDialogOpen && updateCheckResult?.release" class="dialog-backdrop app-overlay" @click.self="remindUpdateLater">
         <article class="settings-dialog update-dialog">
           <div class="dialog-title-row update-dialog-title-row">
+            <span class="app-update-status-icon update-dialog-icon" v-html="lucideSvg('download')"></span>
             <div class="update-dialog-title-copy">
+              <small class="modal-kicker">{{ t('appUpdates') }}</small>
               <h2>{{ updateReleaseTitle() }}</h2>
               <p class="helper update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p>
             </div>
@@ -12068,7 +12071,7 @@ function setTab(tab: Tab) {
               <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="remindUpdateLater" v-html="lucideSvg('x')"></button>
             </span>
           </div>
-          <p v-if="updateInstallInfoOpen" class="helper big update-install-note">{{ t('updateInstallConsentInfo') }}</p>
+          <p v-if="updateInstallInfoOpen" class="helper big update-install-note warning-callout"><span class="warning-callout-icon">!</span><span>{{ t('updateInstallConsentInfo') }}</span></p>
           <div class="dialog-actions app-update-dialog-actions">
             <button class="filled-button wide" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('checkingUpdates') : t('installUpdate') }}</button>
             <button class="text-button wide" type="button" @click="remindUpdateLater">{{ t('remindLater') }}</button>
@@ -12081,18 +12084,19 @@ function setTab(tab: Tab) {
       <section v-if="settingsOpen" class="settings-screen app-overlay">
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
+        <button class="settings-row" @click="settingsDialog = 'language'"><span class="settings-row-icon" v-html="settingsIcon('language')"></span><b>{{ t('language') }}</b><small>{{ selectedLanguageLabel() }}</small></button>
         <button class="settings-row" @click="openPermissionsSettings"><span class="settings-row-icon" v-html="settingsIcon('permissions')"></span><b>{{ t('appPermissions') }}</b><small>{{ appPermissionSummary() }}</small></button>
-        <button class="settings-row update-settings-entry" :class="{ attention: updateAvailable }" @click="settingsDialog = 'updates'"><span class="settings-row-icon" v-html="settingsIcon('updates')"></span><b>{{ t('appUpdates') }}</b><small>{{ updateCheckResult?.release ? `${t('updateAvailable')} ${updateCheckResult.release.version}` : t('appUpdatesBody') }}</small></button>
+        <button class="settings-row update-settings-entry" :class="{ attention: updateAvailable }" @click="updateInstallInfoOpen = false; settingsDialog = 'updates'"><span class="settings-row-icon" v-html="settingsIcon('updates')"></span><b>{{ t('appUpdates') }}</b><small>{{ updateCheckResult?.release ? `${t('updateAvailable')} · ${updateCheckResult.release.version}` : t('appUpdatesBody') }}</small></button>
+        <div class="settings-divider"></div>
         <button class="settings-row" @click="settingsDialog = 'units'"><span class="settings-row-icon" v-html="settingsIcon('units')"></span><b>{{ t('units') }}</b><small>{{ state.settings.units === 'metric' ? t('metric') : t('imperial') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'calculations'"><span class="settings-row-icon" v-html="settingsIcon('calculations')"></span><b>{{ t('calculations') }}</b><small>{{ t('iomEquationMacro') }}</small></button>
-        <button class="settings-row" @click="settingsDialog = 'tracking'"><span class="settings-row-icon" v-html="settingsIcon('tracking')"></span><b>{{ t('trackingReminders') }}</b><small>{{ calorieDeficitEnabled ? `${state.settings.target_deficit_kcal} kcal ${t('targetDeficit')}` : t('deficitOffHint') }}</small></button>
+        <button class="settings-row" @click="settingsDialog = 'tracking'"><span class="settings-row-icon" v-html="settingsIcon('tracking')"></span><b>{{ t('trackingReminders') }}</b><small>{{ calorieDeficitEnabled ? `${state.settings.target_deficit_kcal} kcal · ${activeLanguage === 'hu' ? t('targetDeficit').toLocaleLowerCase('hu') : t('targetDeficit')}` : t('deficitOffHint') }}</small></button>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('activity')"></span><b>{{ t('showActivity') }}</b><input v-model="state.settings.show_activity_tracking" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('macros')"></span><b>{{ t('showMacros') }}</b><input v-model="state.settings.show_meal_macros" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('showMicros') }}</b><input v-model="state.settings.show_micronutrients" type="checkbox" /></label>
         <button v-if="state.settings.show_micronutrients" class="settings-row micronutrient-settings-row" @click="settingsDialog = 'micronutrients'"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('micronutrientLimits') }}</b><small>{{ t('micronutrientLimitsHint') }}</small></button>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogProtect')"></span><b>{{ t('protectExternalCatalogItems') }}</b><input v-model="state.settings.protect_external_catalog_items" type="checkbox" /><small>{{ t('protectExternalCatalogItemsHint') }}</small></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogInactive')"></span><b>{{ t('includeInactiveCatalogItems') }}</b><input v-model="state.settings.include_inactive_catalog_items" type="checkbox" /><small>{{ t('includeInactiveCatalogItemsHint') }}</small></label>
-        <button class="settings-row" @click="settingsDialog = 'language'"><span class="settings-row-icon" v-html="settingsIcon('language')"></span><b>{{ t('language') }}</b><small>{{ selectedLanguageLabel() }}</small></button>
         <div class="settings-divider"></div>
         <button class="settings-row" @click="exportAppData"><span class="settings-row-icon" v-html="settingsIcon('export')"></span><b>{{ t('exportAppData') }}</b><small>{{ t('exportAppDataBody') }}</small></button>
         <button class="settings-row" @click="importAppData"><span class="settings-row-icon" v-html="settingsIcon('import')"></span><b>{{ t('importAppData') }}</b><small>{{ t('importAppDataBody') }}</small></button>
@@ -12123,12 +12127,12 @@ function setTab(tab: Tab) {
               <article class="permission-status-card" :class="{ granted: notificationPermissionGranted }">
                 <span class="permission-status" :class="{ granted: notificationPermissionGranted }">{{ notificationPermissionGranted ? '✓' : '×' }}</span>
                 <span class="permission-copy"><b>{{ t('notificationPermission') }}</b><small>{{ notificationPermissionStatusBody() }}</small></span>
-                <button v-if="!notificationPermissionGranted && notificationPermission !== 'unsupported'" class="text-button" type="button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button>
+                <button v-if="!notificationPermissionGranted && notificationPermission !== 'unsupported'" class="text-button" type="button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button><button v-else class="text-button" type="button" @click="openPermissionManagementSettings">{{ t('openSystemPermissionSettings') }}</button>
               </article>
               <article class="permission-status-card" :class="{ granted: cameraPermissionGranted }">
                 <span class="permission-status" :class="{ granted: cameraPermissionGranted }">{{ cameraPermissionGranted ? '✓' : '×' }}</span>
                 <span class="permission-copy"><b>{{ t('cameraPermission') }}</b><small>{{ cameraPermissionStatusBody() }}</small></span>
-                <button v-if="!cameraPermissionGranted && cameraPermission !== 'unsupported'" class="text-button" type="button" @click="requestCameraPermission">{{ t('requestCameraPermission') }}</button>
+                <button v-if="!cameraPermissionGranted && cameraPermission !== 'unsupported'" class="text-button" type="button" @click="requestCameraPermission">{{ t('requestCameraPermission') }}</button><button v-else class="text-button" type="button" @click="openPermissionManagementSettings">{{ t('openSystemPermissionSettings') }}</button>
               </article>
             </div>
             <p class="helper big permission-management-hint">{{ t('permissionManagementHint') }}</p>
@@ -12136,7 +12140,7 @@ function setTab(tab: Tab) {
           </template>
           <template v-else-if="settingsDialog === 'updates'">
             <div class="dialog-title-row"><h2>{{ t('appUpdates') }}</h2><span class="dialog-title-actions"><button class="info-button update-install-info-button" type="button" :aria-label="t('appUpdates')" @click="updateInstallInfoOpen = !updateInstallInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></span></div>
-            <p v-if="updateInstallInfoOpen" class="helper big update-install-note">{{ t('updateInstallConsentInfo') }}</p>
+            <p v-if="updateInstallInfoOpen" class="helper big update-install-note warning-callout"><span class="warning-callout-icon">!</span><span>{{ t('updateInstallConsentInfo') }}</span></p>
             <section class="app-update-settings-panel">
               <article class="app-update-status-card" :class="{ attention: updateAvailable, latest: updateCheckResult?.status === 'latest' }">
                 <span class="app-update-status-icon" v-html="lucideSvg(updateAvailable ? 'download' : 'refreshCw')"></span>
@@ -12331,9 +12335,10 @@ function setTab(tab: Tab) {
     <Teleport to="body">
       <section v-if="onboardingOpen" class="onboarding-screen app-overlay">
       <article class="onboarding-card">
-        <div class="onboarding-logo" v-html="nutrinoLogoSvg"></div>
-        <p class="eyebrow">nutrino</p>
-        <h2>{{ t('onboardingTitle') }}</h2>
+        <div class="onboarding-compact-head">
+          <div class="onboarding-logo" v-html="nutrinoLogoSvg"></div>
+          <div><p class="eyebrow">nutrino</p><h2>{{ t('onboardingTitle') }}</h2></div>
+        </div>
         <p class="helper big" v-if="onboardingStep === 0">{{ t('onboardingIntro') }}</p>
         <div v-if="onboardingStep === 0" class="onboarding-form">
           <label><span>{{ t('height') }}</span><input v-model.number="onboardingProfile.height_cm" class="input" type="number" inputmode="decimal" /></label>
@@ -12366,7 +12371,7 @@ function setTab(tab: Tab) {
           </div>
           <p class="helper big">{{ t('onboardingTourBody') }}</p>
         </div>
-        <div class="dialog-actions onboarding-actions"><button v-if="onboardingStep === 0" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 0 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 2" class="text-button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="openOnboardingSyncStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 1" class="filled-button" @click="openOnboardingPermissionsStep">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('onboardingTourStart') }}</button></div>
+        <div class="dialog-actions onboarding-actions compact-onboarding-actions"><button v-if="onboardingStep === 0" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 0 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 2" class="text-button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="openOnboardingSyncStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 1" class="filled-button" @click="openOnboardingPermissionsStep">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('onboardingTourStart') }}</button></div>
       </article>
       </section>
     </Teleport>

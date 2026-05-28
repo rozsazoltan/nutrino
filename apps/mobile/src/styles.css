@@ -4099,3 +4099,337 @@ select:focus {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 }
+
+/* v0.12.19 final mobile settings/update layout polish */
+.dialog-title-row,
+.update-dialog-title-row {
+  align-items: center !important;
+}
+.dialog-title-actions {
+  align-self: center !important;
+  align-items: center !important;
+}
+.update-dialog-title-row {
+  display: grid !important;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px;
+}
+.update-dialog-icon {
+  align-self: start;
+  margin-top: 2px;
+}
+.update-dialog-title-copy .modal-kicker {
+  margin: 0;
+  color: var(--primary);
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.update-install-note.warning-callout {
+  margin: 0 0 12px !important;
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 12px 14px !important;
+}
+.update-install-note.warning-callout .warning-callout-icon {
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+.settings-row.update-settings-entry.attention,
+.settings-row.dev-only-settings-row {
+  width: 100% !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  min-height: 64px !important;
+  padding-block: 10px !important;
+}
+.settings-row.update-settings-entry.attention {
+  color: var(--primary);
+}
+.settings-row.update-settings-entry.attention .settings-row-icon {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.source-connection-card {
+  padding: 0;
+  background: var(--surface-container);
+}
+.source-connection-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  color: var(--on-surface);
+}
+.source-connection-toggle > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.source-connection-toggle b,
+.source-connection-toggle small {
+  display: block;
+}
+.source-connection-toggle small {
+  color: var(--on-surface-variant);
+  font-size: .78rem;
+  line-height: 1.35;
+  font-weight: 700;
+}
+.source-connection-toggle .settings-row-icon {
+  position: static;
+  align-self: center;
+}
+.source-connection-toggle input[type='checkbox'] {
+  justify-self: end;
+}
+.source-details {
+  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 55%, transparent);
+  padding: 0 16px 14px;
+}
+.source-details > summary {
+  margin: 0 -16px 10px;
+  padding: 10px 16px !important;
+  background: transparent !important;
+  font-weight: 800;
+}
+.source-details > summary small {
+  display: none;
+}
+.github-source-form,
+.github-source-list {
+  padding-inline: 0 !important;
+}
+.github-source-row {
+  background: transparent !important;
+  border-color: color-mix(in srgb, var(--outline-variant) 55%, transparent) !important;
+}
+.onboarding-card {
+  padding: 18px !important;
+}
+.onboarding-compact-head {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.onboarding-compact-head .onboarding-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+}
+.onboarding-compact-head .eyebrow,
+.onboarding-compact-head h2 {
+  margin: 0;
+}
+.onboarding-compact-head h2 {
+  font-size: 1.18rem;
+  line-height: 1.15;
+}
+.onboarding-form,
+.onboarding-permissions {
+  margin-top: 12px !important;
+  gap: 10px !important;
+}
+.compact-onboarding-actions {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px !important;
+  margin-top: 14px !important;
+}
+.compact-onboarding-actions > button {
+  min-height: 40px;
+  width: 100%;
+  justify-content: center;
+}
+.compact-onboarding-actions > .filled-button:last-child {
+  grid-column: 1 / -1;
+}
+.permission-status-card {
+  align-items: center;
+}
+.permission-status-card .text-button {
+  justify-self: end;
+  white-space: normal;
+  text-align: right;
+}
+@media (max-width: 420px) {
+  .update-dialog-title-row {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .dialog-title-actions .info-button,
+  .dialog-title-actions .dialog-close-icon {
+    width: 34px !important;
+    height: 34px !important;
+    min-width: 34px !important;
+  }
+  .app-update-status-icon.update-dialog-icon {
+    width: 38px;
+    height: 38px;
+  }
+  .compact-onboarding-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* v0.12.20 final release UI alignment polish */
+.app-logo-update-icon {
+  isolation: isolate;
+  overflow: visible;
+}
+.app-logo-update-icon::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  z-index: -1;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  animation: nutrino-update-icon-ping 1.45s ease-out infinite;
+}
+@keyframes nutrino-update-icon-ping {
+  0% { transform: scale(.65); opacity: .8; }
+  72% { transform: scale(1.42); opacity: 0; }
+  100% { transform: scale(1.42); opacity: 0; }
+}
+.appbar-update-chip span {
+  border-radius: 999px !important;
+}
+.update-dialog-title-copy .modal-kicker {
+  display: none !important;
+}
+.update-dialog-title-row {
+  grid-template-columns: 38px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+.update-dialog-icon {
+  align-self: center !important;
+  margin-top: 0 !important;
+}
+.update-dialog-title-copy {
+  gap: 4px !important;
+}
+.update-dialog-title-copy h2 {
+  font-size: 1.28rem !important;
+  line-height: 1.16 !important;
+}
+.update-dialog .dialog-title-actions {
+  align-self: center !important;
+  align-items: center !important;
+  min-height: 36px;
+}
+.update-install-note.warning-callout {
+  margin-top: 12px !important;
+  margin-bottom: 14px !important;
+}
+.update-install-info-button {
+  align-self: center !important;
+}
+.settings-row.update-settings-entry.attention,
+.settings-row.dev-only-settings-row {
+  width: calc(100% - 32px) !important;
+  margin: 6px 16px !important;
+  border-radius: 18px !important;
+  align-items: center !important;
+  min-height: 72px !important;
+  padding: 12px !important;
+  row-gap: 3px !important;
+}
+.settings-row.update-settings-entry.attention {
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface-container-high)) !important;
+  color: var(--on-surface) !important;
+  box-shadow: inset 3px 0 0 var(--primary) !important;
+}
+.settings-row.update-settings-entry.attention .settings-row-icon {
+  background: transparent !important;
+  color: var(--primary) !important;
+}
+.settings-row.dev-only-settings-row {
+  background: color-mix(in srgb, var(--secondary-container) 38%, var(--surface)) !important;
+  color: var(--on-surface) !important;
+  box-shadow: none !important;
+}
+.settings-row.update-settings-entry.attention small,
+.settings-row.dev-only-settings-row small {
+  margin-top: 0 !important;
+}
+.source-connection-card {
+  background: var(--surface-container) !important;
+  border-color: color-mix(in srgb, var(--outline-variant) 60%, transparent) !important;
+}
+.source-connection-toggle {
+  min-height: 72px;
+  padding: 12px 16px !important;
+}
+.source-connection-toggle input[type='checkbox'] {
+  appearance: none;
+  width: 62px;
+  height: 34px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--on-surface-variant) 28%, transparent);
+  box-shadow: inset 0 0 0 2px var(--outline-variant);
+  position: relative;
+}
+.source-connection-toggle input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--outline);
+  transition: transform .18s ease, background-color .18s ease;
+}
+.source-connection-toggle input[type='checkbox']:checked {
+  background: var(--primary);
+  box-shadow: none;
+}
+.source-connection-toggle input[type='checkbox']:checked::after {
+  transform: translateX(28px);
+  background: var(--on-primary);
+}
+.source-details > summary::after {
+  content: none !important;
+}
+.source-details-chevron {
+  display: inline-grid !important;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--on-surface-variant);
+  transition: transform .18s ease;
+}
+.source-details-chevron svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+}
+.source-details[open] > summary .source-details-chevron {
+  transform: rotate(180deg);
+}
+.source-details > summary {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: center !important;
+}
+@media (max-width: 420px) {
+  .settings-row.update-settings-entry.attention,
+  .settings-row.dev-only-settings-row {
+    width: calc(100% - 24px) !important;
+    margin-inline: 12px !important;
+  }
+  .update-dialog-title-row {
+    grid-template-columns: 36px minmax(0, 1fr) auto !important;
+  }
+  .update-dialog-title-copy h2 {
+    font-size: 1.22rem !important;
+  }
+}

@@ -2228,3 +2228,116 @@ body:has(.modal-backdrop) {
     grid-template-columns: 1fr;
   }
 }
+
+/* v0.12.19 desktop update modal readability polish */
+.desktop-update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+}
+.desktop-update-chip span {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 0;
+  background: transparent !important;
+}
+.desktop-update-chip span svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+}
+.desktop-update-chip:hover:not(:disabled),
+.desktop-update-chip:focus-visible {
+  background: color-mix(in srgb, #2196f3 14%, var(--desktop-surface, #f7fbf6)) !important;
+  color: #0b4b83 !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #2196f3 36%, transparent) !important;
+}
+@media (prefers-color-scheme: dark) {
+  .desktop-update-chip:hover:not(:disabled),
+  .desktop-update-chip:focus-visible {
+    background: color-mix(in srgb, #2196f3 20%, var(--desktop-surface-2, #1d271d)) !important;
+    color: #d9ecff !important;
+  }
+}
+.desktop-update-modal {
+  width: min(600px, calc(100vw - 40px));
+  border-radius: 24px;
+  padding: 0;
+}
+.desktop-update-modal-head {
+  grid-template-columns: 48px minmax(0, 1fr) !important;
+  align-items: start !important;
+  gap: 1rem !important;
+  padding: 1.5rem 1.6rem 1.25rem !important;
+}
+.desktop-update-modal-icon {
+  width: 48px !important;
+  height: 48px !important;
+  border-radius: 16px !important;
+}
+.desktop-update-modal-copy {
+  gap: .5rem !important;
+}
+.desktop-update-modal-copy .modal-kicker {
+  color: var(--desktop-accent, #2f855a);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.desktop-update-modal-copy h2 {
+  font-size: clamp(1.45rem, 3vw, 1.85rem);
+  line-height: 1.12;
+}
+.desktop-update-release-details {
+  display: grid;
+  gap: .45rem;
+  margin-top: .2rem;
+  padding: .85rem 1rem;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--desktop-surface-2, #edf4ec) 64%, transparent);
+  border: 1px solid color-mix(in srgb, var(--outline, #dfe8df) 38%, transparent);
+}
+.desktop-update-release-details .update-release-copy,
+.desktop-update-release-details small {
+  margin: 0 !important;
+  color: var(--desktop-muted, #5c665c);
+}
+.desktop-update-release-details small {
+  overflow-wrap: anywhere;
+  font-size: .84rem;
+  opacity: .82;
+}
+.desktop-update-modal-actions {
+  padding: 1rem 1.6rem 1.45rem !important;
+  gap: .8rem !important;
+}
+.desktop-update-modal-actions .btn-secondary,
+.desktop-update-modal-actions .btn-primary {
+  min-height: 42px;
+  padding-inline: 1.15rem;
+}
+.qr-nav-button {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+}
+.qr-nav-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+}
+@media (max-width: 640px) {
+  .desktop-update-modal-head {
+    grid-template-columns: 1fr !important;
+  }
+  .desktop-update-modal-actions {
+    display: grid !important;
+    grid-template-columns: 1fr;
+  }
+}

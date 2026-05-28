@@ -802,6 +802,7 @@ class MainActivity : TauriActivity() {
     private var installerBridgeAttached = false
     private var pendingUpdateDownloadUrl: String? = null
     private var pendingUpdateAssetName: String? = null
+    private val updateInstallerPrefs by lazy { getSharedPreferences("nutrino_update_installer", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -931,7 +932,10 @@ class MainActivity : TauriActivity() {
             pendingUpdateDownloadUrl = target
             pendingUpdateAssetName = assetName
             Toast.makeText(this, "Allow Nutrino to install APK updates. The update will continue when you return.", Toast.LENGTH_LONG).show()
-            openUnknownAppInstallSettings()
+            if (!updateInstallerPrefs.getBoolean("unknown_sources_settings_opened", false)) {
+                updateInstallerPrefs.edit().putBoolean("unknown_sources_settings_opened", true).apply()
+                openUnknownAppInstallSettings()
+            }
             dispatchInstallerEvent("permission-required", null, null)
             return
         }

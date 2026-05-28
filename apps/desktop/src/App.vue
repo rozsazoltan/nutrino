@@ -6779,7 +6779,7 @@ onBeforeUnmount(() => {
             <span>{{ serverRunning ? t('ui.apiRunning') : t('ui.apiStopped') }}</span>
             <span v-if="serverRunning" class="server-device-count">{{ connectedDeviceCount }} {{ t(connectedDeviceCount === 1 ? 'ui.deviceSingular' : 'ui.devicePlural') }}</span>
           </div>
-          <button v-if="updateAvailable" class="desktop-update-chip" type="button" @click="openUpdateCenter"><span></span>{{ t('ui.updateAvailable') }} {{ updateCheckResult?.release?.version }}</button>
+          <button v-if="updateAvailable" class="desktop-update-chip" type="button" @click="openUpdateCenter"><span v-html="icon('refreshCw')"></span>{{ t('ui.updateAvailable') }} {{ updateCheckResult?.release?.version }}</button>
         </div>
       </div>
     </header>
@@ -7370,7 +7370,14 @@ onBeforeUnmount(() => {
         <section class="modal-card update-modal desktop-update-modal">
           <div class="desktop-update-modal-head">
             <span class="desktop-update-modal-icon" v-html="icon('download')"></span>
-            <div class="desktop-update-modal-copy"><p class="modal-kicker">{{ t('ui.appUpdates') }}</p><h2>{{ updateReleaseTitle() }}</h2><p class="muted update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p></div>
+            <div class="desktop-update-modal-copy">
+              <p class="modal-kicker">{{ t('ui.appUpdates') }}</p>
+              <h2>{{ updateReleaseTitle() }}</h2>
+              <div class="desktop-update-release-details">
+                <p class="muted update-release-copy">{{ updateReleaseBody() }}</p>
+                <small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small>
+              </div>
+            </div>
           </div>
           <div class="dialog-actions desktop-update-modal-actions">
             <button class="btn-secondary" type="button" @click="remindUpdateLater">{{ t('ui.remindLater') }}</button>
@@ -7390,9 +7397,9 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="activeQrPart()" class="qr-preview" v-html="activeQrPartSvg()"></div>
           <div v-if="qrDialog.parts.length > 1" class="qr-stepper">
-            <button class="btn-secondary" type="button" :disabled="qrDialog.activeIndex === 0" @click="setQrPart(qrDialog.activeIndex - 1)">{{ t('ui.previous_dd1f7') }}</button>
+            <button class="btn-secondary qr-nav-button" type="button" :disabled="qrDialog.activeIndex === 0" @click="setQrPart(qrDialog.activeIndex - 1)"><span v-html="icon('chevronLeft')"></span>{{ t('ui.previous_dd1f7') }}</button>
             <span>{{ qrDialog.activeIndex + 1 }} / {{ qrDialog.parts.length }}</span>
-            <button class="btn-secondary" type="button" :disabled="qrDialog.activeIndex >= qrDialog.parts.length - 1" @click="setQrPart(qrDialog.activeIndex + 1)">{{ t('ui.next_10ac3') }}</button>
+            <button class="btn-secondary qr-nav-button" type="button" :disabled="qrDialog.activeIndex >= qrDialog.parts.length - 1" @click="setQrPart(qrDialog.activeIndex + 1)">{{ t('ui.next_10ac3') }}<span v-html="icon('chevronRight')"></span></button>
           </div>
           <textarea class="input textarea-input" rows="3" readonly :value="activeQrPartPayload()"></textarea>
           <div class="dialog-actions"><button class="btn-primary" @click="qrDialog = null">{{ t('ui.done_f9296') }}</button></div>
