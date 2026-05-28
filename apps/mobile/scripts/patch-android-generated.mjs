@@ -8,15 +8,20 @@ import { mobileCargoTargetDir } from './android-artifacts.mjs';
 
 const projectRoot = process.cwd();
 const androidDir = path.join(projectRoot, 'src-tauri', 'gen', 'android');
+const settingsGradlePath = path.join(androidDir, 'settings.gradle');
 const manifestPath = path.join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml');
 const gradlePropertiesPath = path.join(androidDir, 'gradle.properties');
+const tauriSettingsGradlePath = path.join(androidDir, 'tauri.settings.gradle');
 const androidIconSourceDir = path.join(projectRoot, 'src-tauri', 'android-icons');
 const androidResDir = path.join(androidDir, 'app', 'src', 'main', 'res');
+const androidPluginOverridesDir = path.join(androidDir, 'nutrino-plugin-overrides');
+const notificationPluginOverrideDir = path.join(androidPluginOverridesDir, 'tauri-plugin-notification');
 const androidAppGradlePaths = [
   path.join(androidDir, 'app', 'build.gradle.kts'),
   path.join(androidDir, 'app', 'build.gradle'),
 ];
-const NATIVE_STATE_VERSION = 9;
+const NATIVE_STATE_VERSION = 16;
+const NOTIFICATION_PLUGIN_OVERRIDE_VERSION = 3;
 const forceNativeClean = process.argv.includes('--force-native-clean')
   || process.env.NUTRINO_FORCE_ANDROID_NATIVE_CLEAN === '1';
 
@@ -131,9 +136,118 @@ function walk(dir) {
   });
 }
 
+function isPathInside(parent, candidate) {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 function copyFileEnsuringDir(from, to) {
   fs.mkdirSync(path.dirname(to), { recursive: true });
   fs.copyFileSync(from, to);
+}
+
+function copyDirectoryFiltered(from, to) {
+  const skipDirs = new Set(['.gradle', '.tauri', 'build']);
+  fs.mkdirSync(to, { recursive: true });
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    if (entry.isDirectory() && skipDirs.has(entry.name)) continue;
+    const source = path.join(from, entry.name);
+    const target = path.join(to, entry.name);
+    if (entry.isDirectory()) {
+      copyDirectoryFiltered(source, target);
+      continue;
+    }
+    if (entry.isFile()) copyFileEnsuringDir(source, target);
+  }
+}
+
+function gradleStringPath(value) {
+  return value.replace(/\\\\/g, '\\');
+}
+
+function gradleEscapedPath(value) {
+  return path.resolve(value).replace(/\\/g, '\\\\');
+}
+
+function notificationPluginProjectDirFromSettings(source) {
+  const match = source.match(/project\(':tauri-plugin-notification'\)\.projectDir\s*=\s*new File\("([^"]+)"\)/);
+  return match ? gradleStringPath(match[1]) : null;
+}
+
+function patchNotificationPluginOverride() {
+  if (!fs.existsSync(tauriSettingsGradlePath)) return false;
+
+  let settings = fs.readFileSync(tauriSettingsGradlePath, 'utf8');
+  const originalSettings = settings;
+  const currentProjectDir = notificationPluginProjectDirFromSettings(settings);
+  if (!currentProjectDir) return false;
+
+  const statePath = path.join(notificationPluginOverrideDir, '.nutrino-override-state.json');
+  let overrideState = null;
+  if (fs.existsSync(statePath)) {
+    try {
+      overrideState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    } catch {
+      overrideState = null;
+    }
+  }
+
+  const currentResolved = path.resolve(currentProjectDir);
+  const overrideResolved = path.resolve(notificationPluginOverrideDir);
+  const upstreamDir = currentResolved === overrideResolved && overrideState?.sourceDir
+    ? overrideState.sourceDir
+    : currentProjectDir;
+  if (!fs.existsSync(upstreamDir)) return false;
+
+  const needsCopy = !overrideState
+    || overrideState.version !== NOTIFICATION_PLUGIN_OVERRIDE_VERSION
+    || path.resolve(overrideState.sourceDir || '') !== path.resolve(upstreamDir)
+    || !fs.existsSync(path.join(notificationPluginOverrideDir, 'src', 'main', 'java', 'NotificationStorage.kt'));
+
+  if (needsCopy) {
+    if (!isPathInside(androidPluginOverridesDir, notificationPluginOverrideDir)) {
+      throw new Error(`Refusing to replace Android plugin override outside ${androidPluginOverridesDir}`);
+    }
+    fs.rmSync(notificationPluginOverrideDir, { recursive: true, force: true });
+    copyDirectoryFiltered(upstreamDir, notificationPluginOverrideDir);
+    fs.writeFileSync(statePath, `${JSON.stringify({
+      version: NOTIFICATION_PLUGIN_OVERRIDE_VERSION,
+      sourceDir: path.resolve(upstreamDir),
+    }, null, 2)}\n`);
+  }
+
+  const overrideGradlePath = gradleEscapedPath(notificationPluginOverrideDir);
+  settings = settings.replace(
+    /project\(':tauri-plugin-notification'\)\.projectDir\s*=\s*new File\("[^"]+"\)/,
+    `project(':tauri-plugin-notification').projectDir = new File("${overrideGradlePath}")`
+  );
+
+  if (settings !== originalSettings) {
+    fs.writeFileSync(tauriSettingsGradlePath, settings);
+  }
+
+  let settingsGradleChanged = false;
+  if (fs.existsSync(settingsGradlePath)) {
+    const markerStart = '// BEGIN NUTRINO NOTIFICATION PLUGIN OVERRIDE';
+    const markerEnd = '// END NUTRINO NOTIFICATION PLUGIN OVERRIDE';
+    const overrideBlock = `${markerStart}
+def nutrinoNotificationPluginOverride = new File(rootDir, 'nutrino-plugin-overrides/tauri-plugin-notification')
+if (nutrinoNotificationPluginOverride.exists()) {
+  project(':tauri-plugin-notification').projectDir = nutrinoNotificationPluginOverride
+}
+${markerEnd}`;
+    let settingsGradle = fs.readFileSync(settingsGradlePath, 'utf8');
+    const originalSettingsGradle = settingsGradle;
+    const markerRegex = new RegExp(`\\n?${markerStart}[\\s\\S]*?${markerEnd}\\n?`, 'g');
+    settingsGradle = settingsGradle.replace(markerRegex, '\n').trimEnd();
+    settingsGradle = `${settingsGradle}\n\n${overrideBlock}\n`;
+    if (settingsGradle !== originalSettingsGradle) {
+      fs.writeFileSync(settingsGradlePath, settingsGradle);
+      settingsGradleChanged = true;
+    }
+  }
+
+  return needsCopy || settings !== originalSettings || settingsGradleChanged;
 }
 
 function patchAndroidIcons() {
@@ -296,6 +410,149 @@ function ensureBuildConfigFeature(source) {
   return source.replace(androidBlockRegex, 'android {\n    buildFeatures {\n        buildConfig = true\n    }');
 }
 
+
+function patchNotificationStorageActionKeys() {
+  if (!fs.existsSync(androidDir)) return false;
+
+  let changed = false;
+  for (const file of walk(androidDir)) {
+    if (path.basename(file) !== 'NotificationStorage.kt') continue;
+    let source = fs.readFileSync(file, 'utf8');
+    if (!source.includes('class NotificationStorage') || !source.includes('fun writeActionGroup')) continue;
+    const original = source;
+
+    // tauri-plugin-notification 2.3.x writes action ids/titles with keys suffixed
+    // by the action type id, but reads them back with numeric action indexes.
+    // On Android this produces blank action buttons and empty action ids. Patch the
+    // generated plugin source with a formatting-tolerant replacement because Tauri
+    // may regenerate this file with slightly different whitespace.
+    const writeActionGroupReplacement = `fun writeActionGroup(actions: List<ActionType>) {
+    for (type in actions) {
+      val editor = getStorage(ACTION_TYPES_ID + type.id).edit()
+      editor.clear()
+      editor.putInt("count", type.actions.size)
+      type.actions.forEachIndexed { index, action ->
+        editor.putString("id$index", action.id)
+        editor.putString("title$index", action.title ?: action.id)
+        editor.putBoolean("input$index", action.input ?: false)
+      }
+      editor.apply()
+    }
+  }`;
+
+    source = source.replace(
+      /fun writeActionGroup\(actions:\s*List(?:<ActionType>)?\)\s*\{[\s\S]*?\n\s*fun getActionGroup/m,
+      `${writeActionGroupReplacement}\n\n  fun getActionGroup`
+    );
+
+    source = source.replace(
+      /action\.title\s*=\s*title(?!\s*\?:|\s*\?)/m,
+      'action.title = if (title.isNullOrBlank()) action.id else title'
+    );
+
+    if (source !== original) {
+      fs.writeFileSync(file, source);
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+function patchNotificationManagerNutrinoActions() {
+  if (!fs.existsSync(androidDir)) return false;
+
+  let changed = false;
+  for (const file of walk(androidDir)) {
+    if (path.basename(file) !== 'TauriNotificationManager.kt') continue;
+    let source = fs.readFileSync(file, 'utf8');
+    if (!source.includes('class TauriNotificationManager')) continue;
+    const original = source;
+
+    if (!source.includes('import org.json.JSONObject')) {
+      source = source.replace(/^(package\s+[^\n]+\n)/m, '$1\nimport org.json.JSONObject\n');
+    }
+
+    source = source.replace(
+      /val\s+actionGroup\s*=\s*storage\.getActionGroup\(actionTypeId\)/m,
+      'val actionGroup = resolveNotificationActionGroup(notification, storage.getActionGroup(actionTypeId))'
+    );
+
+    if (!source.includes('private fun resolveNotificationActionGroup(')) {
+      const helper = `
+  private fun resolveNotificationActionGroup(
+        notification: Notification,
+        storedActions: Array<NotificationAction?>
+    ): Array<NotificationAction?> {
+        if (!isNutrinoNotification(notification)) return storedActions
+
+        val storedAction = storedActions.filterNotNull().firstOrNull {
+            it.id.isNotBlank() && !it.title.isNullOrBlank()
+        }
+        if (storedAction != null) return storedActions
+
+        val kind = nutrinoNotificationExtraString(notification, "kind")
+        val mealType = nutrinoNotificationExtraString(notification, "mealType")
+        val explicitActionId = nutrinoNotificationExtraString(notification, "actionId")
+        val explicitActionTitle = nutrinoNotificationExtraString(notification, "actionTitle")
+        val fallback = NotificationAction()
+        fallback.id = when {
+            !explicitActionId.isNullOrBlank() -> explicitActionId
+            kind == "weight" -> "log-weight"
+            kind == "meal" && mealType == "lunch" -> "log-lunch"
+            kind == "meal" && mealType == "dinner" -> "log-dinner"
+            kind == "meal" -> "log-breakfast"
+            kind == "deficit" -> "open-analysis"
+            else -> DEFAULT_PRESS_ACTION
+        }
+        fallback.title = when {
+            !explicitActionTitle.isNullOrBlank() -> explicitActionTitle
+            fallback.id == "log-weight" -> "Log weight"
+            fallback.id == "log-lunch" -> "Log lunch"
+            fallback.id == "log-dinner" -> "Log dinner"
+            fallback.id == "log-breakfast" -> "Log breakfast"
+            fallback.id == "open-analysis" -> "Open analysis"
+            else -> "Open"
+        }
+        fallback.input = false
+        return arrayOf<NotificationAction?>(fallback)
+  }
+
+  private fun isNutrinoNotification(notification: Notification): Boolean {
+        return nutrinoNotificationExtraString(notification, "nutrino") == "true"
+            || !nutrinoNotificationExtraString(notification, "kind").isNullOrBlank()
+  }
+
+  private fun nutrinoNotificationExtraString(notification: Notification, key: String): String? {
+        val directValue = notification.extra?.opt(key)
+        if (directValue != null && directValue != JSONObject.NULL) return directValue.toString()
+
+        return try {
+            val source = notification.sourceJson ?: return null
+            val root = JSONObject(source)
+            val extra = root.optJSONObject("extra") ?: return null
+            val value = extra.opt(key)
+            if (value != null && value != JSONObject.NULL) value.toString() else null
+        } catch (_: Exception) {
+            null
+        }
+  }
+`;
+      source = source.replace(
+        /\n\s*\/\/ Create intents for open\/dismiss actions/m,
+        `${helper}\n\n  // Create intents for open/dismiss actions`
+      );
+    }
+
+    if (source !== original) {
+      fs.writeFileSync(file, source);
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 function patchAndroidApplicationId(config) {
   const gradlePath = findAndroidAppGradlePath();
   if (!gradlePath) return false;
@@ -439,6 +696,7 @@ function mobileMainActivitySource(config) {
   return `${packageLine}
 
 import android.content.res.Configuration
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -448,6 +706,7 @@ import android.view.ViewGroup
 import android.webkit.WebView
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
+import org.json.JSONObject
 // Tauri generates TauriActivity into the same application package at build time.
 // Do not import a global TauriActivity here: with Tauri 2.11 generated Android
 // projects that symbol is not exported from that package and Gradle fails with
@@ -458,6 +717,7 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureEdgeToEdgeWindow()
+        dispatchNutrinoNotificationActionToWebView(intent)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val callback = OnBackInvokedCallback {
                 dispatchNutrinoBackToWebView()
@@ -468,6 +728,12 @@ class MainActivity : TauriActivity() {
                 callback
             )
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        dispatchNutrinoNotificationActionToWebView(intent)
     }
 
     override fun onDestroy() {
@@ -522,6 +788,99 @@ class MainActivity : TauriActivity() {
                 null
             )
         }
+    }
+
+    private fun dispatchNutrinoNotificationActionToWebView(intent: Intent?) {
+        val payload = buildNutrinoNotificationActionPayload(intent) ?: return
+        val payloadString = JSONObject.quote(payload.toString())
+        fun dispatch(attempt: Int) {
+            val webView = findWebView(window?.decorView)
+            if (webView == null) {
+                if (attempt < 80) {
+                    window?.decorView?.postDelayed({ dispatch(attempt + 1) }, 150)
+                }
+                return
+            }
+            webView.post {
+                webView.evaluateJavascript(
+                    """
+                    (function() {
+                      try {
+                        var payload = JSON.parse($payloadString);
+                        window.__NUTRINO_PENDING_NOTIFICATION_ACTION__ = payload;
+                        if (window.__NUTRINO_NOTIFICATION_BRIDGE_READY__ === true) {
+                          window.dispatchEvent(new CustomEvent('nutrino:notification-action', { detail: payload }));
+                          return true;
+                        }
+                      } catch (error) {}
+                      return false;
+                    })()
+                    """.trimIndent()
+                ) { result ->
+                    if (result != "true" && attempt < 80) {
+                        window?.decorView?.postDelayed({ dispatch(attempt + 1) }, 150)
+                    }
+                }
+            }
+        }
+        dispatch(0)
+    }
+
+    private fun buildNutrinoNotificationActionPayload(intent: Intent?): JSONObject? {
+        if (intent == null) return null
+        val notificationId = findFirstIntExtra(intent, listOf(
+            "NotificationId",
+            "notificationId",
+            "id"
+        ))
+        val actionId = findFirstStringExtra(intent, listOf(
+            "NotificationUserAction",
+            "notificationUserAction",
+            "actionId",
+            "action"
+        )) ?: "tap"
+        val notificationJson = findFirstStringExtra(intent, listOf(
+            "LocalNotficationObject",
+            "LocalNotificationObject",
+            "notification",
+            "notificationJson",
+            "sourceJson"
+        ))
+        if (notificationId == null && actionId == "tap" && notificationJson.isNullOrBlank()) return null
+
+        val payload = JSONObject()
+        if (notificationId != null) payload.put("notificationId", notificationId)
+        payload.put("actionId", actionId)
+        if (!notificationJson.isNullOrBlank()) {
+            payload.put("sourceJson", notificationJson)
+            try {
+                payload.put("notification", JSONObject(notificationJson))
+            } catch (_: Exception) {
+            }
+        }
+        return payload
+    }
+
+    private fun findFirstIntExtra(intent: Intent, keys: List<String>): Int? {
+        for (key in keys) {
+            if (!intent.hasExtra(key)) continue
+            val intValue = intent.getIntExtra(key, Int.MIN_VALUE)
+            if (intValue != Int.MIN_VALUE) return intValue
+            val stringValue = intent.getStringExtra(key)
+            if (!stringValue.isNullOrBlank()) {
+                stringValue.toIntOrNull()?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun findFirstStringExtra(intent: Intent, keys: List<String>): String? {
+        for (key in keys) {
+            if (!intent.hasExtra(key)) continue
+            val value = intent.getStringExtra(key)
+            if (!value.isNullOrBlank()) return value
+        }
+        return null
     }
 
     private fun findWebView(view: View?): WebView? {
@@ -716,7 +1075,10 @@ const networkSecurityPatched = ensureNetworkSecurityConfig();
 const labelResourcesPatched = patchAndroidLabelResources(config);
 const manifestPatched = patchManifest(config);
 const buildSrcRustPluginPatched = normalizeBuildSrcRustPluginResources();
+const notificationOverridePatched = patchNotificationPluginOverride();
+const notificationStoragePatched = patchNotificationStorageActionKeys();
+const notificationManagerPatched = patchNotificationManagerNutrinoActions();
 const nativeStateCleaned = cleanStaleAndroidNativeState(config);
 const generatedKotlinCleaned = cleanGeneratedKotlinPackages();
 const activityPackagePatched = patchMainActivityPackage(config);
-console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, networkSecurity=${networkSecurityPatched ? 'yes' : 'already ok'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);
+console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, networkSecurity=${networkSecurityPatched ? 'yes' : 'already ok'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, notificationOverride=${notificationOverridePatched ? 'patched' : 'already ok'}, notificationStorage=${notificationStoragePatched ? 'patched' : 'already ok'}, notificationManager=${notificationManagerPatched ? 'patched' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);

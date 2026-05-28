@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, type PluginListener } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readFile, writeFile } from '@tauri-apps/plugin-fs';
-import { isPermissionGranted, requestPermission as requestNativeNotificationPermission, sendNotification } from '@tauri-apps/plugin-notification';
+import { cancel, createChannel, Importance, isPermissionGranted, onAction, registerActionTypes, requestPermission as requestNativeNotificationPermission, Schedule, sendNotification, Visibility, type Options as NotificationOptions } from '@tauri-apps/plugin-notification';
 import JSZip from 'jszip';
 import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, Ingredient, Intake, LocalizedNameMap, MealType, Recipe, RecipeItem, WeightLog, GitHubCsvSource } from './types';
 import {
@@ -52,6 +52,54 @@ type OptionalNutrientDefinition = {
 type NutrientInsightDialog = { kind: 'day' } | { kind: 'meal'; mealType: MealType };
 type NutrientChartMode = 'important' | 'optional';
 type NutrientChartSlice = { label: string; value: number; amount: string; note?: string; share: number; color: string };
+type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'deficit';
+type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-breakfast' | 'log-lunch' | 'log-dinner' | 'open-analysis' | 'dismiss';
+type NutrinoNotificationExtra = { nutrino: true; kind: NutrinoNotificationKind; mealType?: MealType; scheduledTime?: string };
+type NutrinoNotificationEvent = {
+  actionId?: string;
+  action?: string;
+  userAction?: string;
+  notificationUserAction?: string;
+  inputValue?: string | null;
+  notificationId?: number | string;
+  id?: number | string;
+  notification?: (NotificationOptions & { id?: number | string; extra?: Record<string, unknown>; data?: Record<string, unknown>; sourceJson?: string }) | null;
+  extra?: Record<string, unknown>;
+  data?: Record<string, unknown>;
+  sourceJson?: string;
+};
+type ReminderClockTime = { hour: number; minute: number };
+type ScheduledReminderConfig = {
+  id: number;
+  key: string;
+  time: string;
+  title: string;
+  body: string;
+  kind: NutrinoNotificationKind;
+  actionTypeId?: string;
+  mealType?: MealType;
+};
+
+const NOTIFICATION_CHANNEL_ID = 'nutrino-reminders';
+const NOTIFICATION_GROUP_ID = 'nutrino-reminders';
+const NOTIFICATION_ICON = 'nutrino_notification';
+const WEB_NOTIFICATION_ICON = '/nutrino-logo.svg';
+const NOTIFICATION_ICON_COLOR = '#2f7d32';
+const NOTIFICATION_ACTION_TYPES = {
+  daily: 'nutrino-daily-actions',
+  weight: 'nutrino-weight-actions',
+  mealBreakfast: 'nutrino-meal-breakfast-actions',
+  mealLunch: 'nutrino-meal-lunch-actions',
+  mealDinner: 'nutrino-meal-dinner-actions',
+  deficit: 'nutrino-deficit-actions',
+} as const;
+const REMINDER_NOTIFICATION_IDS = {
+  daily: 130100,
+  weight: 130200,
+  mealMorning: 130301,
+  mealNoon: 130302,
+  mealAfternoon: 130303,
+} as const;
 
 const nutrientChartPalette = ['#31c96f', '#e7b341', '#ef5350', '#5f82ff', '#26a69a', '#ab47bc', '#ff8a65', '#7cb342', '#26c6da', '#ec407a', '#9ccc65'];
 
@@ -131,7 +179,7 @@ const localEditorDuplicate = ref(false);
 const localCatalogForm = reactive({
   name: '', name_i18n: {} as LocalizedNameMap, brand: '', note: '', barcode: '', default_unit: 'g', serving_size_g: null as number | null,
   kcal_per_100g: null as number | null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
-  sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0,
+  sugars_per_100g: null as number | null, fiber_per_100g: null as number | null, salt_per_100g: null as number | null,
   optional_nutrients: {} as Record<string, number | null>,
   description: '', total_weight_g: null as number | null, extra_kcal: 0 as number | null, servings_count: null as number | null,
   code: '', activity_type: 'custom', met: 0, kcal_per_min: null as number | null, inactive: false,
@@ -149,7 +197,7 @@ let todayRolloverTimer: number | undefined;
 const offlineToastShown = ref(false);
 const toast = ref('');
 const settingsOpen = ref(false);
-const settingsDialog = ref<'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'privacy' | 'about' | 'licenses' | null>(null);
+const settingsDialog = ref<'permissions' | 'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'privacy' | 'about' | 'licenses' | 'advanced' | null>(null);
 const analysisOpen = ref(false);
 const deficitInfoOpen = ref(false);
 const micronutrientInfoOpen = ref(false);
@@ -157,6 +205,7 @@ const nutrientInsightsDialog = ref<NutrientInsightDialog | null>(null);
 const nutrientChartMode = ref<NutrientChartMode>('important');
 const weightTrendMode = ref<WeightTrendMode>('weekly');
 const notificationPermission = ref('unknown');
+const notificationPermissionGranted = computed(() => notificationPermission.value === 'granted');
 const calorieLegendOpen = ref(false);
 const weightLegendOpen = ref(false);
 const selectedCalorieRowKey = ref<string | null>(null);
@@ -167,6 +216,13 @@ const duplicateMealTargetOpen = ref(false);
 const pendingDuplicateIntakeId = ref<string | null>(null);
 let entryLongPressTimer: number | undefined;
 let reminderTimer: number | undefined;
+let reminderScheduleRefreshTimer: number | undefined;
+let notificationActionListener: PluginListener | null = null;
+let lastNotificationActionSignature = '';
+let lastNotificationActionHandledAt = 0;
+const nativeReminderSchedulesActive = ref(false);
+const weightReminderModalOpen = ref(false);
+const notificationHighlightedMealType = ref<MealType | null>(null);
 
 const languageSearch = ref('');
 const unlockedDiaryDate = ref<string | null>(null);
@@ -268,6 +324,7 @@ const acknowledgements = [
 
 
 const settingsIconMap: Record<string, IconName> = {
+  permissions: 'shield',
   units: 'ruler',
   calculations: 'calculator',
   tracking: 'scale',
@@ -289,6 +346,7 @@ const settingsIconMap: Record<string, IconName> = {
   licenses: 'badgeInfo',
   reset: 'rotateCcw',
   backup: 'archiveRestore',
+  advanced: 'settings',
 };
 
 function settingsIcon(name: string) {
@@ -362,6 +420,11 @@ watch(() => state.settings.show_micronutrients, (enabled) => {
   micronutrientInfoOpen.value = false;
   nutrientInsightsDialog.value = null;
 });
+watch(() => notificationPermissionSignature(), () => {
+  void ensureNotificationPermissionForReminders();
+  queueReminderScheduleRefresh();
+});
+watch(() => notificationScheduleSignature(), queueReminderScheduleRefresh);
 watch(selectedDate, () => {
   editingDayWeight.value = false;
 });
@@ -777,7 +840,12 @@ onMounted(() => {
   resetBackTrap();
   window.addEventListener('popstate', handleBackNavigation);
   window.addEventListener('nutrino:android-back', handleNativeAndroidBack);
+  window.addEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
+  (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = true;
+  consumeNativePendingNotificationAction();
   void installWindowCloseGuard();
+  void refreshNotificationPermissionStatus();
+  void initializeNotifications();
   void pollServerHealth({ syncOnChange: true, quiet: true });
   healthTimer = window.setInterval(() => void pollServerHealth({ syncOnChange: true, quiet: true }), 30000);
   reminderTimer = window.setInterval(checkReminderNotifications, 60000);
@@ -792,9 +860,13 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('popstate', handleBackNavigation);
   window.removeEventListener('nutrino:android-back', handleNativeAndroidBack);
+  window.removeEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
+  (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = false;
   uninstallWindowCloseGuard();
   if (healthTimer) window.clearInterval(healthTimer);
   if (reminderTimer) window.clearInterval(reminderTimer);
+  if (reminderScheduleRefreshTimer) window.clearTimeout(reminderScheduleRefreshTimer);
+  void notificationActionListener?.unregister();
   if (todayRolloverTimer) window.clearTimeout(todayRolloverTimer);
   if (backTrapRearmingTimer) window.clearTimeout(backTrapRearmingTimer);
   if (highlightedReviewTimer) window.clearTimeout(highlightedReviewTimer);
@@ -1361,7 +1433,10 @@ watch([consumedKcal, effectiveDailyGoal, dailyGoal], () => {
   const key = `${todayKey.value}.deficit-limit`;
   if (reminderAlreadySent(key)) return;
   markReminderSent(key);
-  notifyUser(t('deficitWarningTitle'), `${Math.round(consumedKcal.value - effectiveDailyGoal.value)} kcal ${t('overDeficitButWithinLimit')}`);
+  notifyUser(t('deficitWarningTitle'), `${Math.round(consumedKcal.value - effectiveDailyGoal.value)} kcal ${t('overDeficitButWithinLimit')}`, {
+    kind: 'deficit',
+    actionTypeId: NOTIFICATION_ACTION_TYPES.deficit,
+  });
 });
 
 
@@ -6632,10 +6707,10 @@ for (const [language, values] of Object.entries(completeMobileLanguageTranslatio
 }
 const mobileVisibleTextTranslations: Record<string, Record<string, string>> = {
   en: {
-    version: 'Version', todayNutrients: "Today's nutrients", mealMicronutrients: 'Meal micronutrients', dayMicronutrients: 'Day nutrients', noChartData: 'No chart data yet.', micronutrientLimits: 'Micronutrient limits', micronutrientLimitsHint: 'Daily thresholds used by the diary warnings.', micronutrientDefaultsInfo: 'Default values are practical adult reference values based on widely used nutrition labels and public health guidance: FDA-style Daily Values for vitamins and minerals, common upper-limit guidance for sodium, saturated fat and added/free sugars, and a 5 g salt reference. They are starting points only; adjust them to your personal plan when needed.', defaultValue: 'default', resetMicronutrients: 'Reset micronutrients', importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber', copy: 'copy', sourceDesktop: 'Desktop server', sourceGithub: 'GitHub', sourceCustom: 'Custom item', sourceQr: 'QR import', checkSource: 'Check source', checked: 'checked', lock: 'Lock', unlock: 'Unlock', locked: 'locked', inactive: 'inactive', activate: 'Activate', markInactive: 'Mark inactive', inactiveCatalogItem: 'Inactive item', inactiveCatalogItemHint: 'Inactive items are hidden from normal catalog lists unless enabled in settings.', protectExternalCatalogItems: 'Protect imported catalog items', protectExternalCatalogItemsHint: 'Desktop, GitHub and QR items open as locked by default; duplicate them to edit safely.', includeInactiveCatalogItems: 'Show inactive catalog items', includeInactiveCatalogItemsHint: 'Include archived foods, ingredients, recipes and activities in pickers and lists.', catalogItemLocked: 'Catalog item locked.', catalogItemUnlocked: 'Catalog item unlocked.', catalogItemInactive: 'Catalog item marked inactive.', catalogItemActivated: 'Catalog item activated.', lockedCatalogDuplicateHint: 'Imported or locked items are duplicated before editing.', sourceCheckNoChange: 'Source check complete: no change found.', sourceCheckChanged: 'Source check complete: item was updated.', sourceCheckLocalOnly: 'This item is local, so there is no external source to check.'
+    version: 'Version', appPermissions: 'App permissions', advanced: 'Advanced', dailyReminderTime: 'Daily reminder time', dailyReminderBody: "Check today's diary and finish your logs.", notificationActionOpen: 'Open', notificationActionLogWeight: 'Weight', notificationActionLogMeal: 'Meal', notificationActionDismiss: 'Dismiss', todayNutrients: "Today's nutrients", mealMicronutrients: 'Meal micronutrients', dayMicronutrients: 'Day nutrients', noChartData: 'No chart data yet.', micronutrientLimits: 'Micronutrient limits', micronutrientLimitsHint: 'Daily thresholds used by the diary warnings.', micronutrientDefaultsInfo: 'Default values are practical adult reference values based on widely used nutrition labels and public health guidance: FDA-style Daily Values for vitamins and minerals, common upper-limit guidance for sodium, saturated fat and added/free sugars, and a 5 g salt reference. They are starting points only; adjust them to your personal plan when needed.', defaultValue: 'default', resetMicronutrients: 'Reset micronutrients', importantNutrients: 'Important nutrients', optionalNutrients: 'Optional nutrients', optionalNutrientsHint: 'Optional per-100g values can be left empty.', dailyLimit: 'daily limit', dailyTarget: 'daily target', exceeded: 'exceeded', noNutrientsLogged: 'No optional nutrients logged yet.', saturatedFat: 'Saturated fat', sodium: 'Sodium', calcium: 'Calcium', iron: 'Iron', potassium: 'Potassium', vitaminD: 'Vitamin D', vitaminB12: 'Vitamin B12', magnesium: 'Magnesium', sugars: 'Sugars', fiber: 'Fiber', copy: 'copy', sourceDesktop: 'Desktop server', sourceGithub: 'GitHub', sourceCustom: 'Custom item', sourceQr: 'QR import', checkSource: 'Check source', checked: 'checked', lock: 'Lock', unlock: 'Unlock', locked: 'locked', inactive: 'inactive', activate: 'Activate', markInactive: 'Mark inactive', inactiveCatalogItem: 'Inactive item', inactiveCatalogItemHint: 'Inactive items are hidden from normal catalog lists unless enabled in settings.', protectExternalCatalogItems: 'Protect imported catalog items', protectExternalCatalogItemsHint: 'Desktop, GitHub and QR items open as locked by default; duplicate them to edit safely.', includeInactiveCatalogItems: 'Show inactive catalog items', includeInactiveCatalogItemsHint: 'Include archived foods, ingredients, recipes and activities in pickers and lists.', catalogItemLocked: 'Catalog item locked.', catalogItemUnlocked: 'Catalog item unlocked.', catalogItemInactive: 'Catalog item marked inactive.', catalogItemActivated: 'Catalog item activated.', lockedCatalogDuplicateHint: 'Imported or locked items are duplicated before editing.', sourceCheckNoChange: 'Source check complete: no change found.', sourceCheckChanged: 'Source check complete: item was updated.', sourceCheckLocalOnly: 'This item is local, so there is no external source to check.'
   },
   hu: {
-    version: 'Verzió', todayNutrients: 'Mai tápanyagok', mealMicronutrients: 'Étkezés mikrotápanyagai', dayMicronutrients: 'Napi tápanyagok', noChartData: 'Még nincs diagram adat.', micronutrientLimits: 'Mikrotápanyag határértékek', micronutrientLimitsHint: 'A napi figyelmeztetésekhez használt határértékek.', micronutrientDefaultsInfo: 'Az alapértékek gyakorlati felnőtt referenciaértékek: vitaminoknál és ásványi anyagoknál elterjedt tápértékjelölési napi értékek, nátriumnál, telített zsírnál és cukornál közegészségügyi felső határ jellegű ajánlások, sónál 5 g-os referencia. Kiindulási értékek, szükség esetén igazítsd a saját tervedhez.', defaultValue: 'alap', resetMicronutrients: 'Mikrotápanyagok visszaállítása', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost', copy: 'másolat', sourceDesktop: 'Desktop szerver', sourceGithub: 'GitHub', sourceCustom: 'Saját tétel', sourceQr: 'QR import', checkSource: 'Forrás ellenőrzése', checked: 'ellenőrizve', lock: 'Zárolás', unlock: 'Feloldás', locked: 'zárolt', inactive: 'inaktív', activate: 'Aktiválás', markInactive: 'Inaktívvá tétel', inactiveCatalogItem: 'Inaktív tétel', inactiveCatalogItemHint: 'Az inaktív tételek eltűnnek a normál listákból, amíg a beállításban nem kéred őket.', protectExternalCatalogItems: 'Importált katalógustételek védelme', protectExternalCatalogItemsHint: 'Desktop, GitHub és QR tételek alapból zároltan nyílnak; szerkesztéshez készíts másolatot.', includeInactiveCatalogItems: 'Inaktív katalógustételek megjelenítése', includeInactiveCatalogItemsHint: 'Archív ételek, alapanyagok, receptek és aktivitások megjelenítése listákban és választókban.', catalogItemLocked: 'Katalógustétel zárolva.', catalogItemUnlocked: 'Katalógustétel feloldva.', catalogItemInactive: 'Katalógustétel inaktívvá téve.', catalogItemActivated: 'Katalógustétel aktiválva.', lockedCatalogDuplicateHint: 'Az importált vagy zárolt tételeket szerkesztés előtt lemásolom.', sourceCheckNoChange: 'Forrásellenőrzés kész: nincs változás.', sourceCheckChanged: 'Forrásellenőrzés kész: a tétel frissült.', sourceCheckLocalOnly: 'Ez helyi tétel, nincs külső forrása.'
+    version: 'Verzió', appPermissions: 'App engedélyek', advanced: 'Haladó', dailyReminderTime: 'Napi emlékeztető ideje', dailyReminderBody: 'Nézd át a mai naplót és fejezd be a rögzítéseket.', notificationActionOpen: 'Nyitás', notificationActionLogWeight: 'Súly', notificationActionLogMeal: 'Étkezés', notificationActionDismiss: 'Elvetés', todayNutrients: 'Mai tápanyagok', mealMicronutrients: 'Étkezés mikrotápanyagai', dayMicronutrients: 'Napi tápanyagok', noChartData: 'Még nincs diagram adat.', micronutrientLimits: 'Mikrotápanyag határértékek', micronutrientLimitsHint: 'A napi figyelmeztetésekhez használt határértékek.', micronutrientDefaultsInfo: 'Az alapértékek gyakorlati felnőtt referenciaértékek: vitaminoknál és ásványi anyagoknál elterjedt tápértékjelölési napi értékek, nátriumnál, telített zsírnál és cukornál közegészségügyi felső határ jellegű ajánlások, sónál 5 g-os referencia. Kiindulási értékek, szükség esetén igazítsd a saját tervedhez.', defaultValue: 'alap', resetMicronutrients: 'Mikrotápanyagok visszaállítása', importantNutrients: 'Fontos tápanyagok', optionalNutrients: 'Opcionális tápanyagok', optionalNutrientsHint: 'Az opcionális /100g értékek üresen hagyhatók.', dailyLimit: 'napi limit', dailyTarget: 'napi cél', exceeded: 'túllépve', noNutrientsLogged: 'Még nincs opcionális tápanyag rögzítve.', saturatedFat: 'Telített zsír', sodium: 'Nátrium', calcium: 'Kalcium', iron: 'Vas', potassium: 'Kálium', vitaminD: 'D-vitamin', vitaminB12: 'B12-vitamin', magnesium: 'Magnézium', sugars: 'Cukor', fiber: 'Rost', copy: 'másolat', sourceDesktop: 'Desktop szerver', sourceGithub: 'GitHub', sourceCustom: 'Saját tétel', sourceQr: 'QR import', checkSource: 'Forrás ellenőrzése', checked: 'ellenőrizve', lock: 'Zárolás', unlock: 'Feloldás', locked: 'zárolt', inactive: 'inaktív', activate: 'Aktiválás', markInactive: 'Inaktívvá tétel', inactiveCatalogItem: 'Inaktív tétel', inactiveCatalogItemHint: 'Az inaktív tételek eltűnnek a normál listákból, amíg a beállításban nem kéred őket.', protectExternalCatalogItems: 'Importált katalógustételek védelme', protectExternalCatalogItemsHint: 'Desktop, GitHub és QR tételek alapból zároltan nyílnak; szerkesztéshez készíts másolatot.', includeInactiveCatalogItems: 'Inaktív katalógustételek megjelenítése', includeInactiveCatalogItemsHint: 'Archív ételek, alapanyagok, receptek és aktivitások megjelenítése listákban és választókban.', catalogItemLocked: 'Katalógustétel zárolva.', catalogItemUnlocked: 'Katalógustétel feloldva.', catalogItemInactive: 'Katalógustétel inaktívvá téve.', catalogItemActivated: 'Katalógustétel aktiválva.', lockedCatalogDuplicateHint: 'Az importált vagy zárolt tételeket szerkesztés előtt lemásolom.', sourceCheckNoChange: 'Forrásellenőrzés kész: nincs változás.', sourceCheckChanged: 'Forrásellenőrzés kész: a tétel frissült.', sourceCheckLocalOnly: 'Ez helyi tétel, nincs külső forrása.'
   },
   de: { version: 'Version' }, fr: { version: 'Version' }, ru: { version: 'Версия' }, uk: { version: 'Версія' }, zh: { version: '版本' }, sk: { version: 'Verzia' }, ro: { version: 'Versiune' }, cs: { version: 'Verze' }, sl: { version: 'Različica' }, hr: { version: 'Verzija' }, pl: { version: 'Wersja' }, es: { version: 'Versión' }, pt: { version: 'Versão' }
 };
@@ -6742,24 +6817,30 @@ function optionalNutrientPer100g(item: Food | undefined, nutrient: OptionalNutri
   return Number(item.optional_nutrients?.[nutrient.key] || 0);
 }
 
-function setOptionalNutrientValue(nutrient: OptionalNutrientDefinition, value: unknown) {
+function nullableNonNegativeNumber(value: unknown): number | null {
   const raw = String(value ?? '').trim();
-  if (!raw) {
-    if (nutrient.field) (localCatalogForm as any)[nutrient.field] = 0;
-    else delete localCatalogForm.optional_nutrients[nutrient.key];
-    return;
-  }
+  if (!raw) return null;
   const numeric = Number(raw);
+  return Number.isFinite(numeric) ? Math.max(0, numeric) : null;
+}
+
+function setOptionalNutrientValue(nutrient: OptionalNutrientDefinition, value: unknown) {
+  const numeric = nullableNonNegativeNumber(value);
   if (nutrient.field) {
-    (localCatalogForm as any)[nutrient.field] = Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+    (localCatalogForm as any)[nutrient.field] = numeric;
     return;
   }
-  if (Number.isFinite(numeric)) localCatalogForm.optional_nutrients[nutrient.key] = Math.max(0, numeric);
+  if (numeric === null) delete localCatalogForm.optional_nutrients[nutrient.key];
+  else localCatalogForm.optional_nutrients[nutrient.key] = numeric;
 }
 
 function localOptionalNutrientValue(nutrient: OptionalNutrientDefinition): number | null {
-  if (nutrient.field) return Number((localCatalogForm as any)[nutrient.field] || 0);
-  return localCatalogForm.optional_nutrients[nutrient.key] ?? null;
+  if (nutrient.field) {
+    const value = (localCatalogForm as any)[nutrient.field];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+  const value = localCatalogForm.optional_nutrients[nutrient.key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function setOptionalNutrientValueFromEvent(nutrient: OptionalNutrientDefinition, event: Event) {
@@ -6956,7 +7037,7 @@ function resetLocalCatalogForm() {
   Object.assign(localCatalogForm, {
     name: '', name_i18n: {}, brand: '', note: '', barcode: '', default_unit: 'g', serving_size_g: null,
     kcal_per_100g: null, carbs_per_100g: 0, fat_per_100g: 0, protein_per_100g: 0,
-    sugars_per_100g: 0, fiber_per_100g: 0, salt_per_100g: 0, optional_nutrients: {},
+    sugars_per_100g: null, fiber_per_100g: null, salt_per_100g: null, optional_nutrients: {},
     description: '', total_weight_g: null, extra_kcal: 0, servings_count: null,
     code: '', activity_type: 'custom', met: 0, kcal_per_min: null, inactive: false,
   });
@@ -6984,9 +7065,9 @@ function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient 
       carbs_per_100g: entry?.carbs_per_100g ?? 0,
       fat_per_100g: entry?.fat_per_100g ?? 0,
       protein_per_100g: entry?.protein_per_100g ?? 0,
-      sugars_per_100g: entry?.sugars_per_100g ?? 0,
-      fiber_per_100g: entry?.fiber_per_100g ?? 0,
-      salt_per_100g: entry?.salt_per_100g ?? 0,
+      sugars_per_100g: entry?.sugars_per_100g ?? null,
+      fiber_per_100g: entry?.fiber_per_100g ?? null,
+      salt_per_100g: entry?.salt_per_100g ?? null,
       optional_nutrients: { ...(entry?.optional_nutrients ?? {}) },
       inactive: duplicate ? false : entry?.inactive === true,
     });
@@ -7134,6 +7215,9 @@ const localRecipeNutritionPreview = computed(() => {
   let sugars = 0;
   let fiber = 0;
   let salt = 0;
+  let hasSugars = false;
+  let hasFiber = false;
+  let hasSalt = false;
   const optionalNutrients: Record<string, number> = {};
   for (const row of localRecipeItems.value) {
     const item = localRecipeRowItem(row);
@@ -7144,9 +7228,21 @@ const localRecipeNutritionPreview = computed(() => {
     carbs += Number(item.carbs_per_100g || 0) * amount / 100;
     fat += Number(item.fat_per_100g || 0) * amount / 100;
     protein += Number(item.protein_per_100g || 0) * amount / 100;
-    sugars += Number(item.sugars_per_100g || 0) * amount / 100;
-    fiber += Number(item.fiber_per_100g || 0) * amount / 100;
-    salt += Number(item.salt_per_100g || 0) * amount / 100;
+    const sugarValue = nullableNonNegativeNumber(item.sugars_per_100g);
+    if (sugarValue !== null) {
+      sugars += sugarValue * amount / 100;
+      hasSugars = true;
+    }
+    const fiberValue = nullableNonNegativeNumber(item.fiber_per_100g);
+    if (fiberValue !== null) {
+      fiber += fiberValue * amount / 100;
+      hasFiber = true;
+    }
+    const saltValue = nullableNonNegativeNumber(item.salt_per_100g);
+    if (saltValue !== null) {
+      salt += saltValue * amount / 100;
+      hasSalt = true;
+    }
     for (const [key, rawValue] of Object.entries(item.optional_nutrients || {})) {
       const value = Number(rawValue || 0);
       if (Number.isFinite(value)) optionalNutrients[key] = (optionalNutrients[key] || 0) + value * amount / 100;
@@ -7171,9 +7267,9 @@ const localRecipeNutritionPreview = computed(() => {
     carbsPer100g: roundOne(carbs * ratio),
     fatPer100g: roundOne(fat * ratio),
     proteinPer100g: roundOne(protein * ratio),
-    sugarsPer100g: roundOne(sugars * ratio),
-    fiberPer100g: roundOne(fiber * ratio),
-    saltPer100g: roundOne(salt * ratio),
+    sugarsPer100g: hasSugars ? roundOne(sugars * ratio) : null,
+    fiberPer100g: hasFiber ? roundOne(fiber * ratio) : null,
+    saltPer100g: hasSalt ? roundOne(salt * ratio) : null,
     optionalNutrients: Object.fromEntries(Object.entries(optionalNutrients).map(([key, value]) => [key, roundOne(value * ratio)])),
   };
 });
@@ -7229,9 +7325,9 @@ function saveLocalCatalogEditor() {
       carbs_per_100g: Number(localCatalogForm.carbs_per_100g || 0),
       fat_per_100g: Number(localCatalogForm.fat_per_100g || 0),
       protein_per_100g: Number(localCatalogForm.protein_per_100g || 0),
-      sugars_per_100g: Number(localCatalogForm.sugars_per_100g || 0),
-      fiber_per_100g: Number(localCatalogForm.fiber_per_100g || 0),
-      salt_per_100g: Number(localCatalogForm.salt_per_100g || 0),
+      sugars_per_100g: nullableNonNegativeNumber(localCatalogForm.sugars_per_100g),
+      fiber_per_100g: nullableNonNegativeNumber(localCatalogForm.fiber_per_100g),
+      salt_per_100g: nullableNonNegativeNumber(localCatalogForm.salt_per_100g),
       optional_nutrients: { ...localCatalogForm.optional_nutrients },
       updated_at: now, deleted_at: null, pending_sync: true,
     };
@@ -7251,9 +7347,9 @@ function saveLocalCatalogEditor() {
       carbs_per_100g: Number(localCatalogForm.carbs_per_100g || 0),
       fat_per_100g: Number(localCatalogForm.fat_per_100g || 0),
       protein_per_100g: Number(localCatalogForm.protein_per_100g || 0),
-      sugars_per_100g: Number(localCatalogForm.sugars_per_100g || 0),
-      fiber_per_100g: Number(localCatalogForm.fiber_per_100g || 0),
-      salt_per_100g: Number(localCatalogForm.salt_per_100g || 0),
+      sugars_per_100g: nullableNonNegativeNumber(localCatalogForm.sugars_per_100g),
+      fiber_per_100g: nullableNonNegativeNumber(localCatalogForm.fiber_per_100g),
+      salt_per_100g: nullableNonNegativeNumber(localCatalogForm.salt_per_100g),
       optional_nutrients: { ...localCatalogForm.optional_nutrients },
       updated_at: now, deleted_at: null, pending_sync: true,
     };
@@ -7448,9 +7544,9 @@ function addMealNoteFromForm() {
     carbs_per_100g: 0,
     fat_per_100g: 0,
     protein_per_100g: 0,
-    sugars_per_100g: 0,
-    fiber_per_100g: 0,
-    salt_per_100g: 0,
+    sugars_per_100g: null,
+    fiber_per_100g: null,
+    salt_per_100g: null,
     optional_nutrients: {},
     updated_at: now,
   };
@@ -7484,6 +7580,23 @@ function editSelectedDayWeight() {
   weightInput.value = currentDayWeightKg.value ? Number(currentDayWeightKg.value) : null;
   editingDayWeight.value = true;
   nextTick(() => scrollFocusedInputIntoView());
+}
+
+function openWeightReminderModal() {
+  activeTab.value = 'home';
+  weightInput.value = currentDayWeightKg.value ? Number(currentDayWeightKg.value) : null;
+  editingDayWeight.value = false;
+  weightReminderModalOpen.value = true;
+  nextTick(() => scrollFocusedInputIntoView());
+}
+
+function closeWeightReminderModal() {
+  weightReminderModalOpen.value = false;
+  weightInput.value = null;
+}
+
+function saveWeightReminderModal() {
+  recordWeight('mobile_prompt');
 }
 
 function inSelectedDay(ms: number) {
@@ -7827,9 +7940,9 @@ type CustomRecipeTotals = {
   carbs: number;
   fat: number;
   protein: number;
-  sugars: number;
-  fiber: number;
-  salt: number;
+  sugars: number | null;
+  fiber: number | null;
+  salt: number | null;
   optionalNutrients: Record<string, number>;
   components: Array<{ key: string; food_id: string; amount_g: number; base_amount_g: number }>;
 };
@@ -7850,6 +7963,9 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
   let sugars = 0;
   let fiber = 0;
   let salt = 0;
+  let hasSugars = false;
+  let hasFiber = false;
+  let hasSalt = false;
   const optionalNutrients: Record<string, number> = {};
   const components: Array<{ key: string; food_id: string; amount_g: number; base_amount_g: number }> = [];
 
@@ -7861,9 +7977,21 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
     carbs += Number(row.food.carbs_per_100g || 0) * amount / 100;
     fat += Number(row.food.fat_per_100g || 0) * amount / 100;
     protein += Number(row.food.protein_per_100g || 0) * amount / 100;
-    sugars += Number(row.food.sugars_per_100g || 0) * amount / 100;
-    fiber += Number(row.food.fiber_per_100g || 0) * amount / 100;
-    salt += Number(row.food.salt_per_100g || 0) * amount / 100;
+    const sugarValue = nullableNonNegativeNumber(row.food.sugars_per_100g);
+    if (sugarValue !== null) {
+      sugars += sugarValue * amount / 100;
+      hasSugars = true;
+    }
+    const fiberValue = nullableNonNegativeNumber(row.food.fiber_per_100g);
+    if (fiberValue !== null) {
+      fiber += fiberValue * amount / 100;
+      hasFiber = true;
+    }
+    const saltValue = nullableNonNegativeNumber(row.food.salt_per_100g);
+    if (saltValue !== null) {
+      salt += saltValue * amount / 100;
+      hasSalt = true;
+    }
     for (const [key, rawValue] of Object.entries(row.food.optional_nutrients || {})) {
       const value = Number(rawValue || 0);
       if (Number.isFinite(value)) optionalNutrients[key] = (optionalNutrients[key] || 0) + value * amount / 100;
@@ -7884,9 +8012,9 @@ function calculateCustomRecipeTotals(catalogId: string): CustomRecipeTotals | nu
     carbs,
     fat,
     protein,
-    sugars,
-    fiber,
-    salt,
+    sugars: hasSugars ? sugars : null,
+    fiber: hasFiber ? fiber : null,
+    salt: hasSalt ? salt : null,
     optionalNutrients,
     components,
   };
@@ -7906,9 +8034,9 @@ function buildCustomRecipeSnapshot(base: Food): Food {
     carbs_per_100g: totals.carbs * ratio,
     fat_per_100g: totals.fat * ratio,
     protein_per_100g: totals.protein * ratio,
-    sugars_per_100g: totals.sugars * ratio,
-    fiber_per_100g: totals.fiber * ratio,
-    salt_per_100g: totals.salt * ratio,
+    sugars_per_100g: totals.sugars === null ? null : totals.sugars * ratio,
+    fiber_per_100g: totals.fiber === null ? null : totals.fiber * ratio,
+    salt_per_100g: totals.salt === null ? null : totals.salt * ratio,
     optional_nutrients: Object.fromEntries(Object.entries(totals.optionalNutrients).map(([key, value]) => [key, value * ratio])),
     recipe_components: totals.components,
     recipe_extra_kcal: totals.extraKcal,
@@ -8277,16 +8405,32 @@ function weightTrendModeLabel(mode: WeightTrendMode): string {
   return labels[mode];
 }
 
+async function refreshNotificationPermissionStatus() {
+  try {
+    notificationPermission.value = (await isPermissionGranted()) ? 'granted' : 'default';
+    return;
+  } catch {
+    // Browser preview fallback below.
+  }
+  if (typeof Notification === 'undefined') {
+    notificationPermission.value = 'unsupported';
+    return;
+  }
+  notificationPermission.value = Notification.permission;
+}
+
 async function requestReminderPermission() {
   try {
     if (await isPermissionGranted()) {
       notificationPermission.value = 'granted';
       showToast(t('notificationsEnabled'));
+      queueReminderScheduleRefresh();
       return;
     }
     const permission = await requestNativeNotificationPermission();
     notificationPermission.value = permission;
     showToast(permission === 'granted' ? t('notificationsEnabled') : t('notificationsNotEnabled'));
+    queueReminderScheduleRefresh();
   } catch {
     if (typeof Notification === 'undefined') {
       showToast(t('notificationsUnsupported'));
@@ -8296,7 +8440,13 @@ async function requestReminderPermission() {
     const permission = await Notification.requestPermission();
     notificationPermission.value = permission;
     showToast(permission === 'granted' ? t('notificationsEnabled') : t('notificationsNotEnabled'));
+    queueReminderScheduleRefresh();
   }
+}
+
+function openPermissionsSettings() {
+  settingsDialog.value = 'permissions';
+  void refreshNotificationPermissionStatus();
 }
 
 async function ensureNotificationPermissionForReminders() {
@@ -8317,12 +8467,166 @@ async function ensureNotificationPermissionForReminders() {
   }
 
   await requestReminderPermission();
+  queueReminderScheduleRefresh();
 }
 
-async function notifyUser(title: string, body: string) {
+function notificationScheduleSignature(): string {
+  return [
+    state.settings.language,
+    state.settings.daily_reminder,
+    state.settings.daily_reminder_time,
+    state.settings.daily_weight_reminder_enabled,
+    state.settings.daily_weight_reminder_time,
+    state.settings.meal_reminders_enabled,
+    state.settings.meal_reminder_morning_time,
+    state.settings.meal_reminder_noon_time,
+    state.settings.meal_reminder_afternoon_time,
+    state.settings.calorie_limit_warning_enabled,
+  ].join('|');
+}
+
+function notificationPermissionSignature(): string {
+  return [
+    state.settings.daily_reminder,
+    state.settings.daily_weight_reminder_enabled,
+    state.settings.meal_reminders_enabled,
+    state.settings.calorie_limit_warning_enabled,
+  ].join('|');
+}
+
+function parseReminderTime(timeValue: string): ReminderClockTime | null {
+  const [hourValue, minuteValue] = String(timeValue || '').split(':');
+  const hour = Number(hourValue);
+  const minute = Number(minuteValue);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { hour, minute };
+}
+
+function currentTimeMatchesReminderMinute(timeValue: string, now = new Date()): boolean {
+  const time = parseReminderTime(timeValue);
+  return Boolean(time && now.getHours() === time.hour && now.getMinutes() === time.minute);
+}
+
+function dailyReminderSchedule(time: ReminderClockTime): Schedule {
+  return Schedule.interval({ hour: time.hour, minute: time.minute, second: 0 }, true);
+}
+
+function notificationActionTitle(key: string, fallback: string): string {
+  const value = String(t(key) || '').trim();
+  return value || fallback;
+}
+
+function notificationPermissionStatusLabel(): string {
+  if (notificationPermissionGranted.value) return t('notificationsEnabled');
+  if (notificationPermission.value === 'unsupported') return t('notificationsUnsupported');
+  return t('notificationsNotEnabled');
+}
+
+function notificationPermissionStatusBody(): string {
+  if (notificationPermissionGranted.value) {
+    return activeLanguage.value === 'hu'
+      ? 'A beállított emlékeztetők értesítésként is megjelenhetnek.'
+      : 'Configured reminders can be delivered as notifications.';
+  }
+  if (notificationPermission.value === 'unsupported') {
+    return activeLanguage.value === 'hu'
+      ? 'Ez a környezet nem támogatja a rendszerértesítéseket.'
+      : 'This environment does not support system notifications.';
+  }
+  return activeLanguage.value === 'hu'
+    ? 'Engedélyezd az értesítéseket, hogy az emlékeztetők a beállított időpontokban érkezzenek.'
+    : 'Enable notifications so reminders can arrive at the configured times.';
+}
+
+function advancedTransferWarningText(): string {
+  return activeLanguage.value === 'hu'
+    ? 'A csatornák közötti adatmozgatás felülírhat meglévő adatokat. Exportálás vagy importálás előtt ellenőrizd, hogy a megfelelő csatornát választottad.'
+    : 'Moving data between channels can overwrite existing data. Before importing or exporting, verify that you selected the correct channel.';
+}
+
+function advancedImportHintText(): string {
+  return activeLanguage.value === 'hu'
+    ? 'A másik csatorna mentéséből frissíti az aktuális csatorna adatait.'
+    : 'Updates the current channel from the backup of the other channel.';
+}
+
+function advancedExportHintText(): string {
+  return activeLanguage.value === 'hu'
+    ? 'Előkészíti az aktuális csatorna adatait a másik csatornára történő átvitelhez.'
+    : 'Prepares the current channel data so it can be transferred to the other channel.';
+}
+
+function shouldAttachNativeNotificationActions(): boolean {
+  return isTauriRuntime() && isMobileRuntime();
+}
+
+function notificationVisualOptions(): Partial<NotificationOptions> {
+  if (isTauriRuntime() && isAndroidRuntime()) {
+    return {
+      icon: NOTIFICATION_ICON,
+      iconColor: NOTIFICATION_ICON_COLOR,
+    };
+  }
+  return { icon: WEB_NOTIFICATION_ICON };
+}
+
+function buildNotificationOptions(options: {
+  id?: number;
+  title: string;
+  body: string;
+  kind?: NutrinoNotificationKind;
+  actionTypeId?: string;
+  mealType?: MealType;
+  scheduledTime?: string;
+  schedule?: Schedule;
+}): NotificationOptions {
+  const notification: NotificationOptions = {
+    title: options.title,
+    body: options.body,
+    largeBody: options.body,
+    group: NOTIFICATION_GROUP_ID,
+    autoCancel: true,
+    visibility: Visibility.Public,
+    ...notificationVisualOptions(),
+  };
+  if (options.id !== undefined) notification.id = options.id;
+  if (options.actionTypeId && shouldAttachNativeNotificationActions()) notification.actionTypeId = options.actionTypeId;
+  if (options.schedule) notification.schedule = options.schedule;
+  if (isTauriRuntime() && isAndroidRuntime()) notification.channelId = NOTIFICATION_CHANNEL_ID;
+  if (options.kind) {
+    const actionMetadata = notificationActionMetadata(options.kind, options.mealType);
+    notification.extra = {
+      nutrino: true,
+      kind: options.kind,
+      mealType: options.mealType,
+      scheduledTime: options.scheduledTime,
+      ...actionMetadata,
+    } satisfies NutrinoNotificationExtra & { actionId?: NutrinoNotificationAction; actionTitle?: string };
+  }
+  if (isTauriRuntime() && isAndroidRuntime()) {
+    (notification as NotificationOptions & { sourceJson?: string }).sourceJson = JSON.stringify(notification);
+  }
+  return notification;
+}
+
+async function notifyUser(title: string, body: string, options: {
+  id?: number;
+  kind?: NutrinoNotificationKind;
+  actionTypeId?: string;
+  mealType?: MealType;
+  scheduledTime?: string;
+} = {}) {
   try {
     if (await isPermissionGranted()) {
-      sendNotification({ title, body });
+      if (options.actionTypeId && shouldAttachNativeNotificationActions()) {
+        try {
+          await registerNotificationActionTypes();
+        } catch {
+          // The notification can still be delivered; this only guards action labels.
+        }
+      }
+      sendNotification(buildNotificationOptions({ title, body, ...options }));
       notificationPermission.value = 'granted';
       return;
     }
@@ -8331,10 +8635,419 @@ async function notifyUser(title: string, body: string) {
   }
 
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    new Notification(title, { body });
+    new Notification(title, { body, icon: WEB_NOTIFICATION_ICON });
   } else {
     showToast(`${title}: ${body}`);
   }
+}
+
+function mealNotificationActionType(mealType: MealType): string {
+  if (mealType === 'lunch') return NOTIFICATION_ACTION_TYPES.mealLunch;
+  if (mealType === 'dinner') return NOTIFICATION_ACTION_TYPES.mealDinner;
+  return NOTIFICATION_ACTION_TYPES.mealBreakfast;
+}
+
+function mealNotificationActionId(mealType: MealType): NutrinoNotificationAction {
+  if (mealType === 'lunch') return 'log-lunch';
+  if (mealType === 'dinner') return 'log-dinner';
+  return 'log-breakfast';
+}
+
+function mealNotificationActionLabel(mealType: MealType): string {
+  if (activeLanguage.value === 'hu') {
+    if (mealType === 'lunch') return 'Ebéd felvitele';
+    if (mealType === 'dinner') return 'Vacsora felvitele';
+    return 'Reggeli felvitele';
+  }
+  if (mealType === 'lunch') return 'Log lunch';
+  if (mealType === 'dinner') return 'Log dinner';
+  return 'Log breakfast';
+}
+
+function weightNotificationActionLabel(): string {
+  return activeLanguage.value === 'hu' ? 'Súly rögzítése' : 'Log weight';
+}
+
+function notificationActionMetadata(kind?: NutrinoNotificationKind, mealType?: MealType): { actionId?: NutrinoNotificationAction; actionTitle?: string } {
+  if (kind === 'weight') return { actionId: 'log-weight', actionTitle: weightNotificationActionLabel() };
+  if (kind === 'meal' && mealType) return { actionId: mealNotificationActionId(mealType), actionTitle: mealNotificationActionLabel(mealType) };
+  if (kind === 'deficit') return { actionId: 'open-analysis', actionTitle: notificationActionTitle('openAnalysis', 'Open analysis') };
+  return {};
+}
+
+async function registerNotificationActionTypes() {
+  if (!shouldAttachNativeNotificationActions()) return;
+  await registerActionTypes([
+    {
+      id: NOTIFICATION_ACTION_TYPES.weight,
+      actions: [
+        { id: 'log-weight', title: weightNotificationActionLabel(), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.mealBreakfast,
+      actions: [
+        { id: 'log-breakfast', title: mealNotificationActionLabel('breakfast'), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.mealLunch,
+      actions: [
+        { id: 'log-lunch', title: mealNotificationActionLabel('lunch'), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.mealDinner,
+      actions: [
+        { id: 'log-dinner', title: mealNotificationActionLabel('dinner'), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.deficit,
+      actions: [
+        { id: 'open-analysis', title: notificationActionTitle('openAnalysis', 'Open analysis'), requiresAuthentication: false, foreground: true },
+      ],
+    },
+  ]);
+}
+
+async function createReminderNotificationChannel() {
+  if (!isTauriRuntime() || !isAndroidRuntime()) return;
+  await createChannel({
+    id: NOTIFICATION_CHANNEL_ID,
+    name: 'Nutrino reminders',
+    description: t('trackingReminders'),
+    importance: Importance.Default,
+    visibility: Visibility.Public,
+    vibration: true,
+  });
+}
+
+function scheduledReminderDefinitions(): ScheduledReminderConfig[] {
+  const reminders: ScheduledReminderConfig[] = [];
+  if (state.settings.daily_reminder) {
+    reminders.push({
+      id: REMINDER_NOTIFICATION_IDS.daily,
+      key: 'daily',
+      time: state.settings.daily_reminder_time,
+      title: t('dailyReminder'),
+      body: t('dailyReminderBody'),
+      kind: 'daily',
+    });
+  }
+  if (state.settings.daily_weight_reminder_enabled) {
+    reminders.push({
+      id: REMINDER_NOTIFICATION_IDS.weight,
+      key: 'weight',
+      time: state.settings.daily_weight_reminder_time,
+      title: t('weightReminderTitle'),
+      body: t('weightReminderBody'),
+      kind: 'weight',
+      actionTypeId: NOTIFICATION_ACTION_TYPES.weight,
+    });
+  }
+  if (state.settings.meal_reminders_enabled) {
+    reminders.push(
+      {
+        id: REMINDER_NOTIFICATION_IDS.mealMorning,
+        key: 'meal.morning',
+        time: state.settings.meal_reminder_morning_time,
+        title: t('mealReminderTitle'),
+        body: t('mealReminderMorning'),
+        kind: 'meal',
+        mealType: 'breakfast',
+        actionTypeId: mealNotificationActionType('breakfast'),
+      },
+      {
+        id: REMINDER_NOTIFICATION_IDS.mealNoon,
+        key: 'meal.noon',
+        time: state.settings.meal_reminder_noon_time,
+        title: t('mealReminderTitle'),
+        body: t('mealReminderNoon'),
+        kind: 'meal',
+        mealType: 'lunch',
+        actionTypeId: mealNotificationActionType('lunch'),
+      },
+      {
+        id: REMINDER_NOTIFICATION_IDS.mealAfternoon,
+        key: 'meal.afternoon',
+        time: state.settings.meal_reminder_afternoon_time,
+        title: t('mealReminderTitle'),
+        body: t('mealReminderAfternoon'),
+        kind: 'meal',
+        mealType: 'dinner',
+        actionTypeId: mealNotificationActionType('dinner'),
+      },
+    );
+  }
+  return reminders.filter((reminder) => parseReminderTime(reminder.time));
+}
+
+function nextDevNotificationId() {
+  return 140000 + Math.floor(Date.now() % 100000);
+}
+
+async function sendDevReminderTest(kind: 'daily' | 'weight' | 'mealMorning' | 'mealNoon' | 'mealAfternoon') {
+  if (!devMode) return;
+  const mealReminder = (mealType: MealType, body: string): ScheduledReminderConfig => ({
+    id: nextDevNotificationId(),
+    key: `test.${mealType}`,
+    time: '',
+    title: t('mealReminderTitle'),
+    body,
+    kind: 'meal',
+    mealType,
+    actionTypeId: mealNotificationActionType(mealType),
+  });
+  const reminder = kind === 'daily'
+    ? { id: nextDevNotificationId(), key: 'test.daily', time: '', title: t('dailyReminder'), body: t('dailyReminderBody'), kind: 'daily' } satisfies ScheduledReminderConfig
+    : kind === 'weight'
+      ? { id: nextDevNotificationId(), key: 'test.weight', time: '', title: t('weightReminderTitle'), body: t('weightReminderBody'), kind: 'weight', actionTypeId: NOTIFICATION_ACTION_TYPES.weight } satisfies ScheduledReminderConfig
+      : kind === 'mealMorning'
+        ? mealReminder('breakfast', t('mealReminderMorning'))
+        : kind === 'mealNoon'
+          ? mealReminder('lunch', t('mealReminderNoon'))
+          : mealReminder('dinner', t('mealReminderAfternoon'));
+  await requestReminderPermission();
+  await notifyUser(`${t('test')} · ${reminder.title}`, reminder.body, {
+    id: reminder.id,
+    kind: reminder.kind,
+    mealType: reminder.mealType,
+    actionTypeId: reminder.actionTypeId,
+  });
+}
+
+async function cancelScheduledReminderNotifications() {
+  if (!isTauriRuntime() || !isMobileRuntime()) return;
+  try {
+    await cancel(Object.values(REMINDER_NOTIFICATION_IDS));
+  } catch {
+    // Best effort cleanup; the fallback poller still guards by exact minute and per-day keys.
+  }
+  nativeReminderSchedulesActive.value = false;
+}
+
+async function reconcileScheduledReminderNotifications() {
+  if (!isTauriRuntime() || !isMobileRuntime()) {
+    nativeReminderSchedulesActive.value = false;
+    return;
+  }
+
+  const reminders = scheduledReminderDefinitions();
+  try {
+    if (!(await isPermissionGranted())) {
+      await cancelScheduledReminderNotifications();
+      return;
+    }
+    await createReminderNotificationChannel();
+    await registerNotificationActionTypes();
+    await cancel(Object.values(REMINDER_NOTIFICATION_IDS));
+    for (const reminder of reminders) {
+      const time = parseReminderTime(reminder.time);
+      if (!time) continue;
+      sendNotification(buildNotificationOptions({
+        id: reminder.id,
+        title: reminder.title,
+        body: reminder.body,
+        kind: reminder.kind,
+        mealType: reminder.mealType,
+        scheduledTime: reminder.time,
+        actionTypeId: reminder.actionTypeId,
+        schedule: dailyReminderSchedule(time),
+      }));
+    }
+    nativeReminderSchedulesActive.value = reminders.length > 0;
+  } catch {
+    nativeReminderSchedulesActive.value = false;
+  }
+}
+
+function queueReminderScheduleRefresh() {
+  if (reminderScheduleRefreshTimer) window.clearTimeout(reminderScheduleRefreshTimer);
+  reminderScheduleRefreshTimer = window.setTimeout(() => {
+    reminderScheduleRefreshTimer = undefined;
+    void reconcileScheduledReminderNotifications();
+  }, 150);
+}
+
+async function initializeNotifications() {
+  if (isTauriRuntime() && isMobileRuntime()) {
+    try {
+      await registerNotificationActionTypes();
+      notificationActionListener = await onAction((payload) => {
+        handleNotificationAction(payload as unknown);
+      });
+      consumeNativePendingNotificationAction();
+    } catch {
+      notificationActionListener = null;
+    }
+  }
+  consumeNativePendingNotificationAction();
+  queueReminderScheduleRefresh();
+}
+
+function normalizeNotificationAction(action: unknown): NutrinoNotificationAction {
+  const value = String(action || 'tap');
+  return ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'dismiss'].includes(value)
+    ? value as NutrinoNotificationAction
+    : 'tap';
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+}
+
+function numberFromNotificationValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function parseNotificationJson(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeNotificationExtra(extra: unknown): Partial<NutrinoNotificationExtra> {
+  const record = asRecord(extra);
+  if (!record) return {};
+  const nestedExtra = asRecord(record.extra) || asRecord(parseNotificationJson(record.extra));
+  const sourceJson = parseNotificationJson(record.sourceJson);
+  const sourceExtra = asRecord(sourceJson?.extra) || asRecord(parseNotificationJson(sourceJson?.extra));
+  const merged = {
+    ...sourceExtra,
+    ...nestedExtra,
+    ...record,
+  };
+  const result: Partial<NutrinoNotificationExtra> = {};
+  if (merged.nutrino === true) result.nutrino = true;
+  if (['daily', 'weight', 'meal', 'deficit'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
+  if (['breakfast', 'lunch', 'dinner', 'snack'].includes(String(merged.mealType))) result.mealType = merged.mealType as MealType;
+  if (typeof merged.scheduledTime === 'string') result.scheduledTime = merged.scheduledTime;
+  return result;
+}
+
+function mealTypeFromNotificationAction(action: NutrinoNotificationAction, extra: Partial<NutrinoNotificationExtra>): MealType | null {
+  if (action === 'log-breakfast') return 'breakfast';
+  if (action === 'log-lunch') return 'lunch';
+  if (action === 'log-dinner') return 'dinner';
+  return extra.mealType || null;
+}
+
+function notificationExtraFromId(notificationId: number | undefined): Partial<NutrinoNotificationExtra> {
+  if (notificationId === REMINDER_NOTIFICATION_IDS.daily) return { nutrino: true, kind: 'daily' };
+  if (notificationId === REMINDER_NOTIFICATION_IDS.weight) return { nutrino: true, kind: 'weight' };
+  if (notificationId === REMINDER_NOTIFICATION_IDS.mealMorning) return { nutrino: true, kind: 'meal', mealType: 'breakfast' };
+  if (notificationId === REMINDER_NOTIFICATION_IDS.mealNoon) return { nutrino: true, kind: 'meal', mealType: 'lunch' };
+  if (notificationId === REMINDER_NOTIFICATION_IDS.mealAfternoon) return { nutrino: true, kind: 'meal', mealType: 'dinner' };
+  return {};
+}
+
+function closeTransientSurfacesForNotificationAction() {
+  if (scanDialogOpen.value) closeScanner();
+  if (addMode.value) closeSheet();
+  settingsOpen.value = false;
+  settingsDialog.value = null;
+  quickAddOpen.value = false;
+  weightReminderModalOpen.value = false;
+  notificationHighlightedMealType.value = null;
+  backupProfilesOpen.value = false;
+  duplicateMealTargetOpen.value = false;
+  entryActionSheet.value = null;
+  nutrientInsightsDialog.value = null;
+  localEditorOpen.value = false;
+  recipeCustomizeOpen.value = false;
+  calorieLegendOpen.value = false;
+  weightLegendOpen.value = false;
+}
+
+async function applyNotificationAction(action: NutrinoNotificationAction, extra: Partial<NutrinoNotificationExtra>) {
+  if (action === 'dismiss') return;
+  refreshTodayKey();
+  selectedDate.value = todayKey.value;
+  calendarMonth.value = new Date(dayStartMs(todayKey.value));
+  closeTransientSurfacesForNotificationAction();
+  activeTab.value = 'home';
+
+  const effectiveAction = action === 'tap'
+    ? (extra.kind === 'weight' ? 'log-weight' : extra.kind === 'deficit' ? 'open-analysis' : 'open-home')
+    : action;
+
+  if (effectiveAction === 'log-weight') {
+    openWeightReminderModal();
+    scrollToPageTop();
+    return;
+  }
+  if (effectiveAction === 'open-analysis') {
+    analysisOpen.value = true;
+    scrollToPageTop();
+    return;
+  }
+
+  const mealType = action === 'tap' && extra.kind === 'meal'
+    ? extra.mealType || 'breakfast'
+    : mealTypeFromNotificationAction(effectiveAction, extra);
+  if (mealType) {
+    openQuickAddMenu(mealType);
+    scrollToPageTop();
+    return;
+  }
+
+  scrollToPageTop();
+}
+
+function handleNotificationAction(payload: unknown) {
+  const event = asRecord(payload) as NutrinoNotificationEvent | null;
+  if (!event) return;
+  const notification = asRecord(event.notification);
+  const sourceJson = parseNotificationJson(event.sourceJson) || parseNotificationJson(notification?.sourceJson);
+  const sourceExtraRecord = asRecord(sourceJson?.extra) || asRecord(parseNotificationJson(sourceJson?.extra));
+  const rawAction = event.actionId
+    ?? event.action
+    ?? event.userAction
+    ?? event.notificationUserAction
+    ?? sourceJson?.actionId
+    ?? sourceJson?.action;
+  const extraAction = sourceExtraRecord?.actionId ?? sourceExtraRecord?.action;
+  const action = normalizeNotificationAction(rawAction && rawAction !== 'tap' ? rawAction : extraAction ?? rawAction);
+  const notificationId = numberFromNotificationValue(
+    notification?.id
+    ?? event.notificationId
+    ?? event.id
+    ?? sourceJson?.id,
+  );
+  const extra = {
+    ...notificationExtraFromId(notificationId),
+    ...normalizeNotificationExtra(sourceJson),
+    ...normalizeNotificationExtra(notification),
+    ...normalizeNotificationExtra(event.data),
+    ...normalizeNotificationExtra(event.extra),
+  };
+  const signature = `${notificationId ?? 'unknown'}:${action}:${extra.kind ?? 'unknown'}:${extra.mealType ?? ''}`;
+  const now = Date.now();
+  if (signature === lastNotificationActionSignature && now - lastNotificationActionHandledAt < 10000) return;
+  lastNotificationActionSignature = signature;
+  lastNotificationActionHandledAt = now;
+  void applyNotificationAction(action, extra);
+}
+
+function handleNativeNotificationActionEvent(event: Event) {
+  handleNotificationAction((event as CustomEvent<unknown>).detail);
+}
+
+function consumeNativePendingNotificationAction() {
+  const bridge = window as unknown as { __NUTRINO_PENDING_NOTIFICATION_ACTION__?: unknown };
+  if (!bridge.__NUTRINO_PENDING_NOTIFICATION_ACTION__) return;
+  const payload = bridge.__NUTRINO_PENDING_NOTIFICATION_ACTION__;
+  bridge.__NUTRINO_PENDING_NOTIFICATION_ACTION__ = undefined;
+  handleNotificationAction(payload);
 }
 
 function reminderAlreadySent(key: string): boolean {
@@ -8345,35 +9058,50 @@ function markReminderSent(key: string) {
   localStorage.setItem(`nutrino.reminder.${key}`, '1');
 }
 
-function currentTimeReached(timeValue: string, now = new Date()): boolean {
-  const [hour, minute] = String(timeValue || '').split(':').map(Number);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false;
-  const current = now.getHours() * 60 + now.getMinutes();
-  return current >= hour * 60 + minute;
-}
-
 function checkReminderNotifications() {
+  if (nativeReminderSchedulesActive.value) return;
   const today = todayKey.value;
   const now = new Date();
-  if (state.settings.daily_weight_reminder_enabled && currentTimeReached(state.settings.daily_weight_reminder_time, now) && !latestWeightForDay(state.weightLogs, today)) {
+
+  if (state.settings.daily_reminder && currentTimeMatchesReminderMinute(state.settings.daily_reminder_time, now)) {
+    const key = `${today}.daily.${state.settings.daily_reminder_time}`;
+    if (!reminderAlreadySent(key)) {
+      markReminderSent(key);
+      notifyUser(t('dailyReminder'), t('dailyReminderBody'), {
+        kind: 'daily',
+        scheduledTime: state.settings.daily_reminder_time,
+      });
+    }
+  }
+
+  if (state.settings.daily_weight_reminder_enabled && currentTimeMatchesReminderMinute(state.settings.daily_weight_reminder_time, now) && !latestWeightForDay(state.weightLogs, today)) {
     const key = `${today}.weight.${state.settings.daily_weight_reminder_time}`;
     if (!reminderAlreadySent(key)) {
       markReminderSent(key);
-      notifyUser(t('weightReminderTitle'), t('weightReminderBody'));
+      notifyUser(t('weightReminderTitle'), t('weightReminderBody'), {
+        kind: 'weight',
+        actionTypeId: NOTIFICATION_ACTION_TYPES.weight,
+        scheduledTime: state.settings.daily_weight_reminder_time,
+      });
     }
   }
 
   if (state.settings.meal_reminders_enabled) {
     const reminders = [
-      ['morning', state.settings.meal_reminder_morning_time, t('mealReminderMorning')],
-      ['noon', state.settings.meal_reminder_noon_time, t('mealReminderNoon')],
-      ['afternoon', state.settings.meal_reminder_afternoon_time, t('mealReminderAfternoon')],
+      ['morning', state.settings.meal_reminder_morning_time, t('mealReminderMorning'), 'breakfast'],
+      ['noon', state.settings.meal_reminder_noon_time, t('mealReminderNoon'), 'lunch'],
+      ['afternoon', state.settings.meal_reminder_afternoon_time, t('mealReminderAfternoon'), 'dinner'],
     ] as const;
-    for (const [slot, time, body] of reminders) {
+    for (const [slot, time, body, mealType] of reminders) {
       const key = `${today}.meal.${slot}.${time}`;
-      if (currentTimeReached(time, now) && !reminderAlreadySent(key)) {
+      if (currentTimeMatchesReminderMinute(time, now) && !reminderAlreadySent(key)) {
         markReminderSent(key);
-        notifyUser(t('mealReminderTitle'), body);
+        notifyUser(t('mealReminderTitle'), body, {
+          kind: 'meal',
+          mealType,
+          actionTypeId: mealNotificationActionType(mealType),
+          scheduledTime: time,
+        });
       }
     }
   }
@@ -8478,12 +9206,22 @@ async function openActivityAdd() {
   activityPickerOpen.value = true;
 }
 
-function openQuickAddMenu() {
+function closeQuickAddMenu() {
+  quickAddOpen.value = false;
+  notificationHighlightedMealType.value = null;
+}
+
+function openQuickAddMenu(highlightedMealType: MealType | null = null) {
+  notificationHighlightedMealType.value = highlightedMealType;
   quickAddOpen.value = true;
 }
 
+function isNotificationHighlightedQuickAdd(section: MealSection): boolean {
+  return section.key !== 'activity' && notificationHighlightedMealType.value === section.key;
+}
+
 async function chooseQuickAdd(section: MealSection) {
-  quickAddOpen.value = false;
+  closeQuickAddMenu();
   if (section.key === 'activity') {
     await openActivityAdd();
     return;
@@ -8707,6 +9445,7 @@ function recordWeight(source: WeightLog['source'] = 'manual') {
   upsertWeightForDay(value, source);
   weightInput.value = null;
   editingDayWeight.value = false;
+  weightReminderModalOpen.value = false;
   showToast(t('weightSaved'));
 }
 
@@ -8928,9 +9667,9 @@ function upsertScannedIngredient(item: any, now = Date.now()) {
     carbs_per_100g: Number(item.carbs_per_100g || 0),
     fat_per_100g: Number(item.fat_per_100g || 0),
     protein_per_100g: Number(item.protein_per_100g || 0),
-    sugars_per_100g: Number(item.sugars_per_100g || 0),
-    fiber_per_100g: Number(item.fiber_per_100g || 0),
-    salt_per_100g: Number(item.salt_per_100g || 0),
+    sugars_per_100g: nullableNonNegativeNumber(item.sugars_per_100g),
+    fiber_per_100g: nullableNonNegativeNumber(item.fiber_per_100g),
+    salt_per_100g: nullableNonNegativeNumber(item.salt_per_100g),
     optional_nutrients: { ...(item.optional_nutrients ?? {}) },
     updated_at: now,
     deleted_at: null,
@@ -8955,9 +9694,9 @@ function upsertScannedFood(item: any, now = Date.now()) {
     carbs_per_100g: Number(item.carbs_per_100g || 0),
     fat_per_100g: Number(item.fat_per_100g || 0),
     protein_per_100g: Number(item.protein_per_100g || 0),
-    sugars_per_100g: Number(item.sugars_per_100g || 0),
-    fiber_per_100g: Number(item.fiber_per_100g || 0),
-    salt_per_100g: Number(item.salt_per_100g || 0),
+    sugars_per_100g: nullableNonNegativeNumber(item.sugars_per_100g),
+    fiber_per_100g: nullableNonNegativeNumber(item.fiber_per_100g),
+    salt_per_100g: nullableNonNegativeNumber(item.salt_per_100g),
     optional_nutrients: { ...(item.optional_nutrients ?? {}) },
     barcode: item.barcode ?? null,
     updated_at: now,
@@ -10257,13 +10996,13 @@ function setTab(tab: Tab) {
       </article>
     </section>
 
-    <button v-if="activeTab === 'home' && !addMode && !settingsOpen" class="home-quick-fab" :aria-label="t('addNewItem')" @click="openQuickAddMenu">+</button>
+    <button v-if="activeTab === 'home' && !addMode && !settingsOpen" class="home-quick-fab" :aria-label="t('addNewItem')" @click="openQuickAddMenu()">+</button>
 
     <Teleport to="body">
-      <div v-if="quickAddOpen" class="quick-add-backdrop app-overlay" @click.self="quickAddOpen = false">
+      <div v-if="quickAddOpen" class="quick-add-backdrop app-overlay" @click.self="closeQuickAddMenu">
         <article class="quick-add-sheet">
           <h2>{{ t('addNewItem') }}:</h2>
-          <button v-for="section in sections" :key="`quick-${section.key}`" class="quick-add-option" @click="chooseQuickAdd(section)">
+          <button v-for="section in sections" :key="`quick-${section.key}`" class="quick-add-option" :class="{ 'notification-highlight': isNotificationHighlightedQuickAdd(section) }" @click="chooseQuickAdd(section)">
             <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
             <span><b>{{ t(section.key) }}</b><small>{{ sectionHint(section) }}</small></span>
           </button>
@@ -10441,6 +11180,24 @@ function setTab(tab: Tab) {
             <button class="filled-button wide" @click="addActivityLog">{{ editingActivityLogId ? t('updateActivity') : t('addActivity') }}</button>
           </div>
         </template>
+        </article>
+      </div>
+    </Teleport>
+
+
+    <Teleport to="body">
+      <div v-if="weightReminderModalOpen" class="dialog-backdrop" @click.self="closeWeightReminderModal">
+        <article class="settings-dialog weight-reminder-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ t('weightReminderTitle') }}</h2>
+            <button class="text-button" type="button" @click="closeWeightReminderModal">{{ t('cancel') }}</button>
+          </div>
+          <p class="helper big">{{ t('weightReminderBody') }}</p>
+          <label class="field-label">{{ t('weightForThisDay') }}</label>
+          <div class="inline-form compact weight-reminder-form">
+            <input v-model.number="weightInput" class="input" type="number" min="1" step="0.1" :placeholder="t('kgUnit')" @focus="selectNumberInput" @pointerdown="clearNumberInputOnDoubleTap" inputmode="decimal" />
+            <button class="filled-button" type="button" @click="saveWeightReminderModal">{{ t('saveWeight') }}</button>
+          </div>
         </article>
       </div>
     </Teleport>
@@ -10694,6 +11451,7 @@ function setTab(tab: Tab) {
       <section v-if="settingsOpen" class="settings-screen app-overlay">
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
+        <button class="settings-row" @click="openPermissionsSettings"><span class="settings-row-icon" v-html="settingsIcon('permissions')"></span><b>{{ t('appPermissions') }}</b><small>{{ notificationPermissionStatusLabel() }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'units'"><span class="settings-row-icon" v-html="settingsIcon('units')"></span><b>{{ t('units') }}</b><small>{{ state.settings.units === 'metric' ? t('metric') : t('imperial') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'calculations'"><span class="settings-row-icon" v-html="settingsIcon('calculations')"></span><b>{{ t('calculations') }}</b><small>{{ t('iomEquationMacro') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'tracking'"><span class="settings-row-icon" v-html="settingsIcon('tracking')"></span><b>{{ t('trackingReminders') }}</b><small>{{ calorieDeficitEnabled ? `${state.settings.target_deficit_kcal} kcal ${t('targetDeficit')}` : t('deficitOffHint') }}</small></button>
@@ -10704,21 +11462,11 @@ function setTab(tab: Tab) {
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogProtect')"></span><b>{{ t('protectExternalCatalogItems') }}</b><input v-model="state.settings.protect_external_catalog_items" type="checkbox" /><small>{{ t('protectExternalCatalogItemsHint') }}</small></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogInactive')"></span><b>{{ t('includeInactiveCatalogItems') }}</b><input v-model="state.settings.include_inactive_catalog_items" type="checkbox" /><small>{{ t('includeInactiveCatalogItemsHint') }}</small></label>
         <button class="settings-row" @click="settingsDialog = 'language'"><span class="settings-row-icon" v-html="settingsIcon('language')"></span><b>{{ t('language') }}</b><small>{{ selectedLanguageLabel() }}</small></button>
-        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('reminder')"></span><b>{{ t('dailyReminder') }}</b><input v-model="state.settings.daily_reminder" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
         <div class="settings-divider"></div>
         <button class="settings-row" @click="exportAppData"><span class="settings-row-icon" v-html="settingsIcon('export')"></span><b>{{ t('exportAppData') }}</b><small>{{ t('exportAppDataBody') }}</small></button>
         <button class="settings-row" @click="importAppData"><span class="settings-row-icon" v-html="settingsIcon('import')"></span><b>{{ t('importAppData') }}</b><small>{{ t('importAppDataBody') }}</small></button>
         <button class="settings-row" @click="openBackupProfiles"><span class="settings-row-icon" v-html="settingsIcon('backup')"></span><b>{{ t('backupProfiles') }}</b><small>{{ backupProfiles.length }} · {{ t('backupProfilesBody') }}</small></button>
-        <article class="channel-transfer-card">
-          <div>
-            <b>{{ t('channelDataTransfer') }}</b>
-            <small>{{ t('channelDataTransferBody') }}</small>
-          </div>
-          <div class="channel-transfer-actions">
-            <button class="outlined-button" type="button" @click="importDataFromOtherChannel">{{ appChannel === 'dev' ? t('updateDevFromStable') : t('updateStableFromDev') }}</button>
-            <button class="filled-button" type="button" @click="exportDataForOtherChannel">{{ appChannel === 'dev' ? t('exportDevForStable') : t('exportStableForDev') }}</button>
-          </div>
-        </article>
+        <button class="settings-row" @click="settingsDialog = 'advanced'"><span class="settings-row-icon" v-html="settingsIcon('advanced')"></span><b>{{ t('advanced') }}</b><small>{{ t('channelDataTransfer') }}</small></button>
         <button class="settings-row" @click="clearCachedItems"><span class="settings-row-icon" v-html="settingsIcon('refresh')"></span><b>{{ t('clearCache') }}</b><small>{{ state.ingredients.length + state.foods.length + state.recipes.length + state.activities.length }} item(s)</small></button>
         <button class="settings-row danger-row" @click="factoryResetMobile"><span class="settings-row-icon" v-html="settingsIcon('reset')"></span><b>{{ t('factoryReset') }}</b><small>{{ t('factoryResetBody') }}</small></button>
         <div class="settings-divider"></div>
@@ -10733,7 +11481,15 @@ function setTab(tab: Tab) {
 
       <div v-if="settingsDialog" class="dialog-backdrop" @click.self="settingsDialog = null">
         <article class="settings-dialog">
-          <template v-if="settingsDialog === 'units'"><h2>{{ t('units') }}</h2><button class="dialog-option" @click="state.settings.units = 'metric'; settingsDialog = null">{{ t('metric') }}</button><button class="dialog-option" @click="state.settings.units = 'imperial'; settingsDialog = null">{{ t('imperial') }}</button></template>
+          <template v-if="settingsDialog === 'permissions'">
+            <div class="dialog-title-row"><h2>{{ t('appPermissions') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></div>
+            <article class="permission-status-card" :class="{ granted: notificationPermissionGranted }">
+              <span class="permission-status" :class="{ granted: notificationPermissionGranted }">{{ notificationPermissionGranted ? '✓' : '!' }}</span>
+              <span class="permission-copy"><b>{{ notificationPermissionStatusLabel() }}</b><small>{{ notificationPermissionStatusBody() }}</small></span>
+            </article>
+            <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button v-if="!notificationPermissionGranted && notificationPermission !== 'unsupported'" class="filled-button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button></div>
+          </template>
+          <template v-else-if="settingsDialog === 'units'"><h2>{{ t('units') }}</h2><button class="dialog-option" @click="state.settings.units = 'metric'; settingsDialog = null">{{ t('metric') }}</button><button class="dialog-option" @click="state.settings.units = 'imperial'; settingsDialog = null">{{ t('imperial') }}</button></template>
           <template v-else-if="settingsDialog === 'language'"><h2>{{ t('language') }}</h2><input v-model="languageSearch" class="input" type="search" :placeholder="t('languageSearch')" /><button v-for="language in filteredLanguageOptions" :key="language.code" class="dialog-option language-dialog-option" @click="setLanguage(language.code); settingsDialog = null"><span>{{ language.englishName }}</span><small>{{ language.nativeName }} · {{ language.code }}</small></button></template>
           <template v-else-if="settingsDialog === 'calculations'">
             <div class="dialog-title-row"><h2>{{ t('calculations') }}</h2><button class="text-button" @click="resetCalculations">{{ t('reset') }}</button></div>
@@ -10746,20 +11502,34 @@ function setTab(tab: Tab) {
             <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('cancel') }}</button><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'tracking'">
-            <div class="dialog-title-row tracking-dialog-title"><h2>{{ t('trackingReminders') }}</h2><button class="text-button" @click="requestReminderPermission">{{ t('requestNotifications') }}</button></div>
+            <div class="dialog-title-row tracking-dialog-title"><h2>{{ t('trackingReminders') }}</h2></div>
             <div class="tracking-settings-panel">
               <section class="tracking-settings-group">
+                <label class="tracking-toggle-card"><span><b>{{ t('dailyReminder') }}</b><small>{{ t('dailyReminderTime') }} · {{ state.settings.daily_reminder_time }}</small></span><input v-model="state.settings.daily_reminder" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
+                <div class="tracking-input-card" :class="{ disabled: !state.settings.daily_reminder }">
+                  <span>{{ t('dailyReminderTime') }}</span>
+                  <div class="notification-time-control">
+                    <input v-model="state.settings.daily_reminder_time" class="input" type="time" :disabled="!state.settings.daily_reminder" />
+                    <button v-if="devMode" class="text-button reminder-test-button" type="button" @click="sendDevReminderTest('daily')">{{ t('test') }}</button>
+                  </div>
+                </div>
                 <label class="tracking-toggle-card"><span><b>{{ t('weeklyWeightAverage') }}</b><small>{{ t('weeklyWeightAverageHint') }}</small></span><input v-model="state.settings.weekly_weight_average_enabled" type="checkbox" /></label>
                 <label class="tracking-toggle-card"><span><b>{{ t('dailyWeightReminder') }}</b><small>{{ t('dailyWeightReminderTime') }} · {{ state.settings.daily_weight_reminder_time }}</small></span><input v-model="state.settings.daily_weight_reminder_enabled" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
-                <label class="tracking-input-card" :class="{ disabled: !state.settings.daily_weight_reminder_enabled }"><span>{{ t('dailyWeightReminderTime') }}</span><input v-model="state.settings.daily_weight_reminder_time" class="input" type="time" :disabled="!state.settings.daily_weight_reminder_enabled" /></label>
+                <div class="tracking-input-card" :class="{ disabled: !state.settings.daily_weight_reminder_enabled }">
+                  <span>{{ t('dailyWeightReminderTime') }}</span>
+                  <div class="notification-time-control">
+                    <input v-model="state.settings.daily_weight_reminder_time" class="input" type="time" :disabled="!state.settings.daily_weight_reminder_enabled" />
+                    <button v-if="devMode" class="text-button reminder-test-button" type="button" @click="sendDevReminderTest('weight')">{{ t('test') }}</button>
+                  </div>
+                </div>
               </section>
 
               <section class="tracking-settings-group">
                 <label class="tracking-toggle-card"><span><b>{{ t('mealReminders') }}</b><small>{{ t('breakfast') }} · {{ t('lunch') }} · {{ t('dinner') }}</small></span><input v-model="state.settings.meal_reminders_enabled" type="checkbox" @change="ensureNotificationPermissionForReminders" /></label>
                 <div class="time-grid tracking-time-grid" :class="{ disabled: !state.settings.meal_reminders_enabled }">
-                  <label><span>{{ t('breakfast') }}</span><input v-model="state.settings.meal_reminder_morning_time" class="input" type="time" :disabled="!state.settings.meal_reminders_enabled" /></label>
-                  <label><span>{{ t('lunch') }}</span><input v-model="state.settings.meal_reminder_noon_time" class="input" type="time" :disabled="!state.settings.meal_reminders_enabled" /></label>
-                  <label><span>{{ t('dinner') }}</span><input v-model="state.settings.meal_reminder_afternoon_time" class="input" type="time" :disabled="!state.settings.meal_reminders_enabled" /></label>
+                  <div class="notification-time-card"><span>{{ t('breakfast') }}</span><input v-model="state.settings.meal_reminder_morning_time" class="input" type="time" :disabled="!state.settings.meal_reminders_enabled" /><button v-if="devMode" class="text-button reminder-test-button" type="button" @click="sendDevReminderTest('mealMorning')">{{ t('test') }}</button></div>
+                  <div class="notification-time-card"><span>{{ t('lunch') }}</span><input v-model="state.settings.meal_reminder_noon_time" class="input" type="time" :disabled="!state.settings.meal_reminders_enabled" /><button v-if="devMode" class="text-button reminder-test-button" type="button" @click="sendDevReminderTest('mealNoon')">{{ t('test') }}</button></div>
+                  <div class="notification-time-card"><span>{{ t('dinner') }}</span><input v-model="state.settings.meal_reminder_afternoon_time" class="input" type="time" :disabled="!state.settings.meal_reminders_enabled" /><button v-if="devMode" class="text-button reminder-test-button" type="button" @click="sendDevReminderTest('mealAfternoon')">{{ t('test') }}</button></div>
                 </div>
               </section>
 
@@ -10782,6 +11552,19 @@ function setTab(tab: Tab) {
               </label>
             </div>
             <div class="dialog-actions"><button class="text-button" @click="resetMicronutrientLimits">{{ t('resetMicronutrients') }}</button><button class="filled-button" @click="settingsDialog = null">{{ t('ok') }}</button></div>
+          </template>
+          <template v-else-if="settingsDialog === 'advanced'">
+            <div class="dialog-title-row"><h2>{{ t('advanced') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></div>
+            <p class="warning-callout"><span class="warning-callout-icon">!</span><span>{{ advancedTransferWarningText() }}</span></p>
+            <div class="advanced-transfer-list">
+              <button class="dialog-option advanced-transfer-option" type="button" @click="importDataFromOtherChannel">
+                <span><b>{{ appChannel === 'dev' ? t('updateDevFromStable') : t('updateStableFromDev') }}</b><small>{{ advancedImportHintText() }}</small></span>
+              </button>
+              <button class="dialog-option advanced-transfer-option" type="button" @click="exportDataForOtherChannel">
+                <span><b>{{ appChannel === 'dev' ? t('exportDevForStable') : t('exportStableForDev') }}</b><small>{{ advancedExportHintText() }}</small></span>
+              </button>
+            </div>
+            <div class="dialog-actions"><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'privacy'"><h2>{{ t('privacy') }}</h2><p class="helper big">{{ t('privacyBody') }}</p><button class="filled-button wide" @click="settingsDialog = null">{{ t('ok') }}</button></template>
           <template v-else-if="settingsDialog === 'licenses'">
