@@ -4516,3 +4516,26 @@ select:focus {
     padding-inline: 20px !important;
   }
 }
+
+
+/* v0.12.22 profile source details balanced spacing */
+.source-details {
+  gap: 8px !important;
+  padding: 8px 16px !important;
+}
+.source-details > summary {
+  margin: 0 -16px !important;
+  padding: 8px 16px !important;
+}
+.source-details .helper,
+.source-details .field-label,
+.source-details .channel-chip,
+.source-details .button-row {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+.source-details .github-source-form,
+.source-details .github-source-list {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
