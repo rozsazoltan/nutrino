@@ -1,7 +1,10 @@
 use std::{
     collections::{HashMap, HashSet},
+    fs::File,
+    io::{Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
 };
 
@@ -24,7 +27,7 @@ use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 const APP_NAME: &str = "Nutrino";
-const APP_VERSION: &str = "0.12.11";
+const APP_VERSION: &str = env!("NUTRINO_APP_VERSION");
 
 struct ServerRuntime {
     port: u16,
@@ -523,6 +526,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let db_path = database_path(app.handle())?;
             init_database(&db_path)?;
@@ -665,9 +669,147 @@ pub fn run() {
             merge_catalog_item,
             list_catalog_duplicate_suggestions,
             list_connected_devices,
+            download_and_open_update_installer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running nutrino Desktop");
+}
+
+
+#[tauri::command]
+async fn download_and_open_update_installer(app: tauri::AppHandle, url: String, asset_name: Option<String>) -> std::result::Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || download_and_open_update_installer_blocking(&app, &url, asset_name))
+        .await
+        .map_err(|error| format!("Update installer task failed: {error}"))?
+}
+
+fn download_and_open_update_installer_blocking(app: &tauri::AppHandle, url: &str, asset_name: Option<String>) -> std::result::Result<String, String> {
+    let url = url.trim();
+    if !url.starts_with("https://") {
+        return Err("Update download URL must use HTTPS.".to_string());
+    }
+
+    let file_name = safe_update_asset_name(asset_name, url);
+    let updates_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| format!("Could not resolve update cache directory: {error}"))?
+        .join("updates");
+    std::fs::create_dir_all(&updates_dir)
+        .map_err(|error| format!("Could not create update cache directory: {error}"))?;
+    let installer_path = updates_dir.join(file_name);
+
+    let mut response = reqwest::blocking::Client::builder()
+        .user_agent(format!("Nutrino/{APP_VERSION} updater"))
+        .build()
+        .map_err(|error| format!("Could not create update downloader: {error}"))?
+        .get(url)
+        .send()
+        .map_err(|error| format!("Could not download update: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Update download failed: {error}"))?;
+
+    let mut file = File::create(&installer_path)
+        .map_err(|error| format!("Could not create update installer file: {error}"))?;
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = response
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not read update download: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|error| format!("Could not write update installer: {error}"))?;
+    }
+    file.flush()
+        .map_err(|error| format!("Could not finish update installer file: {error}"))?;
+
+    open_downloaded_update_installer(&installer_path)?;
+    Ok(installer_path.to_string_lossy().to_string())
+}
+
+fn safe_update_asset_name(asset_name: Option<String>, url: &str) -> String {
+    let raw = asset_name
+        .and_then(|name| {
+            let trimmed = name.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        })
+        .or_else(|| url.rsplit('/').next().map(|value| value.split('?').next().unwrap_or(value).to_string()))
+        .unwrap_or_else(|| "nutrino-update-installer".to_string());
+
+    let safe = raw
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') { ch } else { '-' })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+
+    if safe.is_empty() {
+        "nutrino-update-installer".to_string()
+    } else {
+        safe
+    }
+}
+
+fn open_downloaded_update_installer(path: &Path) -> std::result::Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
+        if extension == "msi" {
+            Command::new("msiexec")
+                .arg("/i")
+                .arg(path)
+                .spawn()
+                .map_err(|error| format!("Could not start Windows MSI installer: {error}"))?;
+        } else if matches!(extension.as_str(), "exe" | "msix" | "appinstaller") {
+            Command::new("cmd")
+                .arg("/C")
+                .arg("start")
+                .arg("")
+                .arg(path)
+                .spawn()
+                .map_err(|error| format!("Could not start Windows update installer: {error}"))?;
+        } else {
+            return Err(format!("Unsupported Windows update installer type: .{extension}"));
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|error| format!("Could not open macOS update installer: {error}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let lower_name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
+        if lower_name.ends_with(".appimage") {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(path)
+                .map_err(|error| format!("Could not inspect AppImage permissions: {error}"))?
+                .permissions();
+            permissions.set_mode(permissions.mode() | 0o755);
+            std::fs::set_permissions(path, permissions)
+                .map_err(|error| format!("Could not make AppImage executable: {error}"))?;
+            Command::new(path)
+                .spawn()
+                .map_err(|error| format!("Could not start AppImage update: {error}"))?;
+        } else {
+            Command::new("xdg-open")
+                .arg(path)
+                .spawn()
+                .map_err(|error| format!("Could not open Linux package installer: {error}"))?;
+        }
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Automatic installer launch is not supported on this platform.".to_string())
 }
 
 fn database_path(app: &tauri::AppHandle) -> Result<PathBuf> {
@@ -2785,12 +2927,7 @@ fn server_status(state: &AppState) -> Result<ServerStatus> {
 }
 
 fn app_channel() -> String {
-    match std::env::var("NUTRINO_APP_CHANNEL").unwrap_or_default().to_lowercase().as_str() {
-        "dev" => "dev".into(),
-        "stable" => "stable".into(),
-        _ if cfg!(debug_assertions) => "dev".into(),
-        _ => "stable".into(),
-    }
+    env!("NUTRINO_APP_CHANNEL").to_string()
 }
 
 fn dev_mode() -> bool {

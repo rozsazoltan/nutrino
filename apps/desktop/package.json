@@ -18,7 +18,8 @@
     "jszip": "^3.10.1",
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "@tauri-apps/plugin-fs": "^2.4.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "@tauri-apps/plugin-opener": "^2.5.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

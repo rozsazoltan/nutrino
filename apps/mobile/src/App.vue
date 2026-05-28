@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { invoke, type PluginListener } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { readFile, writeFile } from '@tauri-apps/plugin-fs';
 import { cancel, createChannel, Importance, isPermissionGranted, onAction, registerActionTypes, requestPermission as requestNativeNotificationPermission, Schedule, sendNotification, Visibility, type Options as NotificationOptions } from '@tauri-apps/plugin-notification';
 import { driver, type DriveStep, type Driver } from 'driver.js';
@@ -204,6 +205,7 @@ const settingsDialog = ref<'permissions' | 'updates' | 'units' | 'calculations' 
 const updateBusy = ref(false);
 const updateDialogOpen = ref(false);
 const updateCheckResult = ref<UpdateCheckResult | null>(null);
+const updateAvailable = computed(() => updateCheckResult.value?.status === 'available' && Boolean(updateCheckResult.value.release));
 const analysisOpen = ref(false);
 const deficitInfoOpen = ref(false);
 const micronutrientInfoOpen = ref(false);
@@ -916,6 +918,7 @@ onMounted(() => {
   resetBackTrap();
   window.addEventListener('popstate', handleBackNavigation);
   window.addEventListener('nutrino:android-back', handleNativeAndroidBack);
+  window.addEventListener('nutrino:android-update-installer', handleAndroidUpdateInstallerEvent);
   window.addEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
   (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = true;
   consumeNativePendingNotificationAction();
@@ -936,6 +939,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('popstate', handleBackNavigation);
   window.removeEventListener('nutrino:android-back', handleNativeAndroidBack);
+  window.removeEventListener('nutrino:android-update-installer', handleAndroidUpdateInstallerEvent);
   window.removeEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
   (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = false;
   uninstallWindowCloseGuard();
@@ -6810,6 +6814,7 @@ const onboardingGuideTranslations: Record<string, Partial<Record<string, string>
     onboardingPermissions: 'App permissions',
     onboardingPermissionsBody: 'Set up notifications for reminders and camera access for barcode or QR scanning before you start using the app.',
     onboardingTourStart: 'Start guide',
+    developerSettings: 'Developer settings',
     devFirstLaunchMode: 'Test first launch',
     devFirstLaunchModeBody: 'DEV only: reopen the app as a new user without deleting current data.',
     tourDashboardTitle: 'Daily dashboard',
@@ -6841,6 +6846,7 @@ const onboardingGuideTranslations: Record<string, Partial<Record<string, string>
     onboardingPermissions: 'App engedélyek',
     onboardingPermissionsBody: 'Állítsd be az értesítéseket az emlékeztetőkhöz és a kamerát a vonalkódok vagy QR-kódok beolvasásához, mielőtt használni kezded az appot.',
     onboardingTourStart: 'Bemutató indítása',
+    developerSettings: 'Fejlesztői beállítások',
     devFirstLaunchMode: 'Első indítás tesztelése',
     devFirstLaunchModeBody: 'Csak DEV-ben: új belépőként indítja az appot a jelenlegi adatok törlése nélkül.',
     tourDashboardTitle: 'Napi áttekintő',
@@ -6885,6 +6891,10 @@ const mobileUpdateAndSourceTranslations: Record<string, Partial<Record<string, s
     remindLaterSaved: 'Update reminder postponed.',
     latestInstalled: 'You are on the latest version.',
     updateCheckFailed: 'Update check failed',
+    updateInstallerStarted: 'Opening the update installer.',
+    androidUpdateInstallerStarted: 'Android opened the update installer. Confirm installation to finish.',
+    androidInstallPermissionRequired: 'Allow app installs for Nutrino. The update will continue when you return.',
+    updateInstallerFailed: 'Could not start update installation',
     desktopApiConnection: 'Desktop API connection',
     desktopApiConnectionBody: 'Sync catalog data with the desktop LAN server.',
     githubCsvConnection: 'GitHub CSV connection',
@@ -6913,6 +6923,10 @@ const mobileUpdateAndSourceTranslations: Record<string, Partial<Record<string, s
     remindLaterSaved: 'Frissítési emlékeztető elhalasztva.',
     latestInstalled: 'A legfrissebb verzió van fent.',
     updateCheckFailed: 'A frissítés ellenőrzése sikertelen',
+    updateInstallerStarted: 'Megnyitom a frissítés telepítőjét.',
+    androidUpdateInstallerStarted: 'Az Android megnyitotta a frissítés telepítőjét. Erősítsd meg a telepítést.',
+    androidInstallPermissionRequired: 'Engedélyezd a Nutrino apptelepítést. Visszatéréskor folytatódik a frissítés.',
+    updateInstallerFailed: 'Nem sikerült elindítani a frissítés telepítését',
     desktopApiConnection: 'Desktop API kapcsolat',
     desktopApiConnectionBody: 'Katalógusadatok szinkronizálása a desktop LAN szerverrel.',
     githubCsvConnection: 'GitHub CSV kapcsolat',
@@ -7866,8 +7880,11 @@ function updateReleaseTitle(result = updateCheckResult.value): string {
 
 function updateReleaseBody(result = updateCheckResult.value): string {
   if (!result?.release) return t('latestInstalled');
-  const asset = result.release.assetName ? ` ${result.release.assetName}` : '';
-  return `${t('updateAvailableBody')} ${t('version')} ${appVersion} → ${result.release.version}.${asset}`;
+  return `${t('updateAvailableBody')} ${t('version')} ${appVersion} → ${result.release.version}.`;
+}
+
+function updateReleaseAssetLabel(result = updateCheckResult.value): string {
+  return result?.release?.assetName ? result.release.assetName : '';
 }
 
 function updateRemindLaterActive(result: UpdateCheckResult): boolean {
@@ -7882,6 +7899,7 @@ function updateRemindLaterActive(result: UpdateCheckResult): boolean {
 
 function detectUpdateTarget() {
   if (isAndroidRuntime()) return 'android' as const;
+  if (isIosRuntime()) return 'ios' as const;
   return 'mobile' as const;
 }
 
@@ -7906,18 +7924,36 @@ async function checkForAppUpdates(options: { quiet?: boolean; manual?: boolean; 
   }
 }
 
-function openExternalUrl(url?: string) {
+async function openExternalUrl(url?: string) {
   const target = String(url || '').trim();
   if (!target) return;
-  const opened = window.open(target, '_blank', 'noopener,noreferrer');
-  if (!opened) window.location.href = target;
+  try {
+    await openUrl(target);
+  } catch {
+    const opened = window.open(target, '_blank', 'noopener,noreferrer');
+    if (!opened) window.location.href = target;
+  }
 }
 
-function installAvailableUpdate() {
+async function installAvailableUpdate() {
   const release = updateCheckResult.value?.release;
-  if (!release) return;
-  openExternalUrl(release.downloadUrl || release.url);
-  updateDialogOpen.value = false;
+  if (!release || updateBusy.value) return;
+  const url = release.downloadUrl || release.url;
+  updateBusy.value = true;
+  try {
+    const androidInstaller = (window as any).NutrinoAndroidInstaller;
+    if (isAndroidRuntime() && typeof androidInstaller?.installUpdateApk === 'function' && /\.apk(?:$|[?#])/i.test(url)) {
+      androidInstaller.installUpdateApk(url, release.assetName || `nutrino-${release.version}.apk`);
+      return;
+    }
+    await openExternalUrl(url);
+    updateDialogOpen.value = false;
+    showToast(t(isAndroidRuntime() ? 'androidUpdateInstallerStarted' : 'updateInstallerStarted'));
+  } catch (error) {
+    showToast(`${t('updateInstallerFailed')}: ${String(error)}`);
+  } finally {
+    updateBusy.value = false;
+  }
 }
 
 function remindUpdateLater() {
@@ -7930,6 +7966,35 @@ function remindUpdateLater() {
   }
   updateDialogOpen.value = false;
   showToast(t('remindLaterSaved'));
+}
+
+function openUpdateCenter() {
+  if (updateAvailable.value) {
+    updateDialogOpen.value = true;
+    return;
+  }
+  void checkForAppUpdates({ manual: true, ignoreRemindLater: true });
+}
+
+function handleAndroidUpdateInstallerEvent(event: Event) {
+  const detail = (event as CustomEvent<{ status?: string; error?: string }>).detail || {};
+  if (detail.status === 'permission-required') {
+    updateBusy.value = false;
+    updateDialogOpen.value = true;
+    showToast(t('androidInstallPermissionRequired'));
+    return;
+  }
+  if (detail.status === 'started') {
+    updateBusy.value = false;
+    updateDialogOpen.value = false;
+    showToast(t('androidUpdateInstallerStarted'));
+    return;
+  }
+  if (detail.status === 'error') {
+    updateBusy.value = false;
+    updateDialogOpen.value = true;
+    showToast(`${t('updateInstallerFailed')}: ${detail.error || ''}`.trim());
+  }
 }
 
 function compareVersionStrings(left: string, right: string): number {
@@ -10647,6 +10712,10 @@ function isAndroidRuntime() {
   return /Android/i.test(navigator.userAgent);
 }
 
+function isIosRuntime() {
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 function isTauriRuntime() {
   return typeof window !== 'undefined' && Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 }
@@ -11070,7 +11139,7 @@ function setTab(tab: Tab) {
   <main class="app-shell" :class="[homeShellToneClass, { 'page-scrolled': contentScrolled }]">
     <header class="top-appbar">
       <div class="brand-lockup">
-        <span class="app-logo-mark" v-html="nutrinoLogoSvg"></span>
+        <button class="app-logo-mark app-logo-update-button" :class="{ 'update-available': updateAvailable }" type="button" :aria-label="t('checkUpdates')" :title="t('checkUpdates')" @click="openUpdateCenter" v-html="nutrinoLogoSvg"></button>
         <div>
           <small>nutrino<span v-if="appChannel === 'dev'" class="brand-channel-suffix"> · dev</span></small>
           <h1>{{ pageTitle() }}</h1>
@@ -11081,6 +11150,7 @@ function setTab(tab: Tab) {
           <span class="sync-dot" :class="serverOnline ? '' : githubCatalogAvailable ? 'available' : 'offline'"></span>
           {{ syncBusy ? t('syncing') : serverOnline ? t('online') : githubCatalogAvailable ? t('available') : t('offline') }}
         </button>
+        <button v-if="updateAvailable" class="appbar-update-chip" type="button" :aria-label="updateReleaseTitle()" :title="updateReleaseTitle()" @click="openUpdateCenter"><span></span>{{ updateCheckResult?.release?.version }}</button>
         <button class="settings-button" data-tour="settings" :aria-label="t('settings')" @click="openSettings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8.4 8.4 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A8.4 8.4 0 0 0 7 6L4.6 5 2.6 8.5l2 1.5a8.8 8.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a8.4 8.4 0 0 0 2.6 1.5L10 22h4l.4-2.5A8.4 8.4 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/></svg>
         </button>
@@ -11918,10 +11988,10 @@ function setTab(tab: Tab) {
             <h2>{{ updateReleaseTitle() }}</h2>
             <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="remindUpdateLater" v-html="lucideSvg('x')"></button>
           </div>
-          <p class="helper big">{{ updateReleaseBody() }}</p>
+          <p class="helper big update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p>
           <div class="dialog-actions">
             <button class="text-button" type="button" @click="remindUpdateLater">{{ t('remindLater') }}</button>
-            <button class="filled-button" type="button" @click="installAvailableUpdate">{{ t('installUpdate') }}</button>
+            <button class="filled-button" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('checkingUpdates') : t('installUpdate') }}</button>
           </div>
         </article>
       </div>
@@ -11932,8 +12002,7 @@ function setTab(tab: Tab) {
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
         <button class="settings-row" @click="openPermissionsSettings"><span class="settings-row-icon" v-html="settingsIcon('permissions')"></span><b>{{ t('appPermissions') }}</b><small>{{ appPermissionSummary() }}</small></button>
-        <button class="settings-row" @click="settingsDialog = 'updates'"><span class="settings-row-icon" v-html="settingsIcon('updates')"></span><b>{{ t('appUpdates') }}</b><small>{{ updateCheckResult?.release ? `${t('updateAvailable')} ${updateCheckResult.release.version}` : t('appUpdatesBody') }}</small></button>
-        <button v-if="devMode" class="settings-row" @click="startDevFirstLaunchMode"><span class="settings-row-icon" v-html="settingsIcon('reset')"></span><b>{{ t('devFirstLaunchMode') }}</b><small>{{ t('devFirstLaunchModeBody') }}</small></button>
+        <button class="settings-row update-settings-entry" :class="{ attention: updateAvailable }" @click="settingsDialog = 'updates'"><span class="settings-row-icon" v-html="settingsIcon('updates')"></span><b>{{ t('appUpdates') }}</b><small>{{ updateCheckResult?.release ? `${t('updateAvailable')} ${updateCheckResult.release.version}` : t('appUpdatesBody') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'units'"><span class="settings-row-icon" v-html="settingsIcon('units')"></span><b>{{ t('units') }}</b><small>{{ state.settings.units === 'metric' ? t('metric') : t('imperial') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'calculations'"><span class="settings-row-icon" v-html="settingsIcon('calculations')"></span><b>{{ t('calculations') }}</b><small>{{ t('iomEquationMacro') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'tracking'"><span class="settings-row-icon" v-html="settingsIcon('tracking')"></span><b>{{ t('trackingReminders') }}</b><small>{{ calorieDeficitEnabled ? `${state.settings.target_deficit_kcal} kcal ${t('targetDeficit')}` : t('deficitOffHint') }}</small></button>
@@ -11958,6 +12027,11 @@ function setTab(tab: Tab) {
         <button class="settings-row" @click="settingsDialog = 'privacy'"><span class="settings-row-icon" v-html="settingsIcon('privacy')"></span><b>{{ t('privacy') }}</b></button>
         <button class="settings-row" @click="settingsDialog = 'licenses'"><span class="settings-row-icon" v-html="settingsIcon('licenses')"></span><b>{{ t('licenses') }}</b></button>
         <button class="settings-row" @click="settingsDialog = 'about'"><span class="settings-row-icon" v-html="settingsIcon('about')"></span><b>{{ t('about') }}</b></button>
+        <template v-if="devMode">
+          <div class="settings-divider"></div>
+          <div class="settings-section-label">{{ t('developerSettings') }}</div>
+          <button class="settings-row dev-only-settings-row" @click="startDevFirstLaunchMode"><span class="settings-row-icon" v-html="settingsIcon('reset')"></span><b>{{ t('devFirstLaunchMode') }}</b><small>{{ t('devFirstLaunchModeBody') }}</small></button>
+        </template>
         <footer class="settings-brand"><div class="brand-logo" v-html="nutrinoLogoSvg"></div><strong>nutrino</strong><small>{{ t('version') }} {{ appVersion }}</small></footer>
       </div>
 
@@ -11981,13 +12055,18 @@ function setTab(tab: Tab) {
           </template>
           <template v-else-if="settingsDialog === 'updates'">
             <div class="dialog-title-row"><h2>{{ t('appUpdates') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></div>
-            <p class="helper big">{{ t('appUpdatesBody') }}</p>
-            <label class="tracking-toggle-card"><span><b>{{ t('includePrereleaseUpdates') }}</b><small>{{ t('includePrereleaseUpdatesHint') }}</small></span><input v-model="state.settings.check_prerelease_updates" type="checkbox" /></label>
-            <article v-if="updateCheckResult" class="permission-status-card update-status-card" :class="{ granted: updateCheckResult.status === 'latest' }">
-              <span class="permission-status" :class="{ granted: updateCheckResult.status === 'latest' }">{{ updateCheckResult.status === 'latest' ? '✓' : '!' }}</span>
-              <span class="permission-copy"><b>{{ updateCheckResult.status === 'available' ? updateReleaseTitle(updateCheckResult) : t('latestInstalled') }}</b><small>{{ updateCheckResult.status === 'available' ? updateReleaseBody(updateCheckResult) : `${t('version')} ${appVersion}` }}</small></span>
-            </article>
-            <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button class="filled-button" type="button" :disabled="updateBusy" @click="checkForAppUpdates({ manual: true, ignoreRemindLater: true })">{{ updateBusy ? t('checkingUpdates') : t('checkUpdates') }}</button></div>
+            <section class="app-update-settings-panel">
+              <article class="app-update-status-card" :class="{ attention: updateAvailable, latest: updateCheckResult?.status === 'latest' }">
+                <span class="app-update-status-orb"></span>
+                <div>
+                  <b>{{ updateAvailable ? updateReleaseTitle(updateCheckResult) : updateCheckResult?.status === 'latest' ? t('latestInstalled') : t('appUpdates') }}</b>
+                  <small>{{ updateAvailable ? updateReleaseBody(updateCheckResult) : `${t('version')} ${appVersion}` }}</small>
+                  <small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small>
+                </div>
+              </article>
+              <label class="tracking-toggle-card"><span><b>{{ t('includePrereleaseUpdates') }}</b><small>{{ t('includePrereleaseUpdatesHint') }}</small></span><input v-model="state.settings.check_prerelease_updates" type="checkbox" /></label>
+            </section>
+            <div class="dialog-actions"><button v-if="updateAvailable" class="text-button" type="button" @click="remindUpdateLater">{{ t('remindLater') }}</button><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button v-if="updateAvailable" class="filled-button" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('checkingUpdates') : t('installUpdate') }}</button><button v-else class="filled-button" type="button" :disabled="updateBusy" @click="checkForAppUpdates({ manual: true, ignoreRemindLater: true })">{{ updateBusy ? t('checkingUpdates') : t('checkUpdates') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'units'"><h2>{{ t('units') }}</h2><button class="dialog-option" @click="state.settings.units = 'metric'; settingsDialog = null">{{ t('metric') }}</button><button class="dialog-option" @click="state.settings.units = 'imperial'; settingsDialog = null">{{ t('imperial') }}</button></template>
           <template v-else-if="settingsDialog === 'language'"><h2>{{ t('language') }}</h2><input v-model="languageSearch" class="input" type="search" :placeholder="t('languageSearch')" /><button v-for="language in filteredLanguageOptions" :key="language.code" class="dialog-option language-dialog-option" @click="setLanguage(language.code); settingsDialog = null"><span>{{ language.englishName }}</span><small>{{ language.nativeName }} · {{ language.code }}</small></button></template>

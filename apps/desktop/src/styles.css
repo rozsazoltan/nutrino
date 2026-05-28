@@ -1989,3 +1989,120 @@ body:has(.modal-backdrop) {
 .optional-nutrients-panel > summary small {
   color: var(--muted, #9aa89f);
 }
+
+/* v0.12.12 release update installer readability */
+.update-release-copy {
+  display: grid;
+  gap: 6px;
+  line-height: 1.45;
+}
+.update-release-copy small {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--muted, currentColor);
+  opacity: .82;
+}
+
+/* v0.12.16 update status polish */
+.desktop-header-statuses {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: .75rem;
+}
+.desktop-update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  width: fit-content;
+  border-radius: 999px;
+  padding: .72rem .95rem;
+  background: color-mix(in srgb, #2196f3 16%, var(--surface, #fff));
+  color: #0b64c0;
+  font-size: .88rem;
+  font-weight: 800;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #2196f3 18%, transparent);
+}
+.desktop-update-chip span {
+  width: .62rem;
+  height: .62rem;
+  border-radius: 999px;
+  background: #2196f3;
+  box-shadow: 0 0 0 0 color-mix(in srgb, #2196f3 58%, transparent);
+  animation: desktop-update-pulse 1.35s ease-out infinite;
+}
+@keyframes desktop-update-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, #2196f3 58%, transparent); }
+  72% { box-shadow: 0 0 0 10px color-mix(in srgb, #2196f3 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, #2196f3 0%, transparent); }
+}
+.desktop-update-settings-panel {
+  display: grid;
+  gap: 1rem;
+}
+.desktop-update-status-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface, #fff) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--outline, #dfe8df) 68%, transparent);
+}
+.desktop-update-status-card.attention {
+  background: color-mix(in srgb, #2196f3 10%, var(--surface, #fff));
+  border-color: color-mix(in srgb, #2196f3 34%, transparent);
+}
+.desktop-update-status-card.latest {
+  background: color-mix(in srgb, #34c759 8%, var(--surface, #fff));
+  border-color: color-mix(in srgb, #34c759 28%, transparent);
+}
+.desktop-update-status-card b,
+.desktop-update-status-card small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.desktop-update-status-card b {
+  font-size: 1rem;
+  font-weight: 800;
+}
+.desktop-update-status-card small {
+  margin-top: .25rem;
+  color: var(--muted, #66766d);
+  line-height: 1.4;
+}
+.desktop-update-status-orb {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface, #fff) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--outline, #dfe8df) 68%, transparent);
+}
+.desktop-update-status-orb::after {
+  content: '';
+  position: absolute;
+  inset: 15px;
+  border-radius: 999px;
+  background: var(--muted, #66766d);
+}
+.desktop-update-status-card.attention .desktop-update-status-orb::after { background: #2196f3; }
+.desktop-update-status-card.latest .desktop-update-status-orb::after { background: #34c759; }
+.desktop-update-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem;
+}
+.update-settings-section .settings-row-v040 {
+  border-radius: 18px;
+  border-bottom: 0;
+  background: color-mix(in srgb, var(--surface, #fff) 72%, transparent);
+}
+@media (max-width: 640px) {
+  .desktop-header-statuses { justify-content: flex-start; }
+  .desktop-update-actions > * { flex: 1 1 180px; }
+}

@@ -1,4 +1,4 @@
-export type ReleaseTarget = 'android' | 'windows' | 'macos' | 'linux' | 'desktop' | 'mobile';
+export type ReleaseTarget = 'android' | 'ios' | 'windows' | 'macos' | 'linux' | 'desktop' | 'mobile';
 
 export interface UpdateRelease {
   version: string;
@@ -57,6 +57,7 @@ function preferredAsset(release: GitHubRelease, target: ReleaseTarget): GitHubRe
   const assets = release.assets || [];
   const byName = (patterns: RegExp[]) => assets.find((asset) => patterns.some((pattern) => pattern.test(asset.name || '')));
   if (target === 'android') return byName([/\.apk$/i]);
+  if (target === 'ios') return byName([/\.ipa$/i, /ios/i]);
   if (target === 'windows') return byName([/\.msi$/i, /\.exe$/i, /windows/i]);
   if (target === 'macos') return byName([/\.dmg$/i, /\.app\.tar\.gz$/i, /darwin|macos|mac/i]);
   if (target === 'linux') return byName([/\.appimage$/i, /\.deb$/i, /\.rpm$/i, /linux/i]);

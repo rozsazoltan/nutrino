@@ -107,6 +107,9 @@ function patchManifest(config) {
   if (!xml.includes('android.permission.POST_NOTIFICATIONS')) {
     xml = xml.replace(/<manifest([^>]*)>/, '<manifest$1>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />');
   }
+  if (!xml.includes('android.permission.REQUEST_INSTALL_PACKAGES')) {
+    xml = xml.replace(/<manifest([^>]*)>/, '<manifest$1>\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />');
+  }
   if (xml.includes('<activity') && !xml.includes('android:windowSoftInputMode=')) {
     xml = xml.replace(/<activity\s/, '<activity android:windowSoftInputMode="adjustResize" ');
   }
@@ -122,6 +125,20 @@ function patchManifest(config) {
       next = setAndroidAttribute(next, 'android:enableOnBackInvokedCallback', 'true');
       return next;
     });
+  }
+
+  if (xml.includes('</application>') && !xml.includes('nutrino_update_file_provider')) {
+    const provider = `
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${config.applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/nutrino_update_file_paths" />
+        </provider>`;
+    xml = xml.replace('</application>', `${provider}\n    </application>`);
   }
 
   fs.writeFileSync(manifestPath, xml);
@@ -312,6 +329,23 @@ function ensureNetworkSecurityConfig() {
 }
 
 
+function ensureUpdateFileProviderPaths() {
+  if (!fs.existsSync(androidResDir)) return false;
+  const xmlDir = path.join(androidResDir, 'xml');
+  const pathsPath = path.join(xmlDir, 'nutrino_update_file_paths.xml');
+  const content = `<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="nutrino_update_cache" path="updates/" />
+    <files-path name="nutrino_update_files" path="updates/" />
+</paths>
+`;
+  fs.mkdirSync(xmlDir, { recursive: true });
+  const previous = fs.existsSync(pathsPath) ? fs.readFileSync(pathsPath, 'utf8') : '';
+  if (previous === content) return false;
+  fs.writeFileSync(pathsPath, content);
+  return true;
+}
+
 function escapeXml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -410,6 +444,15 @@ function ensureBuildConfigFeature(source) {
   return source.replace(androidBlockRegex, 'android {\n    buildFeatures {\n        buildConfig = true\n    }');
 }
 
+
+function ensureAndroidxCoreDependency(source) {
+  if (/androidx\.core:core(-ktx)?:/.test(source)) return source;
+  const dependencyLine = '    implementation("androidx.core:core-ktx:1.13.1")';
+  if (/dependencies\s*\{/.test(source)) {
+    return source.replace(/dependencies\s*\{/, `dependencies {\n${dependencyLine}`);
+  }
+  return `${source.trimEnd()}\n\ndependencies {\n${dependencyLine}\n}\n`;
+}
 
 function patchNotificationStorageActionKeys() {
   if (!fs.existsSync(androidDir)) return false;
@@ -563,6 +606,7 @@ function patchAndroidApplicationId(config) {
   source = setGradleStringProperty(source, 'namespace', config.applicationId, 'android');
   source = setGradleStringProperty(source, 'applicationId', config.applicationId, 'defaultConfig');
   source = ensureBuildConfigFeature(source);
+  source = ensureAndroidxCoreDependency(source);
 
   fs.writeFileSync(gradlePath, source);
   return source !== original;
@@ -728,28 +772,41 @@ function mobileMainActivitySource(config) {
   const packageLine = `package ${config.applicationId}`;
   return `${packageLine}
 
-import android.content.res.Configuration
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import android.widget.Toast
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
+import androidx.core.content.FileProvider
 import org.json.JSONObject
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+
 // Tauri generates TauriActivity into the same application package at build time.
 // Do not import a global TauriActivity here: with Tauri 2.11 generated Android
 // projects that symbol is not exported from that package and Gradle fails with
 // "Unresolved reference: TauriActivity".
 class MainActivity : TauriActivity() {
     private var nutrinoBackCallback: OnBackInvokedCallback? = null
+    private var installerBridgeAttached = false
+    private var pendingUpdateDownloadUrl: String? = null
+    private var pendingUpdateAssetName: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureEdgeToEdgeWindow()
+        attachInstallerBridgeWhenReady()
         dispatchNutrinoNotificationActionToWebView(intent)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val callback = OnBackInvokedCallback {
@@ -767,6 +824,11 @@ class MainActivity : TauriActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         dispatchNutrinoNotificationActionToWebView(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumePendingUpdateInstallIfAllowed()
     }
 
     override fun onDestroy() {
@@ -792,7 +854,6 @@ class MainActivity : TauriActivity() {
         dispatchNutrinoBackToWebView()
     }
 
-
     private fun configureEdgeToEdgeWindow() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             window.statusBarColor = Color.TRANSPARENT
@@ -812,6 +873,175 @@ class MainActivity : TauriActivity() {
         }
 
         window.decorView.systemUiVisibility = flags
+    }
+
+    private fun attachInstallerBridgeWhenReady(attempt: Int = 0) {
+        val webView = findWebView(window?.decorView)
+        if (webView == null) {
+            if (attempt < 80) window?.decorView?.postDelayed({ attachInstallerBridgeWhenReady(attempt + 1) }, 150)
+            return
+        }
+        if (!installerBridgeAttached) {
+            webView.settings.javaScriptEnabled = true
+            webView.addJavascriptInterface(NutrinoInstallerBridge(this), "NutrinoAndroidInstaller")
+            installerBridgeAttached = true
+        }
+    }
+
+    class NutrinoInstallerBridge(private val activity: MainActivity) {
+        @JavascriptInterface
+        fun canRequestPackageInstalls(): Boolean {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                activity.packageManager.canRequestPackageInstalls()
+            } else {
+                true
+            }
+        }
+
+        @JavascriptInterface
+        fun openUnknownAppInstallSettings() {
+            activity.runOnUiThread {
+                activity.openUnknownAppInstallSettings()
+            }
+        }
+
+        @JavascriptInterface
+        fun installUpdateApk(downloadUrl: String?, assetName: String?) {
+            activity.runOnUiThread {
+                activity.installUpdateApk(downloadUrl, assetName)
+            }
+        }
+    }
+
+    private fun installUpdateApk(downloadUrl: String?, assetName: String?) {
+        val target = downloadUrl?.trim().orEmpty()
+        if (!target.startsWith("https://")) {
+            notifyInstallerError("Update download URL must use HTTPS.")
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            pendingUpdateDownloadUrl = target
+            pendingUpdateAssetName = assetName
+            Toast.makeText(this, "Allow Nutrino to install APK updates. The update will continue when you return.", Toast.LENGTH_LONG).show()
+            openUnknownAppInstallSettings()
+            dispatchInstallerEvent("permission-required", null, null)
+            return
+        }
+
+        pendingUpdateDownloadUrl = null
+        pendingUpdateAssetName = null
+        Toast.makeText(this, "Downloading Nutrino update…", Toast.LENGTH_SHORT).show()
+        Thread {
+            try {
+                val file = downloadUpdateApk(target, assetName)
+                runOnUiThread {
+                    openDownloadedApkInstaller(file)
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    notifyInstallerError(error.message ?: error.toString())
+                }
+            }
+        }.start()
+    }
+
+    private fun resumePendingUpdateInstallIfAllowed() {
+        val target = pendingUpdateDownloadUrl?.trim().orEmpty()
+        if (target.isBlank()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) return
+        val assetName = pendingUpdateAssetName
+        pendingUpdateDownloadUrl = null
+        pendingUpdateAssetName = null
+        installUpdateApk(target, assetName)
+    }
+
+    private fun downloadUpdateApk(downloadUrl: String, assetName: String?): File {
+        val safeName = safeUpdateAssetName(assetName, downloadUrl)
+        val updatesDir = File(cacheDir, "updates")
+        if (!updatesDir.exists() && !updatesDir.mkdirs()) {
+            throw IllegalStateException("Could not create update cache directory.")
+        }
+        val outputFile = File(updatesDir, safeName)
+        val connection = (URL(downloadUrl).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15000
+            readTimeout = 60000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "Nutrino Android updater")
+        }
+        try {
+            if (connection.responseCode !in 200..299) {
+                throw IllegalStateException("Update download failed: HTTP " + connection.responseCode)
+            }
+            connection.inputStream.use { input ->
+                outputFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+        } finally {
+            connection.disconnect()
+        }
+        if (!outputFile.exists() || outputFile.length() <= 0L) {
+            throw IllegalStateException("Downloaded APK is empty.")
+        }
+        return outputFile
+    }
+
+    private fun safeUpdateAssetName(assetName: String?, downloadUrl: String): String {
+        val fallback = downloadUrl.substringAfterLast('/').substringBefore('?').ifBlank { "nutrino-update.apk" }
+        val raw = assetName?.trim()?.ifBlank { null } ?: fallback
+        val safe = raw.map { char ->
+            if (char.isLetterOrDigit() || char == '.' || char == '-' || char == '_') char else '-'
+        }.joinToString("").trim('-')
+        return when {
+            safe.isBlank() -> "nutrino-update.apk"
+            safe.lowercase().endsWith(".apk") -> safe
+            else -> safe + ".apk"
+        }
+    }
+
+    private fun openDownloadedApkInstaller(file: File) {
+        try {
+            val uri = FileProvider.getUriForFile(this, packageName + ".fileprovider", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            dispatchInstallerEvent("started", file.absolutePath, null)
+        } catch (error: Exception) {
+            notifyInstallerError(error.message ?: error.toString())
+        }
+    }
+
+    private fun openUnknownAppInstallSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                data = Uri.parse("package:" + packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        }
+    }
+
+    private fun notifyInstallerError(message: String) {
+        Toast.makeText(this, "Could not start update installation: " + message, Toast.LENGTH_LONG).show()
+        dispatchInstallerEvent("error", null, message)
+    }
+
+    private fun dispatchInstallerEvent(status: String, path: String?, error: String?) {
+        val payload = JSONObject()
+        payload.put("status", status)
+        if (!path.isNullOrBlank()) payload.put("path", path)
+        if (!error.isNullOrBlank()) payload.put("error", error)
+        val payloadString = JSONObject.quote(payload.toString())
+        findWebView(window?.decorView)?.post {
+            findWebView(window?.decorView)?.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('nutrino:android-update-installer', { detail: JSON.parse(" + payloadString + ") }))",
+                null
+            )
+        }
     }
 
     private fun dispatchNutrinoBackToWebView() {
@@ -1105,6 +1335,7 @@ const signingPatched = patchReleaseSigning();
 const iconsPatched = patchAndroidIcons();
 const launcherColorPatched = ensureLauncherBackgroundColor();
 const networkSecurityPatched = ensureNetworkSecurityConfig();
+const updateFilePathsPatched = ensureUpdateFileProviderPaths();
 const labelResourcesPatched = patchAndroidLabelResources(config);
 const manifestPatched = patchManifest(config);
 const buildSrcRustPluginPatched = normalizeBuildSrcRustPluginResources();
@@ -1114,4 +1345,4 @@ const notificationManagerPatched = patchNotificationManagerNutrinoActions();
 const nativeStateCleaned = cleanStaleAndroidNativeState(config);
 const generatedKotlinCleaned = cleanGeneratedKotlinPackages();
 const activityPackagePatched = patchMainActivityPackage(config);
-console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, networkSecurity=${networkSecurityPatched ? 'yes' : 'already ok'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, notificationOverride=${notificationOverridePatched ? 'patched' : 'already ok'}, notificationStorage=${notificationStoragePatched ? 'patched' : 'already ok'}, notificationManager=${notificationManagerPatched ? 'patched' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);
+console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, networkSecurity=${networkSecurityPatched ? 'yes' : 'already ok'}, updateFilePaths=${updateFilePathsPatched ? 'yes' : 'already ok'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, notificationOverride=${notificationOverridePatched ? 'patched' : 'already ok'}, notificationStorage=${notificationStoragePatched ? 'patched' : 'already ok'}, notificationManager=${notificationManagerPatched ? 'patched' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);

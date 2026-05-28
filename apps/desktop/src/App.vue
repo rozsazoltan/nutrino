@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { lucideSvg, type IconName } from './icons';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { readFile, writeFile } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
 import * as QRCode from 'qrcode';
@@ -68,13 +69,14 @@ const foodSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const recipeQuery = ref('');
 const recipeSort = ref<'name' | 'kcal' | 'protein' | 'carbs' | 'fat'>('name');
 const settings = ref<DesktopSettings | null>(null);
-const appVersion = '0.12.11';
 const appChannel = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
+const appVersion = appChannel === 'dev' ? __NUTRINO_DEV_VERSION__ : __NUTRINO_RELEASE_VERSION__;
 const appName = appChannel === 'dev' ? 'Nutrino Dev' : 'Nutrino';
 document.title = appName;
 const updateBusy = ref(false);
 const updateDialogOpen = ref(false);
 const updateCheckResult = ref<UpdateCheckResult | null>(null);
+const updateAvailable = computed(() => updateCheckResult.value?.status === 'available' && Boolean(updateCheckResult.value.release));
 const updateRemindLaterKey = `nutrino.desktop.${appChannel}.update.remindLater.v1`;
 let updateCheckUnlisten: UnlistenFn | null = null;
 
@@ -4395,6 +4397,9 @@ const desktopUpdateTranslations: Record<string, Record<string, string>> = {
     'ui.remindLaterSaved': 'Update reminder postponed.',
     'ui.latestInstalled': 'You are on the latest version.',
     'ui.updateCheckFailed': 'Update check failed',
+    'ui.updateInstallerStarted': 'Update installer started.',
+    'ui.updateInstallerFailed': 'Could not start the update installer',
+    'ui.updateInstallerFallback': 'Could not start the installer directly; opening the download instead',
     'ui.mobileRequestedDesktopUpdateCheck': 'Mobile requested a desktop update check.',
   },
   hu: {
@@ -4411,6 +4416,9 @@ const desktopUpdateTranslations: Record<string, Record<string, string>> = {
     'ui.remindLaterSaved': 'Frissítési emlékeztető elhalasztva.',
     'ui.latestInstalled': 'A legfrissebb verzió van fent.',
     'ui.updateCheckFailed': 'A frissítés ellenőrzése sikertelen',
+    'ui.updateInstallerStarted': 'A frissítő telepítő elindult.',
+    'ui.updateInstallerFailed': 'Nem sikerült elindítani a frissítő telepítőt',
+    'ui.updateInstallerFallback': 'A telepítő közvetlen indítása nem sikerült; megnyitom a letöltést',
     'ui.mobileRequestedDesktopUpdateCheck': 'A mobil frissítéskeresést kért a desktop appnak.',
   },
 };
@@ -4917,8 +4925,11 @@ function updateReleaseTitle(result = updateCheckResult.value): string {
 
 function updateReleaseBody(result = updateCheckResult.value): string {
   if (!result?.release) return t('ui.latestInstalled');
-  const asset = result.release.assetName ? ` ${result.release.assetName}` : '';
-  return `${t('ui.updateAvailableBody')} ${t('ui.versionLabel')} ${appVersion} → ${result.release.version}.${asset}`;
+  return `${t('ui.updateAvailableBody')} ${t('ui.versionLabel')} ${appVersion} → ${result.release.version}.`;
+}
+
+function updateReleaseAssetLabel(result = updateCheckResult.value): string {
+  return result?.release?.assetName ? result.release.assetName : '';
 }
 
 function updateRemindLaterActive(result: UpdateCheckResult): boolean {
@@ -4952,18 +4963,32 @@ async function checkForAppUpdates(options: { quiet?: boolean; manual?: boolean; 
   }
 }
 
-function openExternalUrl(url?: string) {
+async function openExternalUrl(url?: string) {
   const target = String(url || '').trim();
   if (!target) return;
-  const opened = window.open(target, '_blank', 'noopener,noreferrer');
-  if (!opened) window.location.href = target;
+  try {
+    await openUrl(target);
+  } catch {
+    const opened = window.open(target, '_blank', 'noopener,noreferrer');
+    if (!opened) window.location.href = target;
+  }
 }
 
-function installAvailableUpdate() {
+async function installAvailableUpdate() {
   const release = updateCheckResult.value?.release;
-  if (!release) return;
-  openExternalUrl(release.downloadUrl || release.url);
-  updateDialogOpen.value = false;
+  if (!release || updateBusy.value) return;
+  const url = release.downloadUrl || release.url;
+  updateBusy.value = true;
+  try {
+    await commands.downloadAndOpenUpdateInstaller(url, release.assetName || `nutrino-${release.version}`);
+    updateDialogOpen.value = false;
+    setMessage(t('ui.updateInstallerStarted'));
+  } catch (error) {
+    updateDialogOpen.value = true;
+    setMessage(`${t('ui.updateInstallerFailed')}: ${String(error)}`);
+  } finally {
+    updateBusy.value = false;
+  }
 }
 
 function remindUpdateLater() {
@@ -4976,6 +5001,14 @@ function remindUpdateLater() {
   }
   updateDialogOpen.value = false;
   setMessage(t('ui.remindLaterSaved'));
+}
+
+function openUpdateCenter() {
+  if (updateAvailable.value) {
+    updateDialogOpen.value = true;
+    return;
+  }
+  void checkForAppUpdates({ manual: true, ignoreRemindLater: true });
 }
 
 function typeLabel(value: string) {
@@ -6739,11 +6772,14 @@ onBeforeUnmount(() => {
             <h1 class="text-2xl font-bold md:text-3xl">{{ appName }}</h1>
           </div>
         </div>
-        <div class="server-pill" :class="serverRunning ? 'server-pill-running' : 'server-pill-stopped'">
-          <span class="server-dot" />
-          <span class="font-semibold">{{ t('ui.status_24a23') }}</span>
-          <span>{{ serverRunning ? t('ui.apiRunning') : t('ui.apiStopped') }}</span>
-          <span v-if="serverRunning" class="server-device-count">{{ connectedDeviceCount }} {{ t(connectedDeviceCount === 1 ? 'ui.deviceSingular' : 'ui.devicePlural') }}</span>
+        <div class="desktop-header-statuses">
+          <div class="server-pill" :class="serverRunning ? 'server-pill-running' : 'server-pill-stopped'">
+            <span class="server-dot" />
+            <span class="font-semibold">{{ t('ui.status_24a23') }}</span>
+            <span>{{ serverRunning ? t('ui.apiRunning') : t('ui.apiStopped') }}</span>
+            <span v-if="serverRunning" class="server-device-count">{{ connectedDeviceCount }} {{ t(connectedDeviceCount === 1 ? 'ui.deviceSingular' : 'ui.devicePlural') }}</span>
+          </div>
+          <button v-if="updateAvailable" class="desktop-update-chip" type="button" @click="openUpdateCenter"><span></span>{{ t('ui.updateAvailable') }} {{ updateCheckResult?.release?.version }}</button>
         </div>
       </div>
     </header>
@@ -7196,24 +7232,32 @@ onBeforeUnmount(() => {
               </div>
             </section>
 
-            <section class="settings-section-card">
+            <section class="settings-section-card update-settings-section">
               <div class="settings-section-head">
                 <div>
                   <p class="desktop-kicker">{{ t('ui.appUpdates') }}</p>
                   <h3>{{ t('ui.appUpdatesBody') }}</h3>
                 </div>
               </div>
-              <article class="mobile-settings-list settings-group-list">
+              <article class="desktop-update-settings-panel">
+                <div class="desktop-update-status-card" :class="{ attention: updateAvailable, latest: updateCheckResult?.status === 'latest' }">
+                  <span class="desktop-update-status-orb"></span>
+                  <div>
+                    <b>{{ updateAvailable ? updateReleaseTitle(updateCheckResult) : updateCheckResult?.status === 'latest' ? t('ui.latestInstalled') : t('ui.appUpdates') }}</b>
+                    <small>{{ updateAvailable ? updateReleaseBody(updateCheckResult) : `${t('ui.versionLabel')} ${appVersion}` }}</small>
+                    <small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small>
+                  </div>
+                </div>
                 <label class="mobile-setting-row settings-row-v040">
                   <span class="mobile-setting-icon" v-html="icon('refresh')"></span>
                   <span class="mobile-setting-copy"><b>{{ t('ui.includePrereleaseUpdates') }}</b><small>{{ t('ui.includePrereleaseUpdatesHint') }}</small></span>
                   <span class="toggle compact" :class="{ enabled: settings.check_prerelease_updates }"></span>
                   <input v-model="settings.check_prerelease_updates" class="sr-only" type="checkbox" @change="saveDesktopSettingsNow" />
                 </label>
-                <button class="mobile-setting-row settings-row-v040" :disabled="updateBusy" @click="checkForAppUpdates({ manual: true, ignoreRemindLater: true })">
-                  <span class="mobile-setting-icon" v-html="icon('refresh')"></span>
-                  <span class="mobile-setting-copy"><b>{{ updateBusy ? t('ui.checkingUpdates') : t('ui.checkUpdates') }}</b><small>{{ updateCheckResult?.release ? updateReleaseTitle(updateCheckResult) : t('ui.latestInstalled') }}</small></span>
-                </button>
+                <div class="desktop-update-actions">
+                  <button class="btn-secondary" type="button" :disabled="updateBusy" @click="checkForAppUpdates({ manual: true, ignoreRemindLater: true })">{{ updateBusy ? t('ui.checkingUpdates') : t('ui.checkUpdates') }}</button>
+                  <button v-if="updateAvailable" class="btn-primary" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('ui.checkingUpdates') : t('ui.installUpdate') }}</button>
+                </div>
               </article>
             </section>
 
@@ -7325,11 +7369,11 @@ onBeforeUnmount(() => {
       <div v-if="updateDialogOpen && updateCheckResult?.release" class="modal-backdrop" @click.self="remindUpdateLater">
         <section class="modal-card update-modal">
           <div class="modal-title-row">
-            <div><p class="modal-kicker">{{ t('ui.appUpdates') }}</p><h2>{{ updateReleaseTitle() }}</h2><p class="muted">{{ updateReleaseBody() }}</p></div>
+            <div><p class="modal-kicker">{{ t('ui.appUpdates') }}</p><h2>{{ updateReleaseTitle() }}</h2><p class="muted update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p></div>
           </div>
           <div class="dialog-actions">
             <button class="btn-secondary" type="button" @click="remindUpdateLater">{{ t('ui.remindLater') }}</button>
-            <button class="btn-primary" type="button" @click="installAvailableUpdate">{{ t('ui.installUpdate') }}</button>
+            <button class="btn-primary" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('ui.checkingUpdates') : t('ui.installUpdate') }}</button>
           </div>
         </section>
       </div>

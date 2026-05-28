@@ -3656,3 +3656,132 @@ select:focus {
     width: 100%;
   }
 }
+
+/* v0.12.12 release update installer readability */
+.update-release-copy {
+  display: grid;
+  gap: 4px;
+  line-height: 1.42;
+}
+.update-release-copy small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--on-surface-variant);
+  font-weight: 700;
+}
+
+/* v0.12.16 update status polish */
+.app-logo-update-button {
+  position: relative;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.app-logo-update-button.update-available::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #2196f3;
+  box-shadow: 0 0 0 0 color-mix(in srgb, #2196f3 60%, transparent);
+  animation: nutrino-update-pulse 1.3s ease-out infinite;
+}
+@keyframes nutrino-update-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, #2196f3 60%, transparent); }
+  72% { box-shadow: 0 0 0 10px color-mix(in srgb, #2196f3 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, #2196f3 0%, transparent); }
+}
+.appbar-update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  max-width: 92px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #2196f3 18%, var(--surface));
+  color: #0b64c0;
+  font-size: .74rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.appbar-update-chip span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #2196f3;
+}
+.update-settings-entry.attention {
+  background: color-mix(in srgb, #2196f3 10%, transparent);
+}
+.settings-section-label {
+  padding: 12px 28px 2px;
+  color: var(--on-surface-variant);
+  font-size: .75rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.dev-only-settings-row {
+  background: color-mix(in srgb, var(--secondary-container) 38%, transparent);
+}
+.app-update-settings-panel {
+  display: grid;
+  gap: 12px;
+}
+.app-update-status-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--surface-container);
+  border: 1px solid var(--outline-variant);
+}
+.app-update-status-card.attention {
+  background: color-mix(in srgb, #2196f3 10%, var(--surface-container));
+  border-color: color-mix(in srgb, #2196f3 34%, var(--outline-variant));
+}
+.app-update-status-card.latest {
+  background: color-mix(in srgb, #34c759 8%, var(--surface-container));
+  border-color: color-mix(in srgb, #34c759 28%, var(--outline-variant));
+}
+.app-update-status-card b,
+.app-update-status-card small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.app-update-status-card b {
+  font-size: .96rem;
+  font-weight: 850;
+}
+.app-update-status-card small {
+  margin-top: 3px;
+  color: var(--on-surface-variant);
+  line-height: 1.35;
+}
+.app-update-status-orb {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--outline-variant);
+  position: relative;
+}
+.app-update-status-orb::after {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  border-radius: 999px;
+  background: var(--on-surface-variant);
+}
+.app-update-status-card.attention .app-update-status-orb::after { background: #2196f3; }
+.app-update-status-card.latest .app-update-status-orb::after { background: #34c759; }
+@media (max-width: 390px) {
+  .appbar-update-chip { display: none; }
+  .settings-section-label { padding-inline: 22px; }
+}

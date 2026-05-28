@@ -2,8 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult, DesktopUpdateCheckResponse } from '../types';
 import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeActivity, normalizeFood, normalizeIngredient, normalizeRecipe, resolveCatalogId } from './storage';
 
-export const APP_VERSION = '0.12.11';
 const APP_CHANNEL = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
+export const APP_VERSION = APP_CHANNEL === 'dev' ? __NUTRINO_DEV_VERSION__ : __NUTRINO_RELEASE_VERSION__;
 const DEVICE_ID_STORAGE_KEY = `nutrino.mobile.${APP_CHANNEL}.device_id.v1`;
 
 type MobileDeviceInfo = {

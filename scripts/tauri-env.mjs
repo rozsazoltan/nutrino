@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { gitShortCommit } from './version-info.mjs';
 
 function findRepoRoot(startDir) {
   let current = path.resolve(startDir);
@@ -51,6 +52,12 @@ if (appName === 'mobile' || process.argv.slice(2).includes('android')) {
 }
 
 const args = process.argv.slice(2);
+const requestedChannel = env.NUTRINO_APP_CHANNEL || env.VITE_NUTRINO_CHANNEL || (args[0] === 'dev' || args.includes('--config') && args.some((arg) => String(arg).includes('tauri.dev.conf')) ? 'dev' : 'stable');
+env.NUTRINO_APP_CHANNEL = requestedChannel === 'dev' ? 'dev' : 'stable';
+env.VITE_NUTRINO_CHANNEL = env.VITE_NUTRINO_CHANNEL || env.NUTRINO_APP_CHANNEL;
+env.NUTRINO_GIT_COMMIT = env.NUTRINO_GIT_COMMIT || gitShortCommit(repoRoot);
+console.log(`Tauri channel: ${env.NUTRINO_APP_CHANNEL}`);
+console.log(`Tauri commit: ${env.NUTRINO_GIT_COMMIT}`);
 console.log(`Tauri cache: Cargo target -> ${env.CARGO_TARGET_DIR}`);
 if (env.GRADLE_USER_HOME) console.log(`Tauri cache: Gradle user home -> ${env.GRADLE_USER_HOME}`);
 
