@@ -1857,7 +1857,8 @@ select:focus {
 }
 
 /* v0.10.21 note review target highlighting and activity source tabs */
-.entry-row.review-highlight {
+.entry-row.review-highlight,
+.health-entry-card.review-highlight {
   border: 2px solid var(--primary);
   background: color-mix(in srgb, var(--primary-container) 58%, var(--surface));
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary) 16%, transparent), 0 14px 30px color-mix(in srgb, var(--primary) 18%, transparent);
@@ -5551,6 +5552,236 @@ select:focus {
   border-radius: 18px;
   background: #000;
 }
+.health-preview-unavailable {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 28px 16px;
+  border-radius: 18px;
+  color: var(--on-surface-variant);
+  background: var(--surface-container);
+  text-align: center;
+}
+.health-preview-unavailable span {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 18px;
+  color: var(--primary);
+  background: var(--primary-container);
+}
+.health-preview-unavailable svg {
+  width: 25px;
+  height: 25px;
+}
+.health-search-card {
+  display: grid;
+  gap: 10px;
+}
+.health-search-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: end;
+}
+.health-search-head b,
+.health-search-head small {
+  display: block;
+}
+.health-search-head small {
+  color: var(--on-surface-variant);
+  font-size: .76rem;
+  font-weight: 800;
+}
+.health-search-clear {
+  position: absolute;
+  right: 6px;
+  width: 34px;
+  height: 34px;
+}
+.health-search-input .input:has(+ .health-search-clear),
+.health-search-input:has(.health-search-clear) .input {
+  padding-right: 44px;
+}
+.health-day-toolbar {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+}
+.health-day-toolbar .entry-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+.health-analysis-inline-card .analysis-card-header.compact {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.health-analysis-modal .health-summary-grid,
+.health-event-focus-card .health-summary-grid.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.health-analysis-modal .health-period-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.health-analysis-modal .health-period-card {
+  min-height: 58px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 9px 10px;
+}
+.health-analysis-modal .health-period-card span,
+.health-analysis-modal .health-period-card small {
+  grid-column: 1;
+}
+.health-analysis-modal .health-period-card b {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  font-size: 1.05rem;
+}
+.health-analysis-modal .health-summary-grid > div,
+.health-event-focus-card .health-summary-grid.compact div {
+  min-height: 48px;
+  padding: 9px 10px;
+  border-radius: 14px;
+}
+.health-analysis-modal .health-summary-grid b,
+.health-event-focus-card .health-summary-grid.compact b {
+  margin-top: 2px;
+  font-size: 1rem;
+}
+.health-event-picker {
+  position: relative;
+  display: grid;
+  gap: 8px;
+}
+.health-event-picker-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 16px;
+  color: var(--on-surface);
+  background: var(--surface-container);
+  text-align: left;
+}
+.health-event-picker-button b,
+.health-event-picker-button small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-event-picker-button small {
+  margin-top: 2px;
+  color: var(--on-surface-variant);
+  font-size: .76rem;
+}
+.health-event-picker-button i {
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+}
+.health-event-picker-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 70%, transparent);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 14px 40px color-mix(in srgb, #000 18%, transparent);
+}
+.health-event-picker-list {
+  display: grid;
+  gap: 7px;
+  max-height: min(34dvh, 320px);
+  overflow-y: auto;
+}
+.health-event-picker-list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 48px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  color: var(--on-surface);
+  background: var(--surface-container);
+  text-align: left;
+}
+.health-event-picker-list button.selected {
+  border-color: color-mix(in srgb, var(--primary) 62%, transparent);
+  background: color-mix(in srgb, var(--primary-container) 54%, var(--surface));
+}
+.health-event-picker-list b,
+.health-event-picker-list small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-event-picker-list small {
+  color: var(--on-surface-variant);
+  font-size: .74rem;
+}
+.health-event-picker-list strong {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--primary);
+  background: var(--primary-container);
+  font-size: .78rem;
+}
+.export-progress-backdrop {
+  pointer-events: auto;
+}
+.export-progress-dialog {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  width: min(92vw, 420px);
+}
+.export-progress-dialog h2 {
+  margin: 0 0 4px;
+}
+.export-spinner {
+  width: 42px;
+  height: 42px;
+  border: 4px solid color-mix(in srgb, var(--primary) 18%, var(--surface-container-highest));
+  border-top-color: var(--primary);
+  border-radius: 999px;
+  animation: nutrinoSpin .8s linear infinite;
+}
+.export-progress-track {
+  grid-column: 1 / -1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-container-highest);
+}
+.export-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width .18s ease;
+}
+.export-progress-dialog > small {
+  grid-column: 1 / -1;
+  color: var(--on-surface-variant);
+  text-align: right;
+  font-weight: 900;
+}
+@keyframes nutrinoSpin {
+  to { transform: rotate(360deg); }
+}
 .profile-purpose-chip-list {
   display: flex;
   flex-wrap: wrap;
@@ -5754,7 +5985,7 @@ select:focus {
     padding: 14px 12px !important;
   }
   .health-day-toolbar {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto !important;
   }
   .activity-analysis-summary {
     grid-template-columns: 1fr;
