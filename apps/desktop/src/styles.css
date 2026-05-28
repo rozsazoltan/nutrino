@@ -2106,3 +2106,25 @@ body:has(.modal-backdrop) {
   .desktop-header-statuses { justify-content: flex-start; }
   .desktop-update-actions > * { flex: 1 1 180px; }
 }
+
+/* v0.12.17 desktop update hover readability */
+.desktop-update-chip:hover:not(:disabled),
+.desktop-update-chip:focus-visible {
+  background: color-mix(in srgb, #2196f3 24%, var(--surface, #fff)) !important;
+  color: #063a78 !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #2196f3 32%, transparent) !important;
+}
+.desktop-update-chip:hover:not(:disabled) *,
+.desktop-update-chip:focus-visible * {
+  color: #063a78 !important;
+}
+.desktop-update-settings-panel .btn-secondary:hover:not(:disabled),
+.desktop-update-actions .btn-secondary:hover:not(:disabled) {
+  background: var(--desktop-hover, var(--soft-hover)) !important;
+  color: var(--desktop-hover-text, #0F1F11) !important;
+}
+.desktop-update-settings-panel .btn-primary:hover:not(:disabled),
+.desktop-update-actions .btn-primary:hover:not(:disabled) {
+  background: var(--primary-container, #C8F7C5) !important;
+  color: #0F1F11 !important;
+}

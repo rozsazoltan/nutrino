@@ -760,6 +760,8 @@ fn open_downloaded_update_installer(path: &Path) -> std::result::Result<(), Stri
             Command::new("msiexec")
                 .arg("/i")
                 .arg(path)
+                .arg("/passive")
+                .arg("/norestart")
                 .spawn()
                 .map_err(|error| format!("Could not start Windows MSI installer: {error}"))?;
         } else if matches!(extension.as_str(), "exe" | "msix" | "appinstaller") {

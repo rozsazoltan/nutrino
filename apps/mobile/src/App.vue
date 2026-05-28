@@ -204,6 +204,7 @@ const settingsOpen = ref(false);
 const settingsDialog = ref<'permissions' | 'updates' | 'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'privacy' | 'about' | 'licenses' | 'advanced' | null>(null);
 const updateBusy = ref(false);
 const updateDialogOpen = ref(false);
+const updateInstallInfoOpen = ref(false);
 const updateCheckResult = ref<UpdateCheckResult | null>(null);
 const updateAvailable = computed(() => updateCheckResult.value?.status === 'available' && Boolean(updateCheckResult.value.release));
 const analysisOpen = ref(false);
@@ -360,6 +361,8 @@ const settingsIconMap: Record<string, IconName> = {
   reset: 'rotateCcw',
   backup: 'archiveRestore',
   advanced: 'settings',
+  api: 'server',
+  github: 'database',
 };
 
 function settingsIcon(name: string) {
@@ -514,7 +517,10 @@ function scheduleTodayRollover() {
 }
 
 function handleVisibilityChange() {
-  if (!document.hidden) refreshTodayKey();
+  if (!document.hidden) {
+    refreshTodayKey();
+    void resumePendingUpdateInstallFromPermission();
+  }
 }
 
 function hideKeyboard(event?: Event) {
@@ -1440,6 +1446,7 @@ const issueUrl = 'https://github.com/rozsazoltan/nutrino/issues/new/choose';
 const starUrl = 'https://github.com/rozsazoltan/nutrino/stargazers';
 const SERVER_STALE_MS = 5 * 60 * 1000;
 const updateRemindLaterKey = `nutrino.mobile.${appChannel}.update.remindLater.v1`;
+const updatePendingInstallKey = `nutrino.mobile.${appChannel}.update.pendingInstall.v1`;
 const selectedDayUnlocked = computed(() => activeTab.value === 'diary' && unlockedDiaryDate.value === selectedDate.value);
 const selectedDateIsFuture = computed(() => dayStartMs(activeLogDateKey.value) > dayStartMs(todayKey.value));
 const currentBmiInfo = computed(() => bmiStatus(currentBmi.value));
@@ -6894,6 +6901,9 @@ const mobileUpdateAndSourceTranslations: Record<string, Partial<Record<string, s
     updateInstallerStarted: 'Opening the update installer.',
     androidUpdateInstallerStarted: 'Android opened the update installer. Confirm installation to finish.',
     androidInstallPermissionRequired: 'Allow app installs for Nutrino. The update will continue when you return.',
+    updateInstallConsentInfo: 'Nutrino does not install any external apps. Every app installation requires your confirmation. The software is open source, so you can review the source code yourself. This permission is used only to install Nutrino updates.',
+    connectionDetails: 'Connection details',
+    catalogSourceDetails: 'CSV source details',
     updateInstallerFailed: 'Could not start update installation',
     desktopApiConnection: 'Desktop API connection',
     desktopApiConnectionBody: 'Sync catalog data with the desktop LAN server.',
@@ -6926,6 +6936,9 @@ const mobileUpdateAndSourceTranslations: Record<string, Partial<Record<string, s
     updateInstallerStarted: 'Megnyitom a frissítés telepítőjét.',
     androidUpdateInstallerStarted: 'Az Android megnyitotta a frissítés telepítőjét. Erősítsd meg a telepítést.',
     androidInstallPermissionRequired: 'Engedélyezd a Nutrino apptelepítést. Visszatéréskor folytatódik a frissítés.',
+    updateInstallConsentInfo: 'A Nutrino nem telepít semmilyen külső alkalmazást. Minden apptelepítéshez felhasználói jóváhagyás szükséges. A szoftver open source, a forrást te is átnézheted. Ez az engedély kizárólag a Nutrino frissítéséhez szükséges.',
+    connectionDetails: 'Kapcsolat részletei',
+    catalogSourceDetails: 'CSV forrás részletei',
     updateInstallerFailed: 'Nem sikerült elindítani a frissítés telepítését',
     desktopApiConnection: 'Desktop API kapcsolat',
     desktopApiConnectionBody: 'Katalógusadatok szinkronizálása a desktop LAN szerverrel.',
@@ -7935,6 +7948,47 @@ async function openExternalUrl(url?: string) {
   }
 }
 
+function rememberPendingUpdateInstall(release = updateCheckResult.value?.release) {
+  if (!release) return;
+  localStorage.setItem(updatePendingInstallKey, JSON.stringify({
+    tag: release.tag,
+    version: release.version,
+    downloadUrl: release.downloadUrl || release.url,
+    assetName: release.assetName || `nutrino-${release.version}.apk`,
+    savedAt: Date.now(),
+  }));
+}
+
+function clearPendingUpdateInstall() {
+  localStorage.removeItem(updatePendingInstallKey);
+}
+
+async function resumePendingUpdateInstallFromPermission() {
+  if (!isAndroidRuntime() || updateBusy.value) return;
+  const androidInstaller = (window as any).NutrinoAndroidInstaller;
+  if (typeof androidInstaller?.canRequestPackageInstalls !== 'function' || typeof androidInstaller?.installUpdateApk !== 'function') return;
+  let pending: { downloadUrl?: string; assetName?: string; savedAt?: number } | null = null;
+  try {
+    pending = JSON.parse(localStorage.getItem(updatePendingInstallKey) || 'null');
+  } catch {
+    pending = null;
+  }
+  if (!pending?.downloadUrl || Date.now() - Number(pending.savedAt || 0) > 60 * 60 * 1000) {
+    clearPendingUpdateInstall();
+    return;
+  }
+  if (androidInstaller.canRequestPackageInstalls() !== true) {
+    updateDialogOpen.value = Boolean(updateCheckResult.value?.release);
+    return;
+  }
+  updateBusy.value = true;
+  try {
+    androidInstaller.installUpdateApk(pending.downloadUrl, pending.assetName || 'nutrino-update.apk');
+  } finally {
+    updateBusy.value = false;
+  }
+}
+
 async function installAvailableUpdate() {
   const release = updateCheckResult.value?.release;
   if (!release || updateBusy.value) return;
@@ -7943,6 +7997,7 @@ async function installAvailableUpdate() {
   try {
     const androidInstaller = (window as any).NutrinoAndroidInstaller;
     if (isAndroidRuntime() && typeof androidInstaller?.installUpdateApk === 'function' && /\.apk(?:$|[?#])/i.test(url)) {
+      rememberPendingUpdateInstall(release);
       androidInstaller.installUpdateApk(url, release.assetName || `nutrino-${release.version}.apk`);
       return;
     }
@@ -7957,6 +8012,7 @@ async function installAvailableUpdate() {
 }
 
 function remindUpdateLater() {
+  clearPendingUpdateInstall();
   const release = updateCheckResult.value?.release;
   if (release) {
     localStorage.setItem(updateRemindLaterKey, JSON.stringify({
@@ -7979,12 +8035,15 @@ function openUpdateCenter() {
 function handleAndroidUpdateInstallerEvent(event: Event) {
   const detail = (event as CustomEvent<{ status?: string; error?: string }>).detail || {};
   if (detail.status === 'permission-required') {
+    rememberPendingUpdateInstall();
     updateBusy.value = false;
     updateDialogOpen.value = true;
+    updateInstallInfoOpen.value = true;
     showToast(t('androidInstallPermissionRequired'));
     return;
   }
   if (detail.status === 'started') {
+    clearPendingUpdateInstall();
     updateBusy.value = false;
     updateDialogOpen.value = false;
     showToast(t('androidUpdateInstallerStarted'));
@@ -11486,7 +11545,7 @@ function setTab(tab: Tab) {
       <article class="card pairing-card source-settings-card">
         <label class="tracking-toggle-card"><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
         <details v-if="state.settings.desktop_api_enabled" class="source-details">
-          <summary><span>{{ t('apiSettings') }}</span><small>{{ t('sourceSettings') }}</small></summary>
+          <summary><span>{{ t('connectionDetails') }}</span><small>{{ t('apiSettings') }}</small></summary>
           <p class="helper" v-if="devMode">{{ t('devApiHint') }}</p>
           <p class="channel-chip">{{ t('appChannel') }}: {{ appChannel }}</p>
           <label class="field-label">{{ t('apiUrl') }}</label>
@@ -11506,7 +11565,7 @@ function setTab(tab: Tab) {
       <article class="card github-sync-card source-settings-card">
         <label class="tracking-toggle-card"><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
         <details v-if="state.settings.github_csv_enabled" class="source-details">
-          <summary><span>{{ t('githubCsvSources') }}</span><small>{{ t('sourceSettings') }}</small></summary>
+          <summary><span>{{ t('catalogSourceDetails') }}</span><small>{{ t('githubCsvSources') }}</small></summary>
           <p class="helper">{{ t('githubCsvSourcesBody') }}</p>
           <div class="github-source-form">
             <input v-model="githubDraft.owner" class="input" :placeholder="t('githubOwnerPlaceholder')" autocomplete="off" autocapitalize="none" />
@@ -11986,12 +12045,16 @@ function setTab(tab: Tab) {
         <article class="settings-dialog update-dialog">
           <div class="dialog-title-row">
             <h2>{{ updateReleaseTitle() }}</h2>
-            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="remindUpdateLater" v-html="lucideSvg('x')"></button>
+            <span class="dialog-title-actions">
+              <button class="info-button update-install-info-button" type="button" :aria-label="t('appUpdates')" @click="updateInstallInfoOpen = !updateInstallInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button>
+              <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="remindUpdateLater" v-html="lucideSvg('x')"></button>
+            </span>
           </div>
+          <p v-if="updateInstallInfoOpen" class="helper big update-install-note">{{ t('updateInstallConsentInfo') }}</p>
           <p class="helper big update-release-copy">{{ updateReleaseBody() }}<small v-if="updateReleaseAssetLabel()">{{ updateReleaseAssetLabel() }}</small></p>
-          <div class="dialog-actions">
-            <button class="text-button" type="button" @click="remindUpdateLater">{{ t('remindLater') }}</button>
-            <button class="filled-button" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('checkingUpdates') : t('installUpdate') }}</button>
+          <div class="dialog-actions app-update-dialog-actions">
+            <button class="filled-button wide" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('checkingUpdates') : t('installUpdate') }}</button>
+            <button class="text-button wide" type="button" @click="remindUpdateLater">{{ t('remindLater') }}</button>
           </div>
         </article>
       </div>
@@ -12054,7 +12117,8 @@ function setTab(tab: Tab) {
             <div class="dialog-actions"><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button class="filled-button" type="button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'updates'">
-            <div class="dialog-title-row"><h2>{{ t('appUpdates') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></div>
+            <div class="dialog-title-row"><h2>{{ t('appUpdates') }}</h2><span class="dialog-title-actions"><button class="info-button update-install-info-button" type="button" :aria-label="t('appUpdates')" @click="updateInstallInfoOpen = !updateInstallInfoOpen" v-html="lucideSvg('circleQuestionMark')"></button><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></span></div>
+            <p v-if="updateInstallInfoOpen" class="helper big update-install-note">{{ t('updateInstallConsentInfo') }}</p>
             <section class="app-update-settings-panel">
               <article class="app-update-status-card" :class="{ attention: updateAvailable, latest: updateCheckResult?.status === 'latest' }">
                 <span class="app-update-status-orb"></span>
@@ -12066,7 +12130,7 @@ function setTab(tab: Tab) {
               </article>
               <label class="tracking-toggle-card"><span><b>{{ t('includePrereleaseUpdates') }}</b><small>{{ t('includePrereleaseUpdatesHint') }}</small></span><input v-model="state.settings.check_prerelease_updates" type="checkbox" /></label>
             </section>
-            <div class="dialog-actions"><button v-if="updateAvailable" class="text-button" type="button" @click="remindUpdateLater">{{ t('remindLater') }}</button><button class="text-button" @click="settingsDialog = null">{{ t('ok') }}</button><button v-if="updateAvailable" class="filled-button" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('checkingUpdates') : t('installUpdate') }}</button><button v-else class="filled-button" type="button" :disabled="updateBusy" @click="checkForAppUpdates({ manual: true, ignoreRemindLater: true })">{{ updateBusy ? t('checkingUpdates') : t('checkUpdates') }}</button></div>
+            <div class="dialog-actions app-update-dialog-actions"><button v-if="updateAvailable" class="filled-button wide" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('checkingUpdates') : t('installUpdate') }}</button><button v-else class="filled-button wide" type="button" :disabled="updateBusy" @click="checkForAppUpdates({ manual: true, ignoreRemindLater: true })">{{ updateBusy ? t('checkingUpdates') : t('checkUpdates') }}</button><button v-if="updateAvailable" class="text-button wide" type="button" @click="remindUpdateLater">{{ t('remindLater') }}</button></div>
           </template>
           <template v-else-if="settingsDialog === 'units'"><h2>{{ t('units') }}</h2><button class="dialog-option" @click="state.settings.units = 'metric'; settingsDialog = null">{{ t('metric') }}</button><button class="dialog-option" @click="state.settings.units = 'imperial'; settingsDialog = null">{{ t('imperial') }}</button></template>
           <template v-else-if="settingsDialog === 'language'"><h2>{{ t('language') }}</h2><input v-model="languageSearch" class="input" type="search" :placeholder="t('languageSearch')" /><button v-for="language in filteredLanguageOptions" :key="language.code" class="dialog-option language-dialog-option" @click="setLanguage(language.code); settingsDialog = null"><span>{{ language.englishName }}</span><small>{{ language.nativeName }} · {{ language.code }}</small></button></template>
@@ -12264,9 +12328,9 @@ function setTab(tab: Tab) {
         <div v-else-if="onboardingStep === 1" class="onboarding-permissions">
           <h3>{{ t('syncPreferences') }}</h3>
           <p class="helper big">{{ t('syncPreferencesBody') }}</p>
-          <div class="permission-list compact">
-            <label class="tracking-toggle-card"><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
-            <label class="tracking-toggle-card"><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
+          <div class="source-choice-list">
+            <label class="source-choice-card"><span class="source-choice-icon" v-html="settingsIcon('api')"></span><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
+            <label class="source-choice-card"><span class="source-choice-icon" v-html="settingsIcon('github')"></span><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
           </div>
         </div>
         <div v-else class="onboarding-permissions">

@@ -3785,3 +3785,164 @@ select:focus {
   .appbar-update-chip { display: none; }
   .settings-section-label { padding-inline: 22px; }
 }
+
+/* v0.12.17 mobile update/settings readability polish */
+.dialog-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.update-install-note {
+  margin: -8px 0 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: color-mix(in srgb, #ffcc4d 22%, var(--surface-container));
+  color: var(--on-surface);
+  border: 1px solid color-mix(in srgb, #ffcc4d 48%, var(--outline-variant));
+  line-height: 1.45;
+}
+.update-install-info-button {
+  background: color-mix(in srgb, #ffcc4d 18%, var(--surface));
+  color: color-mix(in srgb, #7a5100 72%, var(--on-surface));
+  border-color: color-mix(in srgb, #ffcc4d 48%, var(--outline-variant));
+}
+.app-update-dialog-actions {
+  display: grid !important;
+  grid-template-columns: 1fr;
+  gap: 10px !important;
+  margin-top: 18px !important;
+}
+.app-update-dialog-actions > button,
+.update-dialog .dialog-actions > button {
+  width: 100%;
+  justify-content: center;
+}
+.update-dialog .update-release-copy {
+  margin-bottom: 0;
+}
+.app-logo-update-button.update-available::after {
+  width: 10px;
+  height: 10px;
+  top: 0;
+  right: 0;
+}
+.appbar-update-chip {
+  background: var(--surface-container-high);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+.update-settings-entry.attention {
+  width: calc(100% - 32px);
+  margin: 4px 16px;
+  padding: 12px;
+  min-height: 74px;
+  border-radius: 18px;
+  background: var(--surface-container-high);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+.dev-only-settings-row {
+  width: calc(100% - 32px);
+  margin: 4px 16px;
+  padding: 12px;
+  min-height: 74px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--secondary-container) 32%, var(--surface));
+}
+.update-settings-entry.attention small,
+.dev-only-settings-row small {
+  margin-top: -10px;
+}
+.settings-section-label {
+  padding: 18px 28px 8px;
+}
+.source-choice-list {
+  display: grid;
+  gap: 10px;
+}
+.source-choice-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--surface-container);
+  border: 1px solid var(--outline-variant);
+  color: var(--on-surface);
+}
+.source-choice-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--primary);
+}
+.source-choice-icon svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+}
+.source-choice-card b,
+.source-choice-card small {
+  display: block;
+}
+.source-choice-card b {
+  font-size: .96rem;
+  font-weight: 800;
+}
+.source-choice-card small {
+  margin-top: 3px;
+  color: var(--on-surface-variant);
+  font-size: .78rem;
+  line-height: 1.35;
+}
+.source-choice-card input[type='checkbox'] {
+  appearance: none;
+  width: 58px;
+  height: 32px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--on-surface-variant) 28%, transparent);
+  box-shadow: inset 0 0 0 2px var(--outline-variant);
+  position: relative;
+}
+.source-choice-card input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--outline);
+  transition: transform .18s ease, background-color .18s ease;
+}
+.source-choice-card input[type='checkbox']:checked {
+  background: var(--primary);
+  box-shadow: none;
+}
+.source-choice-card input[type='checkbox']:checked::after {
+  transform: translateX(26px);
+  background: var(--on-primary);
+}
+.source-details > summary {
+  background: var(--surface);
+}
+@media (max-width: 390px) {
+  .settings-section-label { padding: 16px 22px 8px; }
+  .update-settings-entry.attention,
+  .dev-only-settings-row {
+    width: calc(100% - 24px);
+    margin-inline: 12px;
+  }
+  .source-choice-card {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .source-choice-icon {
+    width: 38px;
+    height: 38px;
+  }
+}
