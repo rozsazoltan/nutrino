@@ -30,6 +30,7 @@ import {
   defaultState,
   needsWeightPrompt,
   saveState,
+  saveStateJson,
 } from './lib/storage';
 import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, syncGitHubCsvSources } from './lib/api';
 import { checkNutrinoUpdates, type UpdateCheckResult } from './lib/releases';
@@ -46,7 +47,7 @@ type LocalRecipeDraftItem = { food_id: string; amount_g: number; unit: 'g' | 'se
 type MealNoteSuggestion = { key: string; title: string; description: string; kcal: number; lastUsedAt: number; count: number };
 type HealthEditorMode = 'new' | 'recurrence' | 'duplicate' | 'edit';
 type HealthQuickTime = 'now' | 'minus10' | 'minus60' | 'custom';
-type HealthAnalysisRangeKey = '30' | '180' | '360' | 'all';
+type HealthAnalysisRangeKey = '30' | '180' | '360' | 'all' | 'custom';
 type BackupIncludeOptions = { catalog: boolean; foodDiary: boolean; healthDiary: boolean };
 
 type OptionalNutrientDefinition = {
@@ -211,6 +212,9 @@ const healthEditorId = ref<string | null>(null);
 const healthRecurrenceSourceId = ref<string | null>(null);
 const healthQuickTime = ref<HealthQuickTime>('now');
 const healthAnalysisRange = ref<HealthAnalysisRangeKey>('30');
+const healthCustomRangeOpen = ref(false);
+const healthCustomStartDate = ref('');
+const healthCustomEndDate = ref(dateKey());
 const healthSelectedEventId = ref<string | null>(null);
 const healthForm = reactive({
   title: '',
@@ -491,7 +495,54 @@ const mealIconSvg: Record<string, string> = {
   bakery_dining: lucideSvg('cookie'),
 };
 
-watch(state, () => saveState(JSON.parse(JSON.stringify(state)) as AppState), { deep: true });
+let pendingStateSaveTimer: number | undefined;
+let pendingStateSaveIdle: number | undefined;
+
+function runWhenIdle(callback: () => void, timeout = 1400) {
+  const idle = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number }).requestIdleCallback;
+  if (typeof idle === 'function') return idle(callback, { timeout });
+  return window.setTimeout(callback, 0);
+}
+
+function scheduleStateSave() {
+  if (pendingStateSaveTimer) window.clearTimeout(pendingStateSaveTimer);
+  if (pendingStateSaveIdle) {
+    const cancelIdle = (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback;
+    if (typeof cancelIdle === 'function') cancelIdle(pendingStateSaveIdle);
+    else window.clearTimeout(pendingStateSaveIdle);
+  }
+  pendingStateSaveTimer = window.setTimeout(() => {
+    pendingStateSaveIdle = runWhenIdle(() => {
+      try {
+        saveStateJson(JSON.stringify(state));
+      } catch (error) {
+        console.warn('Could not persist mobile state', error);
+      }
+    });
+  }, 850);
+}
+
+function flushStateSave() {
+  if (pendingStateSaveTimer) window.clearTimeout(pendingStateSaveTimer);
+  pendingStateSaveTimer = undefined;
+  try {
+    saveStateJson(JSON.stringify(state));
+  } catch (error) {
+    console.warn('Could not persist mobile state', error);
+  }
+}
+
+function yieldToUi(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+function waitForIdle(timeout = 1000): Promise<void> {
+  return new Promise((resolve) => {
+    runWhenIdle(resolve, timeout);
+  });
+}
+
+watch(state, scheduleStateSave, { deep: true });
 watch(() => state.settings.show_micronutrients, (enabled) => {
   if (enabled) return;
   if (settingsDialog.value === 'micronutrients') settingsDialog.value = null;
@@ -1049,6 +1100,8 @@ onMounted(() => {
   window.visualViewport?.addEventListener('resize', updateKeyboardOffset);
   window.visualViewport?.addEventListener('scroll', updateKeyboardOffset);
   window.addEventListener('scroll', updateContentScrolled, { passive: true });
+  window.addEventListener('pagehide', flushStateSave);
+  window.addEventListener('beforeunload', flushStateSave);
   document.addEventListener('focusin', scrollFocusedInputIntoView);
   document.addEventListener('visibilitychange', handleVisibilityChange);
   resetBackTrap();
@@ -1071,6 +1124,9 @@ onBeforeUnmount(() => {
   window.visualViewport?.removeEventListener('resize', updateKeyboardOffset);
   window.visualViewport?.removeEventListener('scroll', updateKeyboardOffset);
   window.removeEventListener('scroll', updateContentScrolled);
+  window.removeEventListener('pagehide', flushStateSave);
+  window.removeEventListener('beforeunload', flushStateSave);
+  flushStateSave();
   document.removeEventListener('focusin', scrollFocusedInputIntoView);
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('popstate', handleBackNavigation);
@@ -1564,16 +1620,22 @@ const reusableHealthEvents = computed(() => {
   }
   return [...byEvent.values()].sort((a, b) => b.occurred_at - a.occurred_at);
 });
-const healthAnalysisEntries = computed(() => filterHealthEntriesByRange(activeHealthEntries.value, healthAnalysisRange.value));
+const healthAnalysisEntries = computed(() => filterHealthEntriesByRange(activeHealthEntries.value, healthAnalysisRange.value, healthCustomStartDate.value, healthCustomEndDate.value));
 const healthAnalysisSummary = computed(() => buildHealthAnalysisSummary());
-const healthCategoryChartRows = computed(() => buildHealthCategoryChartRows());
-const healthRecurrenceChartRows = computed(() => buildHealthRecurrenceChartRows());
 const healthPeriodSummaryRows = computed(() => buildHealthPeriodSummaryRows());
-const healthEventFrequencyRows = computed(() => buildHealthEventFrequencyRows());
+const healthEventFrequencyRows = computed(() => buildHealthEventFrequencyRows(healthAnalysisEntries.value));
 const selectedHealthEventAnalysis = computed(() => {
   if (!healthEventFrequencyRows.value.length) return null;
   return healthEventFrequencyRows.value.find((row) => row.eventId === healthSelectedEventId.value) || healthEventFrequencyRows.value[0];
 });
+const selectedHealthEventEntries = computed(() => {
+  const eventId = selectedHealthEventAnalysis.value?.eventId;
+  if (!eventId) return [];
+  return healthAnalysisEntries.value.filter((entry) => entry.event_id === eventId).sort((a, b) => a.occurred_at - b.occurred_at);
+});
+const selectedHealthEventStats = computed(() => buildSelectedHealthEventStats());
+const healthCategoryChartRows = computed(() => buildHealthCategoryChartRows(selectedHealthEventEntries.value));
+const healthRecurrenceChartRows = computed(() => buildHealthRecurrenceChartRows());
 const healthSelectedEventTrendRows = computed(() => buildHealthSelectedEventTrendRows());
 const calendarCells = computed(() => buildCalendar(calendarMonth.value));
 
@@ -8643,11 +8705,8 @@ function removeHealthEntry(id: string) {
   state.healthEntries = state.healthEntries.map((entry) => entry.id === id ? { ...entry, deleted_at: now, updated_at: now } : entry);
 }
 
-async function addHealthAttachments(event: Event, type: 'photo' | 'video') {
-  const input = event.target as HTMLInputElement | null;
-  const files = Array.from(input?.files || []);
-  if (!files.length) return;
-  const loaded = await Promise.all(files.map((file) => new Promise<HealthAttachment>((resolve, reject) => {
+function readHealthAttachmentFile(file: File, type: 'photo' | 'video'): Promise<HealthAttachment> {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve({
       id: generateId('health-attachment'),
@@ -8660,7 +8719,18 @@ async function addHealthAttachments(event: Event, type: 'photo' | 'video') {
     });
     reader.onerror = () => reject(reader.error || new Error('Could not read file'));
     reader.readAsDataURL(file);
-  })));
+  });
+}
+
+async function addHealthAttachments(event: Event, type: 'photo' | 'video') {
+  const input = event.target as HTMLInputElement | null;
+  const files = Array.from(input?.files || []).slice(0, Math.max(0, 8 - healthForm.attachments.length));
+  if (!files.length) return;
+  const loaded: HealthAttachment[] = [];
+  for (const file of files) {
+    await yieldToUi();
+    loaded.push(await readHealthAttachmentFile(file, type));
+  }
   healthForm.attachments = [...healthForm.attachments, ...loaded].slice(0, 8);
   if (input) input.value = '';
 }
@@ -8682,7 +8752,24 @@ function healthRangeLabel(range: HealthAnalysisRangeKey) {
   return t(option?.labelKey || 'allTime');
 }
 
-function filterHealthEntriesByRange(entries: HealthEntry[], range: HealthAnalysisRangeKey) {
+function dateInputStartMs(value: string): number | null {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return null;
+  const ms = dayStartMs(trimmed);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function dateInputEndMs(value: string): number | null {
+  const start = dateInputStartMs(value);
+  return start === null ? null : start + 86400000 - 1;
+}
+
+function filterHealthEntriesByRange(entries: HealthEntry[], range: HealthAnalysisRangeKey, customStart = '', customEnd = '') {
+  if (range === 'custom') {
+    const start = dateInputStartMs(customStart);
+    const end = dateInputEndMs(customEnd || dateKey());
+    return entries.filter((entry) => (start === null || entry.occurred_at >= start) && (end === null || entry.occurred_at <= end));
+  }
   const days = healthRangeDays(range);
   if (!days) return [...entries];
   const start = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -8710,7 +8797,7 @@ function buildHealthAnalysisSummary() {
   for (const entry of entries) categoryCounts.set(entry.category, (categoryCounts.get(entry.category) || 0) + 1);
   const topCategory = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1])[0];
   const latest = latestHealthEntry(entries);
-  const topEvent = buildHealthEventFrequencyRows()[0] || null;
+  const topEvent = buildHealthEventFrequencyRows(entries)[0] || null;
   return {
     total: entries.length,
     recent: recent.length,
@@ -8755,14 +8842,14 @@ function buildHealthPeriodSummaryRows() {
   });
 }
 
-function buildHealthEventFrequencyRows() {
+function buildHealthEventFrequencyRows(entriesSource = healthAnalysisEntries.value) {
   const byEvent = new Map<string, HealthEntry[]>();
-  for (const entry of activeHealthEntries.value) {
+  for (const entry of entriesSource) {
     const rows = byEvent.get(entry.event_id) || [];
     rows.push(entry);
     byEvent.set(entry.event_id, rows);
   }
-  const total = Math.max(1, activeHealthEntries.value.length);
+  const total = Math.max(1, entriesSource.length);
   return [...byEvent.entries()]
     .map(([eventId, entries], index) => {
       const ordered = [...entries].sort((a, b) => a.occurred_at - b.occurred_at);
@@ -8836,7 +8923,37 @@ function healthIntervalText(row: { averageIntervalDays: number; previousAt: numb
 
 function openHealthAnalysisModal() {
   if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
+  if (!healthCustomEndDate.value) healthCustomEndDate.value = dateKey();
   healthAnalysisModalOpen.value = true;
+}
+
+function setHealthAnalysisRange(range: HealthAnalysisRangeKey) {
+  healthAnalysisRange.value = range;
+  healthCustomRangeOpen.value = range === 'custom';
+  if (range === 'custom' && !healthCustomEndDate.value) healthCustomEndDate.value = dateKey();
+}
+
+function buildSelectedHealthEventStats() {
+  const selected = selectedHealthEventAnalysis.value;
+  if (!selected) return null;
+  const allEntries = activeHealthEntries.value.filter((entry) => entry.event_id === selected.eventId).sort((a, b) => a.occurred_at - b.occurred_at);
+  const rangeEntries = selectedHealthEventEntries.value;
+  const intervals = allEntries.slice(1).map((entry, index) => Math.max(1, Math.round((entry.occurred_at - allEntries[index].occurred_at) / 86400000)));
+  const averageIntervalDays = intervals.length ? Math.round(intervals.reduce((sum, value) => sum + value, 0) / intervals.length) : 0;
+  const latest = allEntries.at(-1) || null;
+  const previous = allEntries.length > 1 ? allEntries.at(-2) || null : null;
+  const statusKey = allEntries.length <= 1 ? 'healthNewEvent' : averageIntervalDays > 30 ? 'healthNotFrequent' : 'healthRecurringSignal';
+  return {
+    title: selected.title,
+    categoryLabel: selected.categoryLabel,
+    countInRange: rangeEntries.length,
+    countAllTime: allEntries.length,
+    firstAt: allEntries[0]?.occurred_at || 0,
+    lastAt: latest?.occurred_at || 0,
+    previousAt: previous?.occurred_at || 0,
+    averageIntervalDays,
+    status: t(statusKey),
+  };
 }
 
 function buildHealthRecurrenceChartRows() {
@@ -8875,7 +8992,7 @@ function buildHealthSelectedEventTrendRows() {
     };
   });
   const byKey = new Map(months.map((row) => [row.key, row]));
-  for (const entry of activeHealthEntries.value.filter((item) => item.event_id === selected.eventId)) {
+  for (const entry of selectedHealthEventEntries.value) {
     const row = byKey.get(monthKeyForTimestamp(entry.occurred_at));
     if (row) row.count += 1;
   }
@@ -8889,6 +9006,11 @@ function healthInsightText() {
   if (!summary.total) return t('healthNoInsight');
   if (summary.recurringEvents > 0) return `${summary.recurringEvents} ${t('healthRecurringInsight')} ${summary.topCategory}.`;
   return `${summary.recent} ${t('healthRecentInsight')} ${summary.topCategory}.`;
+}
+
+function healthHomeSummaryText() {
+  return `${currentDayHealthEntries.value.length}
+${t('healthEventsShort')}`;
 }
 
 function buildHealthAiSummary() {
@@ -8952,7 +9074,10 @@ function buildHealthAiSummary() {
 
 async function exportHealthAiSummary() {
   if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
-  const content = JSON.stringify(buildHealthAiSummary(), null, 2);
+  await waitForIdle();
+  const summary = buildHealthAiSummary();
+  await yieldToUi();
+  const content = JSON.stringify(summary, null, 2);
   const filename = `nutrino-health-diary-ai-summary-${timestampForBackupName()}.json`;
   const bytes = new TextEncoder().encode(content);
   if (isTauriRuntime()) {
@@ -11396,7 +11521,11 @@ async function pruneBackupProfiles() {
 }
 
 async function createBackupProfile(reason = t('manualBackupProfile'), forcedKind?: BackupProfileKind): Promise<BackupProfileSummary> {
-  const snapshot = normalizeImportedState(JSON.parse(JSON.stringify(state)) as Partial<AppState>);
+  await waitForIdle();
+  const serializedState = JSON.stringify(state);
+  await yieldToUi();
+  const snapshot = normalizeImportedState(JSON.parse(serializedState) as Partial<AppState>);
+  await yieldToUi();
   const serialized = JSON.stringify(snapshot);
   const createdAt = Date.now();
   const kind = forcedKind ?? backupProfileKindFromReason(reason);
@@ -11598,6 +11727,7 @@ async function confirmBackupOptionsExport() {
 }
 
 async function buildMobileBackupZip(includeOptions = defaultBackupIncludeOptions()) {
+  await waitForIdle();
   const zip = new JSZip();
   const exportedAt = new Date().toISOString();
   const exportedState = stateForBackupIncludeOptions(includeOptions);
@@ -11610,9 +11740,13 @@ async function buildMobileBackupZip(includeOptions = defaultBackupIncludeOptions
     exportedAt,
     includedData: includeOptions,
   }, null, 2));
+  await yieldToUi();
   zip.file('mobile-app-data.json', JSON.stringify(exportedState, null, 2));
   zip.file('README.txt', `nutrino mobile app backup\nVersion: ${appVersion}\nExported at: ${exportedAt}\nIncluded data: ${backupIncludeSummary(includeOptions) || 'none'}\nThis ZIP was validated before export. If the exported file is 0 B, restore from Settings > Backup profiles.\n`);
-  const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+  await yieldToUi();
+  const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'STORE' }, (metadata) => {
+    if (metadata.percent && Math.round(metadata.percent) % 20 === 0) void yieldToUi();
+  });
   assertValidZipBytes(bytes);
   return bytes;
 }
@@ -12151,8 +12285,8 @@ function setTab(tab: Tab) {
       <article v-if="healthDiaryEnabled" class="card meal-card home-health-card">
         <div class="meal-header home-health-header">
           <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
-          <span><b>{{ t('healthDiary') }}</b><small>{{ currentDayHealthEntries.length ? healthInsightText() : t('noHealthEntries') }}</small></span>
-          <span class="section-summary-text">{{ currentDayHealthEntries.length }} {{ t('entries') }}</span>
+          <span><b>{{ t('healthDiary') }}</b><small>{{ t('purposeHealthLoggingHint') }}</small></span>
+          <span class="section-summary-text">{{ healthHomeSummaryText() }}</span>
           <button class="meal-micro-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthAnalysisModal" v-html="lucideSvg('chartPie')"></button>
           <button class="plus-button" type="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click="openNewHealthEntry">+</button>
         </div>
@@ -13335,7 +13469,7 @@ function setTab(tab: Tab) {
             <label class="source-choice-card source-choice-card-simple"><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
           </div>
         </div>
-        <div v-else class="onboarding-permissions">
+        <div v-else-if="onboardingStep === 3" class="onboarding-permissions">
           <h3>{{ t('onboardingPermissions') }}</h3>
           <p class="helper big">{{ t('onboardingPermissionsBody') }}</p>
           <div class="permission-list compact">
@@ -13365,28 +13499,37 @@ function setTab(tab: Tab) {
             <div><b>{{ t('healthClinicalContext') }}</b><small>{{ t('healthClinicalContextHint') }}</small></div>
           </section>
           <div class="health-summary-grid">
-            <div><span>{{ t('entries') }}</span><b>{{ currentDayHealthClinicalSummary.entries }}</b></div>
-            <div><span>{{ t('healthEventsShort') }}</span><b>{{ currentDayHealthClinicalSummary.uniqueEvents }}</b></div>
-            <div><span>{{ t('recurringEvents') }}</span><b>{{ currentDayHealthClinicalSummary.recurringToday }}</b></div>
-            <div><span>{{ t('attachments') }}</span><b>{{ currentDayHealthClinicalSummary.attachments }}</b></div>
+            <div><span>{{ t('entries') }}</span><b>{{ healthAnalysisEntries.length }}</b></div>
+            <div><span>{{ t('healthEventsShort') }}</span><b>{{ healthEventFrequencyRows.length }}</b></div>
+            <div><span>{{ t('recurringEvents') }}</span><b>{{ healthRecurrenceChartRows.length }}</b></div>
+            <div><span>{{ t('attachments') }}</span><b>{{ healthAnalysisEntries.reduce((sum, entry) => sum + entry.attachments.length, 0) }}</b></div>
           </div>
-          <div v-if="currentDayHealthAnalysisRows.length" class="health-frequency-panel">
-            <div class="health-frequency-head"><h3>{{ t('healthDayPatternAnalysis') }}</h3><small>{{ t('healthDayPatternHint') }}</small></div>
-            <div class="health-frequency-table health-frequency-table-clinical">
-              <button v-for="row in currentDayHealthAnalysisRows" :key="`clinical-day-${row.eventId}`" type="button" class="health-frequency-row" @click="healthSelectedEventId = row.eventId">
-                <span class="health-frequency-title"><b>{{ row.title }}</b><small>{{ row.categoryLabel }} · {{ row.status }}</small></span>
-                <span>{{ row.todayCount }}x</span>
-                <span>{{ row.totalCount }}x</span>
-                <span>{{ healthIntervalText(row) }}</span>
-              </button>
-            </div>
-          </div>
-          <p v-else class="empty-line">{{ t('noHealthEntries') }}</p>
           <div class="health-period-grid">
-            <button v-for="row in healthPeriodSummaryRows" :key="`health-modal-period-${row.key}`" type="button" class="health-period-card" :class="{ active: healthAnalysisRange === row.key }" @click="healthAnalysisRange = row.key">
+            <button v-for="row in healthPeriodSummaryRows" :key="`health-modal-period-${row.key}`" type="button" class="health-period-card" :class="{ active: healthAnalysisRange === row.key }" @click="setHealthAnalysisRange(row.key)">
               <span>{{ row.label }}</span><b>{{ row.entries }}</b><small>{{ row.events }} {{ t('healthEventsShort') }} · {{ row.recurring }} {{ t('recurringEvents') }}</small>
             </button>
           </div>
+          <section class="health-analysis-control-card">
+            <div class="health-frequency-head"><h3>{{ t('healthEventFrequency') }}</h3><small>{{ t('healthFrequencyColumns') }}</small></div>
+            <select v-if="healthEventFrequencyRows.length" v-model="healthSelectedEventId" class="input">
+              <option v-for="row in healthEventFrequencyRows" :key="`health-event-option-${row.eventId}`" :value="row.eventId">{{ row.title }} · {{ row.count }}x · {{ row.categoryLabel }}</option>
+            </select>
+            <p v-else class="empty-line">{{ t('noHealthEntries') }}</p>
+            <button class="outlined-button health-inline-icon-button" type="button" @click="setHealthAnalysisRange('custom')"><span v-html="lucideSvg('calendarRange')"></span>{{ t('customDateTime') }}</button>
+            <div v-if="healthCustomRangeOpen" class="health-custom-range-grid">
+              <label><span>{{ t('date') }}</span><input v-model="healthCustomStartDate" class="input" type="date" @input="healthAnalysisRange = 'custom'" /></label>
+              <label><span>{{ t('today') }}</span><input v-model="healthCustomEndDate" class="input" type="date" @input="healthAnalysisRange = 'custom'" /></label>
+            </div>
+          </section>
+          <section v-if="selectedHealthEventAnalysis && selectedHealthEventStats" class="health-event-focus-card">
+            <div class="health-frequency-head"><h3>{{ selectedHealthEventAnalysis.title }}</h3><small>{{ selectedHealthEventStats.categoryLabel }} · {{ selectedHealthEventStats.status }}</small></div>
+            <div class="health-summary-grid compact">
+              <div><span>{{ healthRangeLabel(healthAnalysisRange) }}</span><b>{{ selectedHealthEventStats.countInRange }}</b></div>
+              <div><span>{{ t('allTime') }}</span><b>{{ selectedHealthEventStats.countAllTime }}</b></div>
+              <div><span>{{ t('date') }}</span><b>{{ selectedHealthEventStats.lastAt ? formatDate(selectedHealthEventStats.lastAt) : '—' }}</b></div>
+              <div><span>{{ t('healthAverageInterval') }}</span><b>{{ selectedHealthEventStats.averageIntervalDays || '—' }}</b></div>
+            </div>
+          </section>
           <div v-if="healthCategoryChartRows.length" class="health-bar-list">
             <div v-for="row in healthCategoryChartRows" :key="`health-modal-category-${row.category}`" class="health-bar-row"><span class="health-bar-label"><i :style="{ background: row.color }"></i>{{ row.label }}</span><div class="health-bar-track"><span :style="{ width: `${row.percent}%`, background: row.color }"></span></div><b>{{ row.count }}</b></div>
           </div>

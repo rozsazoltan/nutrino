@@ -5230,3 +5230,140 @@ select:focus {
     display: none;
   }
 }
+
+/* v0.13.2 scroll-safe modal layout and health attachment spacing */
+.dialog-backdrop {
+  align-items: start !important;
+  place-items: start center !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  padding: calc(5rem + env(safe-area-inset-top)) max(14px, env(safe-area-inset-left)) calc(5rem + env(safe-area-inset-bottom) + var(--keyboard-offset)) max(14px, env(safe-area-inset-right)) !important;
+  background: color-mix(in srgb, #000 58%, transparent) !important;
+  backdrop-filter: blur(14px) saturate(1.05) !important;
+}
+.dialog-backdrop .settings-dialog,
+.dialog-backdrop .local-editor-dialog,
+.dialog-backdrop .scanner-dialog {
+  max-height: calc(100dvh - 10rem - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  margin: 0 auto !important;
+}
+.sheet-backdrop:has(.health-entry-sheet) {
+  align-items: start !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  padding: calc(5rem + env(safe-area-inset-top)) max(14px, env(safe-area-inset-left)) calc(5rem + env(safe-area-inset-bottom) + var(--keyboard-offset)) max(14px, env(safe-area-inset-right)) !important;
+  background: color-mix(in srgb, #000 58%, transparent) !important;
+  backdrop-filter: blur(14px) saturate(1.05) !important;
+}
+.sheet-backdrop:has(.health-entry-sheet) .health-entry-sheet {
+  width: min(100%, 560px) !important;
+  max-height: calc(100dvh - 10rem - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
+  margin: 0 auto !important;
+  border-radius: 28px !important;
+  overflow-y: auto !important;
+  padding: 12px 18px 18px !important;
+}
+.health-entry-sheet .field-label {
+  display: grid !important;
+  gap: 8px !important;
+  margin: 6px 0 0 !important;
+  color: var(--on-surface-variant);
+  font-size: .82rem;
+  font-weight: 900;
+}
+.health-entry-sheet .field-label .input,
+.health-entry-sheet .field-label select {
+  margin: 0 !important;
+}
+.health-entry-sheet .health-date-grid + .input,
+.health-entry-sheet .input + .note-textarea,
+.health-entry-sheet .note-textarea + .field-label,
+.health-entry-sheet .field-label + .note-textarea {
+  margin-top: 0 !important;
+}
+.health-attachment-actions {
+  gap: 12px !important;
+}
+.health-attachment-actions label,
+.health-file-button {
+  min-height: 52px !important;
+  padding: 0 16px !important;
+}
+.health-attachment-list {
+  gap: 12px !important;
+}
+.health-attachment-row {
+  grid-template-columns: 44px minmax(0, 1fr) 40px !important;
+  gap: 12px !important;
+  padding: 12px 14px !important;
+  border-radius: 18px !important;
+}
+.health-attachment-row > span {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 16px !important;
+}
+.health-attachment-row > div {
+  min-width: 0;
+}
+.health-attachment-row b,
+.health-attachment-row small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-attachment-row .entry-icon-button {
+  justify-self: end;
+}
+@media (max-width: 430px) {
+  .dialog-backdrop,
+  .sheet-backdrop:has(.health-entry-sheet) {
+    padding-top: calc(5rem + env(safe-area-inset-top)) !important;
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom) + var(--keyboard-offset)) !important;
+  }
+  .dialog-backdrop .settings-dialog,
+  .sheet-backdrop:has(.health-entry-sheet) .health-entry-sheet {
+    max-height: calc(100dvh - 10rem - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--keyboard-offset)) !important;
+  }
+}
+
+/* v0.13.4 structured health analysis and non-blocking health export polish */
+.health-analysis-control-card,
+.health-event-focus-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 55%, transparent);
+}
+.health-analysis-control-card .input {
+  margin: 0;
+}
+.health-custom-range-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.health-custom-range-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--on-surface-variant);
+  font-weight: 800;
+  font-size: .78rem;
+}
+.health-summary-grid.compact {
+  margin: 0;
+}
+.health-summary-grid.compact div {
+  min-height: 64px;
+}
+@media (max-width: 420px) {
+  .health-custom-range-grid {
+    grid-template-columns: 1fr;
+  }
+}

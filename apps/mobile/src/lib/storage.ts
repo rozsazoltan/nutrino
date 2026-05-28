@@ -271,6 +271,10 @@ export function saveState(state: AppState): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+export function saveStateJson(serializedState: string): void {
+  localStorage.setItem(STORAGE_KEY, serializedState);
+}
+
 export function generateId(prefix = 'id'): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return `${prefix}-${crypto.randomUUID()}`;
