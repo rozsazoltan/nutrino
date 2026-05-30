@@ -31,7 +31,7 @@ import {
   needsWeightPrompt,
   saveStateJson,
 } from './lib/storage';
-import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, listMobileHandoffRequests, mobileHandoffWebSocketUrl, respondMobileHandoffRequest, syncGitHubCsvSources } from './lib/api';
+import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, listMobileHandoffRequests, mobileHandoffWebSocketUrl, respondMobileHandoffRequest, uploadMobileHandoffResultChunk, syncGitHubCsvSources } from './lib/api';
 import { checkNutrinoUpdates, type UpdateCheckResult } from './lib/releases';
 import { lucideSvg, type IconName } from './icons';
 
@@ -105,6 +105,7 @@ type NutrinoNotificationEvent = {
   action?: string;
   userAction?: string;
   notificationUserAction?: string;
+  intentAction?: string;
   inputValue?: string | null;
   notificationId?: number | string;
   id?: number | string;
@@ -352,6 +353,7 @@ let desktopHandoffTimer: number | undefined;
 let desktopHandoffReconnectTimer: number | undefined;
 let desktopHandoffPingTimer: number | undefined;
 let desktopHandoffSocket: WebSocket | null = null;
+const MOBILE_HANDOFF_UPLOAD_CHUNK_BYTES = 384 * 1024;
 let reminderScheduleRefreshTimer: number | undefined;
 let notificationActionListener: PluginListener | null = null;
 let lastNotificationActionSignature = '';
@@ -11956,9 +11958,9 @@ async function initializeNotifications() {
 
 function normalizeNotificationAction(action: unknown): NutrinoNotificationAction {
   const value = String(action || 'tap');
-  return ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'open-health-review', 'open-desktop-handoff', 'desktop-handoff-allow', 'desktop-handoff-reject', 'desktop-handoff-use-backup', 'desktop-handoff-keep-backup', 'desktop-handoff-delete-backup', 'dismiss'].includes(value)
-    ? value as NutrinoNotificationAction
-    : 'tap';
+  const knownActions: NutrinoNotificationAction[] = ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'open-health-review', 'open-desktop-handoff', 'desktop-handoff-allow', 'desktop-handoff-reject', 'desktop-handoff-use-backup', 'desktop-handoff-keep-backup', 'desktop-handoff-delete-backup', 'dismiss'];
+  if (knownActions.includes(value as NutrinoNotificationAction)) return value as NutrinoNotificationAction;
+  return knownActions.find((known) => known !== 'tap' && value.includes(known)) ?? 'tap';
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -12003,6 +12005,8 @@ const notificationActionKeys = [
   'android.intent.extra.NOTIFICATION_ACTION',
   'tauriNotificationAction',
   'tauri_notification_action',
+  'intentAction',
+  'intent_action',
 ];
 
 const notificationSourceJsonKeys = [
@@ -12077,31 +12081,45 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
   if (action === 'dismiss') return;
   if (extra.kind === 'desktop-handoff' || action.startsWith('desktop-handoff') || action === 'open-desktop-handoff') {
     const explicitDesktopAction = action.startsWith('desktop-handoff') && action !== 'open-desktop-handoff';
-    const request = extra.desktopHandoffRequestId
+    let request = extra.desktopHandoffRequestId
       ? await findDesktopHandoffRequestForAction(extra.desktopHandoffRequestId)
-      : (await pollDesktopHandoffRequests(), null);
+      : null;
+    if (!request && !extra.desktopHandoffRequestId) {
+      await pollDesktopHandoffRequests();
+      const candidates = desktopHandoffRequests.value.filter((item) => {
+        if (action === 'desktop-handoff-allow') return item.kind === 'backup_export' || item.kind === 'ai_export';
+        if (['desktop-handoff-use-backup', 'desktop-handoff-keep-backup', 'desktop-handoff-delete-backup'].includes(action)) return item.kind === 'backup_import';
+        return true;
+      });
+      request = candidates.length === 1 ? candidates[0] : null;
+    }
     if (!request && extra.desktopHandoffRequestId) {
       removeDesktopHandoffRequestLocally(extra.desktopHandoffRequestId);
       if (explicitDesktopAction) return;
     }
     if (action === 'desktop-handoff-allow') {
       if (request) await approveDesktopExportRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
       return;
     }
     if (action === 'desktop-handoff-reject') {
       if (request) await rejectDesktopHandoffRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
       return;
     }
     if (action === 'desktop-handoff-use-backup') {
       if (request) await useDesktopBackupImportRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
       return;
     }
     if (action === 'desktop-handoff-keep-backup') {
       if (request) await keepDesktopBackupImportRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
       return;
     }
     if (action === 'desktop-handoff-delete-backup') {
       if (request) await deleteDesktopBackupImportRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
       return;
     }
     desktopHandoffNotificationsOpen.value = true;
@@ -12160,6 +12178,7 @@ function handleNotificationAction(payload: unknown) {
     ?? event.action
     ?? event.userAction
     ?? event.notificationUserAction
+    ?? event.intentAction
     ?? stringFromRecordKeys(eventExtras, notificationActionKeys)
     ?? sourceJson?.actionId
     ?? sourceJson?.action;
@@ -13859,6 +13878,35 @@ function textToBase64(text: string): string {
   return bytesToBase64(new TextEncoder().encode(text));
 }
 
+
+async function uploadDesktopHandoffResultFile(request: MobileHandoffRequest, bytes: Uint8Array, filename: string, mimeType: string, message: string) {
+  if (!bytes.length) throw new Error(t('invalidBackupFile'));
+  const totalChunks = Math.max(1, Math.ceil(bytes.length / MOBILE_HANDOFF_UPLOAD_CHUNK_BYTES));
+  let savedPath: string | null = null;
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+    const start = chunkIndex * MOBILE_HANDOFF_UPLOAD_CHUNK_BYTES;
+    const end = Math.min(bytes.length, start + MOBILE_HANDOFF_UPLOAD_CHUNK_BYTES);
+    const chunk = bytes.subarray(start, end);
+    const ack = await uploadMobileHandoffResultChunk(state, request.id, {
+      chunk_index: chunkIndex,
+      total_chunks: totalChunks,
+      total_size: bytes.length,
+      result_filename: filename,
+      result_mime_type: mimeType,
+      chunk_base64: bytesToBase64(chunk),
+    });
+    if (ack.saved_path) savedPath = ack.saved_path;
+    exportProgress.value = Math.max(12, Math.min(96, Math.round(12 + ((chunkIndex + 1) / totalChunks) * 82)));
+    await yieldToUi();
+  }
+  await finishDesktopHandoffRequest(request, 'completed', {
+    result_filename: filename,
+    result_mime_type: mimeType,
+    result_saved_path: savedPath,
+    message: savedPath ? `${message} ${savedPath}` : message,
+  });
+}
+
 function fallbackDownloadAppData(bytes: Uint8Array, filename = mobileBackupFileName()) {
   assertValidZipBytes(bytes);
   const blob = new Blob([bytesToArrayBuffer(bytes)], { type: 'application/zip' });
@@ -14349,7 +14397,7 @@ function handleDesktopHandoffResolvedEvent(event: Event) {
   removeDesktopHandoffRequestLocally(requestId);
 }
 
-async function finishDesktopHandoffRequest(request: MobileHandoffRequest, status: 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error', payload: { result_filename?: string; result_mime_type?: string; result_base64?: string; message?: string } = {}) {
+async function finishDesktopHandoffRequest(request: MobileHandoffRequest, status: 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error', payload: { result_filename?: string; result_mime_type?: string; result_base64?: string; result_saved_path?: string | null; message?: string } = {}) {
   await respondMobileHandoffRequest(state, request.id, { status, ...payload });
   emitDesktopHandoffResolvedEvent(request.id, status);
   removeDesktopHandoffRequestLocally(request.id);
@@ -14382,21 +14430,23 @@ async function approveDesktopExportRequest(request = activeDesktopHandoffRequest
       const endKey = typeof request.payload.endKey === 'string' ? request.payload.endKey : todayKey.value;
       const range = { startKey, endKey, startMs: dayStartMs(startKey), endMs: dayEndMs(endKey) };
       const markdown = buildAllDataAiMarkdown(range);
-      await finishDesktopHandoffRequest(request, 'completed', {
-        result_filename: `nutrino-mobile-ai-export-${startKey}-${endKey}.md`,
-        result_mime_type: 'text/markdown',
-        result_base64: textToBase64(markdown),
-        message: t('desktopHandoffExportSent'),
-      });
+      await uploadDesktopHandoffResultFile(
+        request,
+        new TextEncoder().encode(markdown),
+        `nutrino-mobile-ai-export-${startKey}-${endKey}.md`,
+        'text/markdown',
+        t('desktopHandoffExportSent'),
+      );
       showToast(t('desktopHandoffExportSent'));
     } else {
       const bytes = await buildMobileBackupZip(defaultBackupIncludeOptions());
-      await finishDesktopHandoffRequest(request, 'completed', {
-        result_filename: mobileBackupFileName(),
-        result_mime_type: 'application/zip',
-        result_base64: bytesToBase64(bytes),
-        message: t('desktopHandoffExportSent'),
-      });
+      await uploadDesktopHandoffResultFile(
+        request,
+        bytes,
+        mobileBackupFileName(),
+        'application/zip',
+        t('desktopHandoffExportSent'),
+      );
       showToast(t('desktopHandoffExportSent'));
     }
   } catch (error) {

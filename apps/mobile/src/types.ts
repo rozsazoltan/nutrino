@@ -258,6 +258,7 @@ export interface MobileHandoffRequest {
   result_filename?: string | null;
   result_mime_type?: string | null;
   result_base64?: string | null;
+  result_saved_path?: string | null;
   message?: string | null;
 }
 
@@ -266,7 +267,25 @@ export interface MobileHandoffResponseInput {
   result_filename?: string | null;
   result_mime_type?: string | null;
   result_base64?: string | null;
+  result_saved_path?: string | null;
   message?: string | null;
+}
+
+export interface MobileHandoffResultChunkInput {
+  chunk_index: number;
+  total_chunks: number;
+  chunk_base64: string;
+  total_size?: number | null;
+  result_filename: string;
+  result_mime_type?: string | null;
+}
+
+export interface MobileHandoffResultChunkAck {
+  accepted: boolean;
+  chunk_index: number;
+  received_bytes: number;
+  saved_path?: string | null;
+  server_time: number;
 }
 
 export interface ServerHealth {

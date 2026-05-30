@@ -20,8 +20,8 @@ const androidAppGradlePaths = [
   path.join(androidDir, 'app', 'build.gradle.kts'),
   path.join(androidDir, 'app', 'build.gradle'),
 ];
-const NATIVE_STATE_VERSION = 17;
-const NOTIFICATION_PLUGIN_OVERRIDE_VERSION = 3;
+const NATIVE_STATE_VERSION = 18;
+const NOTIFICATION_PLUGIN_OVERRIDE_VERSION = 4;
 const forceNativeClean = process.argv.includes('--force-native-clean')
   || process.env.NUTRINO_FORCE_ANDROID_NATIVE_CLEAN === '1';
 
@@ -1125,7 +1125,7 @@ class MainActivity : TauriActivity() {
             "android.intent.extra.NOTIFICATION_ACTION",
             "tauriNotificationAction",
             "tauri_notification_action"
-        )) ?: "tap"
+        )) ?: notificationActionFromIntentAction(intent.action) ?: "tap"
         val notificationJson = findFirstStringExtra(intent, listOf(
             "LocalNotficationObject",
             "LocalNotificationObject",
@@ -1141,6 +1141,7 @@ class MainActivity : TauriActivity() {
         val payload = JSONObject()
         if (notificationId != null) payload.put("notificationId", notificationId)
         payload.put("actionId", actionId)
+        if (!intent.action.isNullOrBlank()) payload.put("intentAction", intent.action)
         if (!notificationJson.isNullOrBlank()) {
             payload.put("sourceJson", notificationJson)
             try {
@@ -1150,6 +1151,29 @@ class MainActivity : TauriActivity() {
         }
         payload.put("extras", intentExtrasToJson(intent))
         return payload
+    }
+
+    private fun notificationActionFromIntentAction(action: String?): String? {
+        if (action.isNullOrBlank()) return null
+        val knownActions = listOf(
+            "open-home",
+            "log-weight",
+            "log-breakfast",
+            "log-lunch",
+            "log-dinner",
+            "open-analysis",
+            "open-health-review",
+            "open-desktop-handoff",
+            "desktop-handoff-allow",
+            "desktop-handoff-reject",
+            "desktop-handoff-use-backup",
+            "desktop-handoff-keep-backup",
+            "desktop-handoff-delete-backup",
+            "dismiss"
+        )
+        return knownActions.firstOrNull { known ->
+            action == known || action.endsWith(".$known") || action.endsWith(":$known") || action.contains(known)
+        }
     }
 
     private fun intentExtrasToJson(intent: Intent): JSONObject {

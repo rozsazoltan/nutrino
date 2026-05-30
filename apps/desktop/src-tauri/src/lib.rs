@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::File,
+    convert::Infallible,
+    fs::{File, OpenOptions},
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
@@ -25,12 +26,13 @@ use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tokio::sync::{broadcast, oneshot};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::{cors::{Any, CorsLayer}, limit::RequestBodyLimitLayer};
 use uuid::Uuid;
 
 const APP_NAME: &str = "Nutrino";
 const APP_VERSION: &str = env!("NUTRINO_APP_VERSION");
-const MOBILE_HANDOFF_RESPONSE_BODY_LIMIT: usize = 256 * 1024 * 1024;
+const MOBILE_HANDOFF_RESPONSE_BODY_LIMIT: usize = 512 * 1024 * 1024;
+const MOBILE_HANDOFF_CHUNK_BODY_LIMIT: usize = 8 * 1024 * 1024;
 
 struct ServerRuntime {
     port: u16,
@@ -150,6 +152,25 @@ struct MobileHandoffResponseInput {
     result_base64: Option<String>,
     result_saved_path: Option<String>,
     message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MobileHandoffResultChunkInput {
+    chunk_index: u32,
+    total_chunks: u32,
+    chunk_base64: String,
+    total_size: Option<u64>,
+    result_filename: String,
+    result_mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MobileHandoffResultChunkAck {
+    accepted: bool,
+    chunk_index: u32,
+    received_bytes: u64,
+    saved_path: Option<String>,
+    server_time: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -845,6 +866,144 @@ fn decode_mobile_export_base64(base64_text: &str) -> std::result::Result<Vec<u8>
 fn save_base64_file_to_default_download_dir_blocking(app: &tauri::AppHandle, db_path: &Path, filename: &str, base64_text: &str) -> std::result::Result<String, String> {
     let bytes = decode_mobile_export_base64(base64_text)?;
     save_bytes_to_default_download_dir_blocking(app, db_path, filename, &bytes)
+}
+
+
+fn part_path_for_download_path(path: &Path) -> PathBuf {
+    let mut file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("nutrino-mobile-export")
+        .to_string();
+    file_name.push_str(".part");
+    path.with_file_name(file_name)
+}
+
+fn append_mobile_handoff_result_chunk_blocking(
+    app: &tauri::AppHandle,
+    db_path: &Path,
+    request_id: &str,
+    device_id: &str,
+    payload: MobileHandoffResultChunkInput,
+) -> std::result::Result<MobileHandoffResultChunkAck, String> {
+    if payload.total_chunks == 0 {
+        return Err("Missing mobile export chunk count.".to_string());
+    }
+    if payload.chunk_index >= payload.total_chunks {
+        return Err("Mobile export chunk index is out of range.".to_string());
+    }
+
+    let bytes = decode_mobile_export_base64(&payload.chunk_base64)?;
+    if bytes.is_empty() {
+        return Err("Refusing to write an empty mobile export chunk.".to_string());
+    }
+
+    let conn = open_conn(db_path).map_err(|error| error.to_string())?;
+    expire_mobile_handoff_requests(&conn).map_err(|error| error.to_string())?;
+    let request = db_get_mobile_handoff_request(&conn, request_id).map_err(|error| error.to_string())?;
+    if request.device_id != device_id || request.status != "pending" {
+        return Err("Mobile handoff request is not pending for this device.".to_string());
+    }
+
+    let final_path = if payload.chunk_index == 0 {
+        let dir = configured_default_download_dir(app, db_path)?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("Could not create the default download directory: {error}"))?;
+        unique_download_path(&dir, &payload.result_filename)
+    } else {
+        request
+            .result_saved_path
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| "Mobile export chunk session is missing its target path.".to_string())?
+    };
+
+    let part_path = part_path_for_download_path(&final_path);
+    if payload.chunk_index == 0 {
+        if final_path.exists() {
+            return Err("Mobile export target file already exists.".to_string());
+        }
+        let _ = std::fs::remove_file(&part_path);
+        conn.execute(
+            r#"UPDATE mobile_handoff_requests
+               SET result_filename = ?1,
+                   result_mime_type = ?2,
+                   result_base64 = NULL,
+                   result_saved_path = ?3,
+                   message = ?4
+               WHERE id = ?5 AND device_id = ?6 AND status = 'pending'"#,
+            params![
+                payload.result_filename,
+                payload.result_mime_type,
+                final_path.to_string_lossy().to_string(),
+                "Receiving mobile export...",
+                request_id,
+                device_id,
+            ],
+        ).map_err(|error| error.to_string())?;
+    } else if !part_path.exists() {
+        return Err("Mobile export chunk session was not started.".to_string());
+    }
+
+    {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&part_path)
+            .map_err(|error| format!("Could not open mobile export part file: {error}"))?;
+        file.write_all(&bytes)
+            .map_err(|error| format!("Could not write mobile export chunk: {error}"))?;
+        file.flush()
+            .map_err(|error| format!("Could not flush mobile export chunk: {error}"))?;
+    }
+
+    let part_size = std::fs::metadata(&part_path)
+        .map_err(|error| format!("Could not verify mobile export part file: {error}"))?
+        .len();
+
+    let is_last_chunk = payload.chunk_index + 1 == payload.total_chunks;
+    let mut saved_path = None;
+    if is_last_chunk {
+        if let Some(expected_size) = payload.total_size {
+            if part_size != expected_size {
+                let _ = std::fs::remove_file(&part_path);
+                return Err(format!("Mobile export size mismatch: {part_size} / {expected_size} bytes."));
+            }
+        }
+        if part_size == 0 {
+            let _ = std::fs::remove_file(&part_path);
+            return Err("Mobile export file is empty.".to_string());
+        }
+        if final_path.exists() {
+            let _ = std::fs::remove_file(&part_path);
+            return Err("Mobile export target file already exists.".to_string());
+        }
+        std::fs::rename(&part_path, &final_path)
+            .map_err(|error| format!("Could not finalize mobile export file: {error}"))?;
+        let metadata = std::fs::metadata(&final_path)
+            .map_err(|error| format!("Could not verify finalized mobile export file: {error}"))?;
+        if metadata.len() == 0 {
+            let _ = std::fs::remove_file(&final_path);
+            return Err("Finalized mobile export file is empty.".to_string());
+        }
+        if let Some(expected_size) = payload.total_size {
+            if metadata.len() != expected_size {
+                let _ = std::fs::remove_file(&final_path);
+                return Err(format!("Finalized mobile export size mismatch: {} / {expected_size} bytes.", metadata.len()));
+            }
+        }
+        saved_path = Some(final_path.to_string_lossy().to_string());
+    }
+
+    Ok(MobileHandoffResultChunkAck {
+        accepted: true,
+        chunk_index: payload.chunk_index,
+        received_bytes: part_size,
+        saved_path,
+        server_time: now_ms(),
+    })
 }
 
 #[tauri::command]
@@ -1581,7 +1740,18 @@ async fn start_api_server_internal(port: u16, state: &AppState) -> Result<Server
         .route("/api/v1/sync/push", post(sync_push))
         .route("/api/v1/mobile/requests", get(mobile_handoff_requests))
         .route("/api/v1/mobile/requests/ws", get(mobile_handoff_ws))
-        .route("/api/v1/mobile/requests/{request_id}/response", post(mobile_handoff_response))
+        .route(
+            "/api/v1/mobile/requests/{request_id}/result-chunk",
+            post(mobile_handoff_result_chunk)
+                .layer::<_, Infallible>(DefaultBodyLimit::max(MOBILE_HANDOFF_CHUNK_BODY_LIMIT))
+                .layer(RequestBodyLimitLayer::new(MOBILE_HANDOFF_CHUNK_BODY_LIMIT)),
+        )
+        .route(
+            "/api/v1/mobile/requests/{request_id}/response",
+            post(mobile_handoff_response)
+                .layer::<_, Infallible>(DefaultBodyLimit::max(MOBILE_HANDOFF_RESPONSE_BODY_LIMIT))
+                .layer(RequestBodyLimitLayer::new(MOBILE_HANDOFF_RESPONSE_BODY_LIMIT)),
+        )
         .route("/api/v1/foods", get(api_list_foods).post(api_create_food))
         .route("/api/v1/ingredients", get(api_list_ingredients).post(api_create_ingredient))
         .route("/api/v1/recipes", get(api_list_recipes))
@@ -3508,6 +3678,33 @@ async fn mobile_handoff_ws_session(
     }
 
     let _ = state.app_handle.emit("nutrino-mobile-handoff-ws-closed", device_id);
+}
+
+async fn mobile_handoff_result_chunk(
+    AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    AxumPath(request_id): AxumPath<String>,
+    Json(payload): Json<MobileHandoffResultChunkInput>,
+) -> Result<Json<MobileHandoffResultChunkAck>, StatusCode> {
+    authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/mobile/requests/result-chunk");
+    let header_device_id = header_value(&headers, "x-nutrino-device-id").ok_or(StatusCode::BAD_REQUEST)?;
+    let app_handle = state.app_handle.clone();
+    let db_path = state.db_path.clone();
+    let request_id_for_task = request_id.clone();
+    let device_id_for_task = header_device_id.clone();
+    let ack = tauri::async_runtime::spawn_blocking(move || {
+        append_mobile_handoff_result_chunk_blocking(&app_handle, &db_path, &request_id_for_task, &device_id_for_task, payload)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|error| {
+        eprintln!("mobile handoff result chunk failed: {error}");
+        StatusCode::BAD_REQUEST
+    })?;
+    emit_mobile_handoff_event(&state.handoff_notifier, "request_updated", header_device_id, Some(request_id), None);
+    Ok(Json(ack))
 }
 
 async fn mobile_handoff_response(

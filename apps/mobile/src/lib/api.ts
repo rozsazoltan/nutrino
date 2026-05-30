@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult, DesktopUpdateCheckResponse, MobileHandoffRequest, MobileHandoffResponseInput } from '../types';
+import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult, DesktopUpdateCheckResponse, MobileHandoffRequest, MobileHandoffResponseInput, MobileHandoffResultChunkAck, MobileHandoffResultChunkInput } from '../types';
 import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeActivity, normalizeFood, normalizeIngredient, normalizeRecipe, resolveCatalogId } from './storage';
 
 const APP_CHANNEL = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
@@ -191,6 +191,16 @@ export async function listMobileHandoffRequests(state: AppState): Promise<Mobile
   const password = state.pairing.password ?? state.pairing.token ?? '';
   if (!baseUrl.trim()) return [];
   return await requestJson<MobileHandoffRequest[]>(baseUrl, password, '/mobile/requests');
+}
+
+export async function uploadMobileHandoffResultChunk(state: AppState, requestId: string, payload: MobileHandoffResultChunkInput): Promise<MobileHandoffResultChunkAck> {
+  const { baseUrl } = state.pairing;
+  const password = state.pairing.password ?? state.pairing.token ?? '';
+  if (!baseUrl.trim()) throw new Error('Missing API base URL.');
+  return await requestJson<MobileHandoffResultChunkAck>(baseUrl, password, `/mobile/requests/${encodeURIComponent(requestId)}/result-chunk`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function respondMobileHandoffRequest(state: AppState, requestId: string, payload: MobileHandoffResponseInput): Promise<void> {
