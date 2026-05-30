@@ -10240,6 +10240,7 @@ function resetAiExportRange() {
 function openAiExportDialog() {
   aiExportMode.value = 'local';
   desktopAiExportScopeRequest.value = null;
+  settingsDialog.value = null;
   resetAiExportRange();
   resetAiExportIncludeOptions();
   aiExportOptionsOpen.value = true;
@@ -10249,13 +10250,14 @@ function openDesktopAiExportScopeDialog(request: MobileHandoffRequest) {
   aiExportMode.value = 'desktop-handoff';
   desktopAiExportScopeRequest.value = request;
   activeDesktopHandoffRequest.value = request;
+  settingsDialog.value = null;
+  desktopHandoffNotificationsOpen.value = false;
   refreshTodayKey();
   const startKey = typeof request.payload.startKey === 'string' ? request.payload.startKey : dateKeyOffset(todayKey.value, -89);
   const endKey = typeof request.payload.endKey === 'string' ? request.payload.endKey : todayKey.value;
   aiExportStartDate.value = startKey;
   aiExportEndDate.value = endKey;
   resetAiExportIncludeOptions();
-  desktopHandoffNotificationsOpen.value = false;
   aiExportOptionsOpen.value = true;
 }
 
@@ -12196,8 +12198,12 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
       : null;
     if (!request && !extra.desktopHandoffRequestId) {
       await pollDesktopHandoffRequests();
+      const notificationKind = extra.desktopHandoffKind;
       const candidates = desktopHandoffRequests.value.filter((item) => {
-        if (action === 'desktop-handoff-allow') return item.kind === 'backup_export' || item.kind === 'ai_export';
+        if (action === 'desktop-handoff-allow') {
+          if (notificationKind === 'backup_export' || notificationKind === 'ai_export') return item.kind === notificationKind;
+          return item.kind === 'backup_export' || item.kind === 'ai_export';
+        }
         if (['desktop-handoff-use-backup', 'desktop-handoff-keep-backup', 'desktop-handoff-delete-backup'].includes(action)) return item.kind === 'backup_import';
         return true;
       });
@@ -14526,6 +14532,7 @@ function removeDesktopHandoffRequestLocally(requestId: string) {
   notifiedDesktopHandoffIds.delete(requestId);
   if (activeDesktopHandoffRequest.value?.id === requestId) activeDesktopHandoffRequest.value = null;
   if (desktopBackupExportScopeRequest.value?.id === requestId) closeBackupOptionsDialog();
+  if (desktopAiExportScopeRequest.value?.id === requestId) closeAiExportOptionsDialog();
   if (!desktopHandoffRequests.value.length) desktopHandoffNotificationsOpen.value = false;
 }
 
@@ -14630,12 +14637,16 @@ async function sendDesktopAiExportRequest(request: MobileHandoffRequest, range: 
 
 async function approveDesktopExportRequest(request = activeDesktopHandoffRequest.value) {
   if (!request || desktopHandoffBusy.value) return;
+  activeDesktopHandoffRequest.value = request;
   if (request.kind === 'backup_export') {
     openDesktopBackupExportScopeDialog(request);
+    await nextTick();
     return;
   }
   if (request.kind === 'ai_export') {
     openDesktopAiExportScopeDialog(request);
+    await nextTick();
+    return;
   }
 }
 
