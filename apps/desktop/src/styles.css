@@ -2393,3 +2393,60 @@ body:has(.modal-backdrop) {
     transform: scale(1.48);
   }
 }
+
+.connected-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.mobile-handoff-card small {
+  display: block;
+}
+
+.download-folder-row {
+  align-items: flex-start;
+  cursor: default;
+}
+.download-folder-row .mobile-setting-copy small:first-of-type {
+  word-break: break-all;
+}
+.download-folder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+@media (max-width: 720px) {
+  .download-folder-row {
+    grid-template-columns: auto 1fr;
+  }
+  .download-folder-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
+
+/* Mobile handoff request controls */
+.mobile-handoff-panel-actions,
+.mobile-handoff-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.btn-secondary.danger-lite {
+  color: var(--danger, #b42318);
+  border-color: color-mix(in srgb, var(--danger, #b42318) 28%, transparent);
+}
+
+.mobile-handoff-saved-path {
+  max-width: min(460px, 52vw);
+  display: block;
+  color: var(--muted, #64748b);
+  overflow-wrap: anywhere;
+  text-align: right;
+}

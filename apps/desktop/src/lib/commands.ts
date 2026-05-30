@@ -16,6 +16,7 @@ import type {
   SyncInboxCommitResult,
   CatalogDuplicateSuggestion,
   ConnectedDevice,
+  MobileHandoffRequest,
 } from '../types';
 
 export const commands = {
@@ -62,5 +63,12 @@ export const commands = {
   mergeCatalogItem: (kind: string, aliasId: string, canonicalId: string) => invoke<void>('merge_catalog_item', { kind, aliasId, canonicalId }),
   listCatalogDuplicateSuggestions: () => invoke<CatalogDuplicateSuggestion[]>('list_catalog_duplicate_suggestions'),
   listConnectedDevices: () => invoke<ConnectedDevice[]>('list_connected_devices'),
+  listMobileHandoffRequests: () => invoke<MobileHandoffRequest[]>('list_mobile_handoff_requests'),
+  requestMobileBackupExport: (deviceId: string) => invoke<MobileHandoffRequest>('request_mobile_backup_export', { deviceId }),
+  requestMobileAiExport: (deviceId: string) => invoke<MobileHandoffRequest>('request_mobile_ai_export', { deviceId }),
+  sendMobileBackupImport: (deviceId: string, filename: string, backupBase64: string) => invoke<MobileHandoffRequest>('send_mobile_backup_import', { deviceId, filename, backupBase64 }),
+  clearMobileHandoffHistory: () => invoke<number>('clear_mobile_handoff_history'),
+  getDefaultDownloadDir: () => invoke<string>('get_default_download_dir'),
+  saveFileToDefaultDownloadDir: (filename: string, bytes: number[]) => invoke<string>('save_file_to_default_download_dir', { filename, bytes }),
   downloadAndOpenUpdateInstaller: (url: string, assetName?: string) => invoke<string>('download_and_open_update_installer', { url, assetName }),
 };

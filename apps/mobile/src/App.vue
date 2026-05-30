@@ -9,7 +9,7 @@ import { cancel, createChannel, Importance, isPermissionGranted, onAction, regis
 import { driver, type DriveStep, type Driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
 import JSZip from 'jszip';
-import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, HealthAttachment, HealthCategoryType, HealthEntry, Ingredient, Intake, LocalizedNameMap, MealType, ProfilePurpose, Recipe, RecipeItem, WeightLog, GitHubCsvSource } from './types';
+import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, HealthAttachment, HealthCategoryType, HealthEntry, Ingredient, Intake, LocalizedNameMap, MealType, ProfilePurpose, Recipe, RecipeItem, WeightLog, GitHubCsvSource, MobileHandoffKind, MobileHandoffRequest } from './types';
 import {
   ageFromBirthday,
   bmi,
@@ -31,7 +31,7 @@ import {
   needsWeightPrompt,
   saveStateJson,
 } from './lib/storage';
-import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, syncGitHubCsvSources } from './lib/api';
+import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, listMobileHandoffRequests, mobileHandoffWebSocketUrl, respondMobileHandoffRequest, uploadMobileHandoffResultChunk, syncGitHubCsvSources } from './lib/api';
 import { checkNutrinoUpdates, type UpdateCheckResult } from './lib/releases';
 import { lucideSvg, type IconName } from './icons';
 
@@ -97,19 +97,21 @@ type HealthMediaGalleryItem = {
   occurrenceAt: number;
   sameOccurrenceDay: boolean;
 };
-type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'deficit' | 'health-review';
-type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-breakfast' | 'log-lunch' | 'log-dinner' | 'open-analysis' | 'open-health-review' | 'dismiss';
-type NutrinoNotificationExtra = { nutrino: true; kind: NutrinoNotificationKind; mealType?: MealType; scheduledTime?: string };
+type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'deficit' | 'health-review' | 'desktop-handoff';
+type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-breakfast' | 'log-lunch' | 'log-dinner' | 'open-analysis' | 'open-health-review' | 'open-desktop-handoff' | 'desktop-handoff-allow' | 'desktop-handoff-reject' | 'desktop-handoff-use-backup' | 'desktop-handoff-keep-backup' | 'desktop-handoff-delete-backup' | 'dismiss';
+type NutrinoNotificationExtra = { nutrino: true; kind: NutrinoNotificationKind; mealType?: MealType; scheduledTime?: string; desktopHandoffRequestId?: string; desktopHandoffKind?: MobileHandoffKind };
 type NutrinoNotificationEvent = {
   actionId?: string;
   action?: string;
   userAction?: string;
   notificationUserAction?: string;
+  intentAction?: string;
   inputValue?: string | null;
   notificationId?: number | string;
   id?: number | string;
   notification?: (NotificationOptions & { id?: number | string; extra?: Record<string, unknown>; data?: Record<string, unknown>; sourceJson?: string }) | null;
   extra?: Record<string, unknown>;
+  extras?: Record<string, unknown>;
   data?: Record<string, unknown>;
   sourceJson?: string;
 };
@@ -138,6 +140,8 @@ const NOTIFICATION_ACTION_TYPES = {
   mealDinner: 'nutrino-meal-dinner-actions',
   deficit: 'nutrino-deficit-actions',
   healthReview: 'nutrino-health-review-actions',
+  desktopHandoffDecision: 'nutrino-desktop-handoff-decision-actions',
+  desktopHandoffImport: 'nutrino-desktop-handoff-import-actions',
 } as const;
 const REMINDER_NOTIFICATION_IDS = {
   daily: 130100,
@@ -345,6 +349,11 @@ const duplicateMealTargetOpen = ref(false);
 const pendingDuplicateIntakeId = ref<string | null>(null);
 let entryLongPressTimer: number | undefined;
 let reminderTimer: number | undefined;
+let desktopHandoffTimer: number | undefined;
+let desktopHandoffReconnectTimer: number | undefined;
+let desktopHandoffPingTimer: number | undefined;
+let desktopHandoffSocket: WebSocket | null = null;
+const MOBILE_HANDOFF_UPLOAD_CHUNK_BYTES = 384 * 1024;
 let reminderScheduleRefreshTimer: number | undefined;
 let notificationActionListener: PluginListener | null = null;
 let lastNotificationActionSignature = '';
@@ -353,6 +362,14 @@ let onboardingDriver: Driver | null = null;
 const nativeReminderSchedulesActive = ref(false);
 const weightReminderModalOpen = ref(false);
 const notificationHighlightedMealType = ref<MealType | null>(null);
+const desktopHandoffRequests = ref<MobileHandoffRequest[]>([]);
+const activeDesktopHandoffRequest = ref<MobileHandoffRequest | null>(null);
+const desktopBackupExportScopeRequest = ref<MobileHandoffRequest | null>(null);
+const backupOptionsMode = ref<'local' | 'desktop-handoff'>('local');
+const desktopHandoffNotificationsOpen = ref(false);
+const desktopHandoffBusy = ref(false);
+const pendingDesktopHandoffNotificationCount = computed(() => desktopHandoffRequests.value.length);
+const notifiedDesktopHandoffIds = new Set<string>();
 
 const languageSearch = ref('');
 const unlockedDiaryDate = ref<string | null>(null);
@@ -885,6 +902,10 @@ function handleVisibilityChange() {
   if (!document.hidden) {
     refreshTodayKey();
     void resumePendingUpdateInstallFromPermission();
+    if (state.settings.desktop_api_enabled !== false) {
+      void pollDesktopHandoffRequests();
+      startDesktopHandoffRealtime();
+    }
   }
 }
 
@@ -1111,7 +1132,7 @@ function handleBackNavigation(event?: PopStateEvent) {
   }
 
   if (backupOptionsOpen.value) {
-    backupOptionsOpen.value = false;
+    closeBackupOptionsDialog();
     keepBackInsideApp();
     return;
   }
@@ -1374,12 +1395,16 @@ onMounted(() => {
   window.addEventListener('nutrino:android-back', handleNativeAndroidBack);
   window.addEventListener('nutrino:android-update-installer', handleAndroidUpdateInstallerEvent);
   window.addEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
+  window.addEventListener('nutrino:desktop-handoff-request-resolved', handleDesktopHandoffResolvedEvent as EventListener);
   (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = true;
   consumeNativePendingNotificationAction();
   void installWindowCloseGuard();
   void refreshAppPermissionStatuses();
   void initializeNotifications();
-  if (state.settings.desktop_api_enabled !== false) void pollServerHealth({ syncOnChange: true, quiet: true });
+  if (state.settings.desktop_api_enabled !== false) {
+    void pollServerHealth({ syncOnChange: true, quiet: true });
+    startDesktopHandoffPolling();
+  }
   healthTimer = window.setInterval(() => void pollServerHealth({ syncOnChange: true, quiet: true }), 30000);
   reminderTimer = window.setInterval(checkReminderNotifications, 60000);
   checkReminderNotifications();
@@ -1398,10 +1423,13 @@ onBeforeUnmount(() => {
   window.removeEventListener('nutrino:android-back', handleNativeAndroidBack);
   window.removeEventListener('nutrino:android-update-installer', handleAndroidUpdateInstallerEvent);
   window.removeEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
+  window.removeEventListener('nutrino:desktop-handoff-request-resolved', handleDesktopHandoffResolvedEvent as EventListener);
   (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = false;
   uninstallWindowCloseGuard();
   if (healthTimer) window.clearInterval(healthTimer);
   if (reminderTimer) window.clearInterval(reminderTimer);
+  if (desktopHandoffTimer) window.clearInterval(desktopHandoffTimer);
+  closeDesktopHandoffSocket();
   if (reminderScheduleRefreshTimer) window.clearTimeout(reminderScheduleRefreshTimer);
   void notificationActionListener?.unregister();
   onboardingDriver?.destroy();
@@ -7352,7 +7380,7 @@ const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, strin
     healthTitleRequired: 'Health entry title is required.', healthEntrySaved: 'Health entry saved.', healthEntryUpdated: 'Health entry updated.', searchHealthDiary: 'Search this day', healthSearchCurrentDay: 'Current day search', healthSearchHint: 'Searches title, description, category and notes only on the selected day.', noHealthEntries: 'No health entries for this day.', noHealthSearchResults: 'No matching health entries.', healthHomeHint: 'Today’s health notes',
     healthAnalysis: 'Health analysis', last30Days: 'Last 30 days', last180Days: 'Last 180 days', last360Days: 'Last 360 days', allTime: 'All time', recurringEvents: 'Recurring events', recurrenceChart: 'Recurrence chart', healthNoInsight: 'Add health entries to see recurring patterns.', healthRecurringInsight: 'recurring pattern(s), most often', healthRecentInsight: 'health note(s) in the last 30 days, most often',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready health summary exported.', selectedDayHealthNote: 'Health entries for the selected day are shown below.', none: 'none', healthDiaryTracking: 'Track health data', healthDiaryTrackingHint: 'Enable the separate health diary, symptom logging and health analysis.', healthDiaryDisabled: 'Health diary is disabled in Settings.', healthEventsShort: 'events', healthAnalysisWindow: 'Analysis window', healthEventFrequency: 'Event frequency', healthFrequencyColumns: '30 / 180 / 360 days / all', healthSelectedEventTrend: 'Monthly frequency for the selected event',
-    backupOptions: 'Backup contents', backupOptionsBody: 'Choose what should be included in this ZIP backup. Everything is selected by default.', backupIncludeCatalog: 'Activity + saved food items', backupIncludeCatalogHint: 'Local and synced foods, ingredients, recipes, activities and catalog sources.', backupIncludeFoodDiary: 'Food diary', backupIncludeFoodDiaryHint: 'Meal entries, activity logs and weight logs.', backupIncludeHealthDiary: 'Health diary', backupIncludeHealthDiaryHint: 'Health entries with recurrence links and attachments.', backupIncludeHealthMedia: 'Health attachments', backupIncludeHealthMediaHint: 'Photos and videos attached to health entries. Turn off for a smaller backup.', backupSelectAtLeastOne: 'Select at least one backup content group.', backupExportInProgress: 'Preparing export', backupPreparing: 'Preparing backup data...', backupPacking: 'Packing ZIP file...', backupPackingMedia: 'Packing health photos and videos...', backupOpeningPicker: 'Opening file picker...',
+    backupOptions: 'Backup contents', backupOptionsBody: 'Choose what should be included in this ZIP backup. Everything is selected by default.', backupIncludeCatalog: 'Activity + saved food items', backupIncludeCatalogHint: 'Local and synced foods, ingredients, recipes, activities and catalog sources.', backupIncludeFoodDiary: 'Food diary', backupIncludeFoodDiaryHint: 'Meal entries, activity logs and weight logs.', backupIncludeHealthDiary: 'Health diary', backupIncludeHealthDiaryHint: 'Health entries with recurrence links and attachments.', backupIncludeHealthMedia: 'Photos, videos and media', backupIncludeHealthMediaHint: 'Photos and videos attached to health entries. Turn off for a smaller backup.', backupIncludeHealthMediaWarning: 'Including photos and videos can drastically increase the backup size.', backupSelectAtLeastOne: 'Select at least one backup content group.', backupExportInProgress: 'Preparing export', backupPreparing: 'Preparing backup data...', backupPacking: 'Packing ZIP file...', backupPackingMedia: 'Packing health photos and videos...', backupOpeningPicker: 'Opening file picker...',
     appPurpose: 'App purpose', profilePurposeMissing: 'Choose at least one purpose.', selectAtLeastOnePurpose: 'Select at least one purpose.', onboardingPurposeIntro: 'What do you want to use Nutrino for? Select at least one option.',
     purposeWeightLoss: 'Weight loss', purposeWeightLossHint: 'Track a calorie deficit and progress.', purposeWeightGain: 'Weight gain', purposeWeightGainHint: 'Track enough intake and weight changes.', purposeHealthyEating: 'Healthy eating', purposeHealthyEatingHint: 'Focus on nutrients and balanced days.', purposeMealLogging: 'Meal logging', purposeMealLoggingHint: 'Keep a simple food diary.', purposeHealthLogging: 'Health issue logging', purposeHealthLoggingHint: 'Track symptoms and recurring signs.',
     healthAnalysisDayHint: 'Open analysis for the selected day, recurrence context and longer-term trends.', healthClinicalContext: 'Clinical context', healthClinicalContextHint: 'Focuses on recurrence, timing, attachments and category mix. Useful for preparing a concise doctor visit summary.', healthDayPatternAnalysis: 'Selected day patterns', healthDayPatternHint: 'Today / all-time count / average recurrence interval.', healthAverageInterval: 'avg every', healthRecurringSignal: 'recurring', healthNewEvent: 'new', healthNotFrequent: 'not frequent', healthClinicalDisclaimer: 'This summary is a structured diary view, not a diagnosis. Share severe, worsening or urgent symptoms with a clinician.', healthStillOngoing: 'Still ongoing', healthStillOngoingHint: 'Ask again tomorrow if this symptom has not resolved.', healthResolvedAt: 'Resolved at', healthNeedsReview: 'needs review', healthResolvedSameDay: 'same day', healthEntriesToReview: 'Health entries to review', healthEntriesToReviewHint: 'Confirm whether symptoms resolved or are still ongoing.', noHealthEntriesToReview: 'No health entries need review.', healthReviewReminderTitle: 'Health diary review', healthReviewReminderBody: 'Review unresolved health entries and symptom duration.', healthOngoing: 'Ongoing', healthAverageDuration: 'Avg duration', searchPreviousHealthEvents: 'Search previous health events', searchHealthEvents: 'Search health events', chooseHealthEvent: 'Choose event', healthNoPreviousEvents: 'No previous health events yet.', healthAttachmentStorageHint: 'Attachments are stored in local app data and can be included or omitted from ZIP backups.', healthAttachmentPreview: 'Preview attachment', healthAttachmentName: 'Attachment name', healthAttachmentMissingData: 'This backup does not contain the attachment file data.', healthAttachmentPreviewUnavailable: 'This photo format cannot be previewed on this device.', lastUsed: 'last used', ignore: 'Ignore', activityAnalysis: 'Activity analysis', activityAnalysisHint: 'Each day shows total active minutes and one pie chart split by activity type.', activityAnalysisRange: 'Activity analysis range', activeDays: 'Active days', activityTypeBreakdown: 'Minutes by activity type', minutesShort: 'min', healthCategoryDistribution: 'Category mix', healthTimingPattern: 'Time-of-day pattern', healthWeekdayPattern: 'Weekday pattern', healthDurationDistribution: 'Duration distribution', healthRecurrenceSignals: 'Recurrence signals', healthBusyDays: 'Days with most entries', healthNoAnalysisData: 'No health data in this period.', healthEntryDetails: 'Entry details', healthOccurrences: 'Occurrences', healthFirstSeen: 'First seen', healthLastSeen: 'Last seen', healthOccurrenceHistory: 'Occurrence history', healthEventDates: 'Dates', healthPatternHeatmap: 'Pattern heatmap', healthTimeMorning: 'Morning', healthTimeAfternoon: 'Afternoon', healthTimeEvening: 'Evening', healthTimeNight: 'Night', healthDurationSameDay: 'Same day', healthDurationTwoThreeDays: '2-3 days', healthDurationFourSevenDays: '4-7 days', healthDurationLong: '8+ days', healthDurationOngoing: 'Ongoing', healthCategoryPain: 'Pain', healthCategoryDigestive: 'Digestive', healthCategoryStool: 'Stool changes', healthCategorySkin: 'Skin', healthCategoryRespiratory: 'Respiratory', healthCategorySleep: 'Sleep', healthCategoryMood: 'Mood', healthCategoryInjury: 'Injury', healthCategoryEnergy: 'Energy', healthCategoryOther: 'Other',
@@ -7365,7 +7393,7 @@ const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, strin
     healthTitleRequired: 'Az egészségbejegyzés címe kötelező.', healthEntrySaved: 'Egészségbejegyzés mentve.', healthEntryUpdated: 'Egészségbejegyzés frissítve.', searchHealthDiary: 'Keresés ezen a napon', healthSearchCurrentDay: 'Keresés az aktuális napon', healthSearchHint: 'Csak a kiválasztott nap címeiben, leírásaiban, kategóriáiban és jegyzeteiben keres.', noHealthEntries: 'Nincs egészségbejegyzés erre a napra.', noHealthSearchResults: 'Nincs találat az egészségnaplóban.', healthHomeHint: 'Mai egészségjegyzetek',
     healthAnalysis: 'Egészség analízis', last30Days: 'Utolsó 30 nap', last180Days: 'Utolsó 180 nap', last360Days: 'Utolsó 360 nap', allTime: 'Összes idő', recurringEvents: 'Visszatérő események', recurrenceChart: 'Ismétlődés diagram', healthNoInsight: 'Adj hozzá egészségbejegyzéseket a visszatérő mintákhoz.', healthRecurringInsight: 'visszatérő minta, leggyakrabban', healthRecentInsight: 'egészségjegyzet az utolsó 30 napban, leggyakrabban',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready egészség összefoglaló exportálva.', selectedDayHealthNote: 'A kiválasztott nap egészségbejegyzései lent láthatók.', none: 'nincs', healthDiaryTracking: 'Egészségügyi adatok vezetése', healthDiaryTrackingHint: 'Külön egészségnapló, tünetrögzítés és egészség analízis bekapcsolása.', healthDiaryDisabled: 'Az egészségnapló ki van kapcsolva a beállításokban.', healthEventsShort: 'esemény', healthAnalysisWindow: 'Elemzési időszak', healthEventFrequency: 'Esemény gyakoriság', healthFrequencyColumns: '30 / 180 / 360 nap / összes', healthSelectedEventTrend: 'A kiválasztott esemény havi gyakorisága',
-    backupOptions: 'Backup tartalma', backupOptionsBody: 'Válaszd ki, mi kerüljön ebbe a ZIP mentésbe. Alapból minden be van pipálva.', backupIncludeCatalog: 'Aktivitás + étel mentett tételek', backupIncludeCatalogHint: 'Helyi és szinkronizált ételek, alapanyagok, receptek, aktivitások és katalógusforrások.', backupIncludeFoodDiary: 'Étel napló', backupIncludeFoodDiaryHint: 'Étkezések, aktivitásnaplók és súlynapló.', backupIncludeHealthDiary: 'Egészségügyi napló', backupIncludeHealthDiaryHint: 'Egészségbejegyzések ismétlődési kapcsolatokkal és csatolmányokkal.', backupIncludeHealthMedia: 'Egészségügyi csatolmányok', backupIncludeHealthMediaHint: 'Az egészségbejegyzésekhez csatolt fotók és videók. Kisebb backuphoz kapcsold ki.', backupSelectAtLeastOne: 'Legalább egy backup tartalmi csoportot válassz ki.', backupExportInProgress: 'Export készítése', backupPreparing: 'Backup adatok előkészítése...', backupPacking: 'ZIP fájl csomagolása...', backupPackingMedia: 'Egészségügyi fotók és videók csomagolása...', backupOpeningPicker: 'Fájlkezelő megnyitása...',
+    backupOptions: 'Backup tartalma', backupOptionsBody: 'Válaszd ki, mi kerüljön ebbe a ZIP mentésbe. Alapból minden be van pipálva.', backupIncludeCatalog: 'Aktivitás + étel mentett tételek', backupIncludeCatalogHint: 'Helyi és szinkronizált ételek, alapanyagok, receptek, aktivitások és katalógusforrások.', backupIncludeFoodDiary: 'Étel napló', backupIncludeFoodDiaryHint: 'Étkezések, aktivitásnaplók és súlynapló.', backupIncludeHealthDiary: 'Egészségügyi napló', backupIncludeHealthDiaryHint: 'Egészségbejegyzések ismétlődési kapcsolatokkal és csatolmányokkal.', backupIncludeHealthMedia: 'Fotó, videó és média', backupIncludeHealthMediaHint: 'Az egészségbejegyzésekhez csatolt fotók és videók. Kisebb backuphoz kapcsold ki.', backupIncludeHealthMediaWarning: 'A fotók és videók belerakása drasztikusan megnövelheti a backup méretét.', backupSelectAtLeastOne: 'Legalább egy backup tartalmi csoportot válassz ki.', backupExportInProgress: 'Export készítése', backupPreparing: 'Backup adatok előkészítése...', backupPacking: 'ZIP fájl csomagolása...', backupPackingMedia: 'Egészségügyi fotók és videók csomagolása...', backupOpeningPicker: 'Fájlkezelő megnyitása...',
     appPurpose: 'App használati cél', profilePurposeMissing: 'Válassz legalább egy célt.', selectAtLeastOnePurpose: 'Válassz legalább egy célt.', onboardingPurposeIntro: 'Mire szeretnéd használni a Nutrinót? Válassz legalább egy opciót.',
     purposeWeightLoss: 'Fogyás', purposeWeightLossHint: 'Deficit és haladás követése.', purposeWeightGain: 'Tömegnövelés', purposeWeightGainHint: 'Elég bevitel és súlyváltozás követése.', purposeHealthyEating: 'Egészséges étkezés', purposeHealthyEatingHint: 'Tápanyagok és kiegyensúlyozott napok.', purposeMealLogging: 'Étkezésnapló', purposeMealLoggingHint: 'Egyszerű ételnapló vezetése.', purposeHealthLogging: 'Egészségprobléma naplózás', purposeHealthLoggingHint: 'Tünetek és visszatérő jelek követése.',
     healthAnalysisDayHint: 'Elemzés megnyitása a kiválasztott naphoz, ismétlődési kontextussal és hosszabb távú trendekkel.', healthClinicalContext: 'Klinikai kontextus', healthClinicalContextHint: 'Ismétlődésre, időzítésre, csatolmányokra és kategória-eloszlásra fókuszál. Orvosi konzultáció előkészítéséhez hasznos.', healthDayPatternAnalysis: 'Kiválasztott napi minták', healthDayPatternHint: 'Mai / összes előfordulás / átlagos ismétlődési távolság.', healthAverageInterval: 'átlagosan ennyi naponta:', healthRecurringSignal: 'visszatérő', healthNewEvent: 'új', healthNotFrequent: 'nem gyakori', healthClinicalDisclaimer: 'Ez strukturált naplóösszefoglaló, nem diagnózis. Súlyosbodó, erős vagy sürgős tünettel fordulj orvoshoz.', healthStillOngoing: 'Még nem múlt el', healthStillOngoingHint: 'Ha még tart, holnap újra rákérdez az app.', healthResolvedAt: 'Elmúlt ekkor', healthNeedsReview: 'átnézendő', healthResolvedSameDay: 'azonos nap', healthEntriesToReview: 'Átnézendő egészségügyi bejegyzések', healthEntriesToReviewHint: 'Jelöld, hogy elmúlt-e a tünet, vagy még tart.', noHealthEntriesToReview: 'Nincs átnézendő egészségügyi bejegyzés.', healthReviewReminderTitle: 'Egészségnapló átnézés', healthReviewReminderBody: 'Nézd át a nyitott egészségbejegyzéseket és a tünetek időtartamát.', healthOngoing: 'Még tart', healthAverageDuration: 'Átlag időtartam', searchPreviousHealthEvents: 'Korábbi egészségesemények keresése', searchHealthEvents: 'Egészségesemény keresése', chooseHealthEvent: 'Esemény választása', healthNoPreviousEvents: 'Még nincs korábbi egészségesemény.', healthAttachmentStorageHint: 'A csatolmányok helyi appadatként vannak tárolva, és ZIP backupba betehetők vagy kihagyhatók.', healthAttachmentPreview: 'Csatolmány megtekintése', healthAttachmentName: 'Csatolmány neve', healthAttachmentMissingData: 'Ez a backup nem tartalmazza a csatolmány fájladatát.', healthAttachmentPreviewUnavailable: 'Ezt a fotóformátumot ezen az eszközön nem lehet előnézetben megjeleníteni.', lastUsed: 'utoljára', ignore: 'Figyelmen kívül hagyás', activityAnalysis: 'Aktivitás analízis', activityAnalysisHint: 'Minden napnál látszik az aktív perc összesen, és egy kördiagram típusok szerinti percmegosztással.', activityAnalysisRange: 'Aktivitás elemzési időszak', activeDays: 'Aktív napok', activityTypeBreakdown: 'Percek aktivitástípus szerint', minutesShort: 'perc', healthCategoryDistribution: 'Kategória-megoszlás', healthTimingPattern: 'Napszak szerinti minta', healthWeekdayPattern: 'Heti minta', healthDurationDistribution: 'Időtartam-megoszlás', healthRecurrenceSignals: 'Ismétlődési jelek', healthBusyDays: 'Legtöbb bejegyzéses napok', healthNoAnalysisData: 'Nincs egészségadat ebben az időszakban.', healthEntryDetails: 'Bejegyzés részletei', healthOccurrences: 'Előfordulások', healthFirstSeen: 'Első alkalom', healthLastSeen: 'Utolsó alkalom', healthOccurrenceHistory: 'Előfordulási előzmények', healthEventDates: 'Dátumok', healthPatternHeatmap: 'Mintázat hőtérkép', healthTimeMorning: 'Reggel', healthTimeAfternoon: 'Délután', healthTimeEvening: 'Este', healthTimeNight: 'Éjszaka', healthDurationSameDay: 'Azonos nap', healthDurationTwoThreeDays: '2-3 nap', healthDurationFourSevenDays: '4-7 nap', healthDurationLong: '8+ nap', healthDurationOngoing: 'Még tart', healthCategoryPain: 'Fájdalom', healthCategoryDigestive: 'Emésztés', healthCategoryStool: 'Székletváltozás', healthCategorySkin: 'Bőr', healthCategoryRespiratory: 'Légzés', healthCategorySleep: 'Alvás', healthCategoryMood: 'Hangulat', healthCategoryInjury: 'Sérülés', healthCategoryEnergy: 'Energia', healthCategoryOther: 'Egyéb',
@@ -7432,6 +7460,74 @@ for (const language of Object.keys(translations)) {
     ...translations.en,
     ...(translations[language] || {}),
     ...normalizeTranslationValues(aiExportAndMediaTranslations[language] || {}),
+  };
+}
+
+const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>> = {
+  en: {
+    desktopHandoffRequestTitle: 'Desktop request',
+    desktopHandoffRequestBody: '{desktop} sent a data request.',
+    desktopHandoffNotifications: 'Notifications',
+    desktopHandoffNotificationsBody: 'Desktop requests that need your approval.',
+    desktopHandoffNoNotifications: 'No desktop requests waiting for review.',
+    desktopHandoffNotificationBadge: '{count} pending desktop requests',
+    desktopBackupExportRequestTitle: 'Backup export request',
+    desktopBackupExportRequestBody: '{desktop} wants to receive a mobile backup export. Allow data transfer?',
+    desktopAiExportRequestTitle: 'AI export request',
+    desktopAiExportRequestBody: '{desktop} wants to receive an AI Markdown export. Allow data transfer?',
+    desktopBackupImportRequestTitle: 'New backup from desktop',
+    desktopBackupImportRequestBody: '{desktop} sent a new backup ({filename}). Use it, keep it as a local restore point, or delete it?',
+    desktopHandoffAllow: 'Allow',
+    desktopHandoffYes: 'Yes',
+    desktopHandoffNo: 'No',
+    desktopHandoffReject: 'Reject',
+    desktopHandoffUseBackup: 'Use backup',
+    desktopHandoffKeepBackup: 'Keep backup',
+    desktopHandoffDeleteBackup: 'Delete',
+    desktopHandoffRejected: 'Desktop request rejected.',
+    desktopHandoffExportSent: 'Export sent to desktop.',
+    desktopBackupExportScopeTitle: 'Choose backup data',
+    desktopBackupExportScopeBody: 'The desktop request is approved. Choose which data groups should be included before sending the backup.',
+    desktopBackupExportSendSelected: 'Send selected data',
+    desktopBackupImportUsed: 'Desktop backup applied.',
+    desktopBackupImportKept: 'Desktop backup kept as a local restore point.',
+    desktopBackupImportDeleted: 'Desktop backup deleted.',
+  },
+  hu: {
+    desktopHandoffRequestTitle: 'Desktop kérés',
+    desktopHandoffRequestBody: '{desktop} adatkezelési kérést küldött.',
+    desktopHandoffNotifications: 'Értesítések',
+    desktopHandoffNotificationsBody: 'Jóváhagyásra váró desktop kérések.',
+    desktopHandoffNoNotifications: 'Nincs átnézendő desktop kérés.',
+    desktopHandoffNotificationBadge: '{count} függőben lévő desktop kérés',
+    desktopBackupExportRequestTitle: 'Backup export kérés',
+    desktopBackupExportRequestBody: '{desktop} mobil backup exportot szeretne kapni. Engedélyezed az adattovábbítást?',
+    desktopAiExportRequestTitle: 'AI export kérés',
+    desktopAiExportRequestBody: '{desktop} AI Markdown exportot szeretne kapni. Engedélyezed az adattovábbítást?',
+    desktopBackupImportRequestTitle: 'Új backup érkezett desktopról',
+    desktopBackupImportRequestBody: '{desktop} új backupot küldött ({filename}). Használod, megtartod helyi visszaállítási pontként, vagy törlöd?',
+    desktopHandoffAllow: 'Engedélyezés',
+    desktopHandoffYes: 'Igen',
+    desktopHandoffNo: 'Nem',
+    desktopHandoffReject: 'Elutasítás',
+    desktopHandoffUseBackup: 'Használom',
+    desktopHandoffKeepBackup: 'Megtartom',
+    desktopHandoffDeleteBackup: 'Törlés',
+    desktopHandoffRejected: 'Desktop kérés elutasítva.',
+    desktopHandoffExportSent: 'Export elküldve a desktopnak.',
+    desktopBackupExportScopeTitle: 'Backup adatok kiválasztása',
+    desktopBackupExportScopeBody: 'A desktop kérés engedélyezve lett. Válaszd ki, milyen adatcsoportok kerüljenek a backupba, mielőtt elküldöd.',
+    desktopBackupExportSendSelected: 'Kijelölt adatok küldése',
+    desktopBackupImportUsed: 'Desktop backup alkalmazva.',
+    desktopBackupImportKept: 'Desktop backup megtartva helyi visszaállítási pontként.',
+    desktopBackupImportDeleted: 'Desktop backup törölve.',
+  },
+};
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...normalizeTranslationValues(desktopHandoffTranslations[language] || {}),
   };
 }
 
@@ -7659,10 +7755,21 @@ watch(() => state.settings.health_diary_enabled, (enabled) => {
 watch(() => state.settings.desktop_api_enabled, (enabled) => {
   if (enabled) {
     void pollServerHealth({ syncOnChange: true, quiet: true });
+    startDesktopHandoffPolling();
     return;
   }
+  if (desktopHandoffTimer) window.clearInterval(desktopHandoffTimer);
+  desktopHandoffTimer = undefined;
+  closeDesktopHandoffSocket();
+  desktopHandoffRequests.value = [];
+  activeDesktopHandoffRequest.value = null;
+  desktopHandoffNotificationsOpen.value = false;
   serverOnline.value = false;
   state.pairing.lastSyncError = undefined;
+});
+watch(() => `${state.pairing.baseUrl}|${state.pairing.password || ''}|${state.pairing.token || ''}`, () => {
+  closeDesktopHandoffSocket();
+  if (state.settings.desktop_api_enabled !== false) startDesktopHandoffPolling();
 });
 watch(() => state.settings.github_csv_enabled, (enabled) => {
   if (enabled) void syncGitHubDailyIfDue();
@@ -11506,6 +11613,8 @@ function buildNotificationOptions(options: {
   actionTypeId?: string;
   mealType?: MealType;
   scheduledTime?: string;
+  desktopHandoffRequestId?: string;
+  desktopHandoffKind?: MobileHandoffKind;
   schedule?: Schedule;
 }): NotificationOptions {
   const notification: NotificationOptions = {
@@ -11528,6 +11637,8 @@ function buildNotificationOptions(options: {
       kind: options.kind,
       mealType: options.mealType,
       scheduledTime: options.scheduledTime,
+      desktopHandoffRequestId: options.desktopHandoffRequestId,
+      desktopHandoffKind: options.desktopHandoffKind,
       ...actionMetadata,
     } satisfies NutrinoNotificationExtra & { actionId?: NutrinoNotificationAction; actionTitle?: string };
   }
@@ -11543,6 +11654,8 @@ async function notifyUser(title: string, body: string, options: {
   actionTypeId?: string;
   mealType?: MealType;
   scheduledTime?: string;
+  desktopHandoffRequestId?: string;
+  desktopHandoffKind?: MobileHandoffKind;
 } = {}) {
   try {
     if (await isPermissionGranted()) {
@@ -11604,6 +11717,7 @@ function notificationActionMetadata(kind?: NutrinoNotificationKind, mealType?: M
   if (kind === 'meal' && mealType) return { actionId: mealNotificationActionId(mealType), actionTitle: mealNotificationActionLabel(mealType) };
   if (kind === 'deficit') return { actionId: 'open-analysis', actionTitle: notificationActionTitle('openAnalysis', 'Open analysis') };
   if (kind === 'health-review') return { actionId: 'open-health-review', actionTitle: healthReviewNotificationActionLabel() };
+  if (kind === 'desktop-handoff') return { actionId: 'open-desktop-handoff', actionTitle: t('desktopHandoffNotifications') };
   return {};
 }
 
@@ -11644,6 +11758,21 @@ async function registerNotificationActionTypes() {
       id: NOTIFICATION_ACTION_TYPES.healthReview,
       actions: [
         { id: 'open-health-review', title: healthReviewNotificationActionLabel(), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.desktopHandoffDecision,
+      actions: [
+        { id: 'desktop-handoff-allow', title: t('desktopHandoffYes'), requiresAuthentication: false, foreground: true },
+        { id: 'desktop-handoff-reject', title: t('desktopHandoffNo'), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.desktopHandoffImport,
+      actions: [
+        { id: 'desktop-handoff-use-backup', title: t('desktopHandoffUseBackup'), requiresAuthentication: false, foreground: true },
+        { id: 'desktop-handoff-keep-backup', title: t('desktopHandoffKeepBackup'), requiresAuthentication: false, foreground: true },
+        { id: 'desktop-handoff-delete-backup', title: t('desktopHandoffDeleteBackup'), requiresAuthentication: false, foreground: true },
       ],
     },
   ]);
@@ -11837,9 +11966,9 @@ async function initializeNotifications() {
 
 function normalizeNotificationAction(action: unknown): NutrinoNotificationAction {
   const value = String(action || 'tap');
-  return ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'open-health-review', 'dismiss'].includes(value)
-    ? value as NutrinoNotificationAction
-    : 'tap';
+  const knownActions: NutrinoNotificationAction[] = ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'open-health-review', 'open-desktop-handoff', 'desktop-handoff-allow', 'desktop-handoff-reject', 'desktop-handoff-use-backup', 'desktop-handoff-keep-backup', 'desktop-handoff-delete-backup', 'dismiss'];
+  if (knownActions.includes(value as NutrinoNotificationAction)) return value as NutrinoNotificationAction;
+  return knownActions.find((known) => known !== 'tap' && value.includes(known)) ?? 'tap';
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -11864,6 +11993,41 @@ function parseNotificationJson(value: unknown): Record<string, unknown> | null {
   }
 }
 
+function stringFromRecordKeys(record: Record<string, unknown> | null | undefined, keys: string[]): string | undefined {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  }
+  return undefined;
+}
+
+const notificationActionKeys = [
+  'NotificationUserAction',
+  'notificationUserAction',
+  'notification_user_action',
+  'actionId',
+  'action_id',
+  'action',
+  'android.intent.extra.NOTIFICATION_ACTION',
+  'tauriNotificationAction',
+  'tauri_notification_action',
+  'intentAction',
+  'intent_action',
+];
+
+const notificationSourceJsonKeys = [
+  'LocalNotficationObject',
+  'LocalNotificationObject',
+  'localNotificationObject',
+  'notification',
+  'notificationJson',
+  'notification_json',
+  'sourceJson',
+  'source_json',
+];
+
 function normalizeNotificationExtra(extra: unknown): Partial<NutrinoNotificationExtra> {
   const record = asRecord(extra);
   if (!record) return {};
@@ -11877,9 +12041,11 @@ function normalizeNotificationExtra(extra: unknown): Partial<NutrinoNotification
   };
   const result: Partial<NutrinoNotificationExtra> = {};
   if (merged.nutrino === true) result.nutrino = true;
-  if (['daily', 'weight', 'meal', 'deficit', 'health-review'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
+  if (['daily', 'weight', 'meal', 'deficit', 'health-review', 'desktop-handoff'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
   if (['breakfast', 'lunch', 'dinner', 'snack'].includes(String(merged.mealType))) result.mealType = merged.mealType as MealType;
   if (typeof merged.scheduledTime === 'string') result.scheduledTime = merged.scheduledTime;
+  if (typeof merged.desktopHandoffRequestId === 'string') result.desktopHandoffRequestId = merged.desktopHandoffRequestId;
+  if (typeof merged.desktopHandoffKind === 'string') result.desktopHandoffKind = merged.desktopHandoffKind as MobileHandoffKind;
   return result;
 }
 
@@ -11907,7 +12073,9 @@ function closeTransientSurfacesForNotificationAction() {
   settingsDialog.value = null;
   quickAddOpen.value = false;
   weightReminderModalOpen.value = false;
+  desktopHandoffNotificationsOpen.value = false;
   notificationHighlightedMealType.value = null;
+  closeBackupOptionsDialog();
   backupProfilesOpen.value = false;
   duplicateMealTargetOpen.value = false;
   entryActionSheet.value = null;
@@ -11920,6 +12088,52 @@ function closeTransientSurfacesForNotificationAction() {
 
 async function applyNotificationAction(action: NutrinoNotificationAction, extra: Partial<NutrinoNotificationExtra>) {
   if (action === 'dismiss') return;
+  if (extra.kind === 'desktop-handoff' || action.startsWith('desktop-handoff') || action === 'open-desktop-handoff') {
+    const explicitDesktopAction = action.startsWith('desktop-handoff') && action !== 'open-desktop-handoff';
+    let request = extra.desktopHandoffRequestId
+      ? await findDesktopHandoffRequestForAction(extra.desktopHandoffRequestId)
+      : null;
+    if (!request && !extra.desktopHandoffRequestId) {
+      await pollDesktopHandoffRequests();
+      const candidates = desktopHandoffRequests.value.filter((item) => {
+        if (action === 'desktop-handoff-allow') return item.kind === 'backup_export' || item.kind === 'ai_export';
+        if (['desktop-handoff-use-backup', 'desktop-handoff-keep-backup', 'desktop-handoff-delete-backup'].includes(action)) return item.kind === 'backup_import';
+        return true;
+      });
+      request = candidates.length === 1 ? candidates[0] : null;
+    }
+    if (!request && extra.desktopHandoffRequestId) {
+      removeDesktopHandoffRequestLocally(extra.desktopHandoffRequestId);
+      if (explicitDesktopAction) return;
+    }
+    if (action === 'desktop-handoff-allow') {
+      if (request) await approveDesktopExportRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
+      return;
+    }
+    if (action === 'desktop-handoff-reject') {
+      if (request) await rejectDesktopHandoffRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
+      return;
+    }
+    if (action === 'desktop-handoff-use-backup') {
+      if (request) await useDesktopBackupImportRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
+      return;
+    }
+    if (action === 'desktop-handoff-keep-backup') {
+      if (request) await keepDesktopBackupImportRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
+      return;
+    }
+    if (action === 'desktop-handoff-delete-backup') {
+      if (request) await deleteDesktopBackupImportRequest(request);
+      else desktopHandoffNotificationsOpen.value = true;
+      return;
+    }
+    desktopHandoffNotificationsOpen.value = true;
+    return;
+  }
   refreshTodayKey();
   selectedDate.value = todayKey.value;
   calendarMonth.value = new Date(dayStartMs(todayKey.value));
@@ -11963,13 +12177,18 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
 function handleNotificationAction(payload: unknown) {
   const event = asRecord(payload) as NutrinoNotificationEvent | null;
   if (!event) return;
-  const notification = asRecord(event.notification);
-  const sourceJson = parseNotificationJson(event.sourceJson) || parseNotificationJson(notification?.sourceJson);
+  const eventExtras = asRecord(event.extras);
+  const notification = asRecord(event.notification) || asRecord(parseNotificationJson(stringFromRecordKeys(eventExtras, notificationSourceJsonKeys)));
+  const sourceJson = parseNotificationJson(event.sourceJson)
+    || parseNotificationJson(notification?.sourceJson)
+    || parseNotificationJson(stringFromRecordKeys(eventExtras, notificationSourceJsonKeys));
   const sourceExtraRecord = asRecord(sourceJson?.extra) || asRecord(parseNotificationJson(sourceJson?.extra));
   const rawAction = event.actionId
     ?? event.action
     ?? event.userAction
     ?? event.notificationUserAction
+    ?? event.intentAction
+    ?? stringFromRecordKeys(eventExtras, notificationActionKeys)
     ?? sourceJson?.actionId
     ?? sourceJson?.action;
   const extraAction = sourceExtraRecord?.actionId ?? sourceExtraRecord?.action;
@@ -11978,6 +12197,7 @@ function handleNotificationAction(payload: unknown) {
     notification?.id
     ?? event.notificationId
     ?? event.id
+    ?? stringFromRecordKeys(eventExtras, ['NotificationId', 'notificationId', 'id'])
     ?? sourceJson?.id,
   );
   const extra = {
@@ -11986,8 +12206,9 @@ function handleNotificationAction(payload: unknown) {
     ...normalizeNotificationExtra(notification),
     ...normalizeNotificationExtra(event.data),
     ...normalizeNotificationExtra(event.extra),
+    ...normalizeNotificationExtra(eventExtras),
   };
-  const signature = `${notificationId ?? 'unknown'}:${action}:${extra.kind ?? 'unknown'}:${extra.mealType ?? ''}`;
+  const signature = `${notificationId ?? 'unknown'}:${action}:${extra.kind ?? 'unknown'}:${extra.mealType ?? ''}:${extra.desktopHandoffRequestId ?? ''}`;
   const now = Date.now();
   if (signature === lastNotificationActionSignature && now - lastNotificationActionHandledAt < 10000) return;
   lastNotificationActionSignature = signature;
@@ -13301,6 +13522,28 @@ async function createBackupProfile(reason = t('manualBackupProfile'), forcedKind
   return record;
 }
 
+async function createBackupProfileFromState(snapshotInput: Partial<AppState>, reason = t('importBackupProfile'), forcedKind: BackupProfileKind = 'manual'): Promise<BackupProfileSummary> {
+  await waitForIdle();
+  const snapshot = normalizeImportedState(snapshotInput);
+  await yieldToUi();
+  const serialized = JSON.stringify(snapshot);
+  const createdAt = Date.now();
+  const record: StoredBackupProfile = {
+    id: generateId(`backup-profile-${forcedKind}`),
+    kind: forcedKind,
+    name: reason,
+    createdAt,
+    version: appVersion,
+    byteLength: new TextEncoder().encode(serialized).length,
+    counts: backupCounts(snapshot),
+    state: snapshot,
+  };
+  await saveBackupProfileRecord(record);
+  await pruneBackupProfiles();
+  await refreshBackupProfiles();
+  return record;
+}
+
 async function ensureDailyBackupProfile() {
   const today = dateKey();
   if (localStorage.getItem(mobileDailyBackupDateKey) === today) return;
@@ -13421,8 +13664,11 @@ function defaultBackupIncludeOptions(): BackupIncludeOptions {
   return { catalog: true, foodDiary: true, healthDiary: true, healthMedia: true };
 }
 
-function resetBackupIncludeOptions() {
-  const defaults = defaultBackupIncludeOptions();
+function defaultDesktopBackupIncludeOptions(): BackupIncludeOptions {
+  return { catalog: true, foodDiary: true, healthDiary: true, healthMedia: false };
+}
+
+function resetBackupIncludeOptions(defaults = defaultBackupIncludeOptions()) {
   backupIncludeOptions.catalog = defaults.catalog;
   backupIncludeOptions.foodDiary = defaults.foodDiary;
   backupIncludeOptions.healthDiary = defaults.healthDiary;
@@ -13538,15 +13784,41 @@ function dataUrlBase64Payload(dataUrl: string) {
   return match ? { mime: match[1], base64: match[2] } : null;
 }
 
+function closeBackupOptionsDialog() {
+  backupOptionsOpen.value = false;
+  backupOptionsMode.value = 'local';
+  desktopBackupExportScopeRequest.value = null;
+}
+
 function openBackupOptionsDialog() {
-  resetBackupIncludeOptions();
+  backupOptionsMode.value = 'local';
+  desktopBackupExportScopeRequest.value = null;
+  resetBackupIncludeOptions(defaultBackupIncludeOptions());
+  backupOptionsOpen.value = true;
+}
+
+function openDesktopBackupExportScopeDialog(request: MobileHandoffRequest) {
+  backupOptionsMode.value = 'desktop-handoff';
+  desktopBackupExportScopeRequest.value = request;
+  activeDesktopHandoffRequest.value = request;
+  resetBackupIncludeOptions(defaultDesktopBackupIncludeOptions());
+  desktopHandoffNotificationsOpen.value = false;
   backupOptionsOpen.value = true;
 }
 
 async function confirmBackupOptionsExport() {
   const includeOptions = selectedBackupIncludeOptions();
   if (!backupIncludesAny(includeOptions)) return showToast(t('backupSelectAtLeastOne'));
-  backupOptionsOpen.value = false;
+  if (backupOptionsMode.value === 'desktop-handoff') {
+    const request = desktopBackupExportScopeRequest.value;
+    if (!request) return closeBackupOptionsDialog();
+    backupOptionsOpen.value = false;
+    await sendDesktopBackupExportRequest(request, includeOptions);
+    backupOptionsMode.value = 'local';
+    desktopBackupExportScopeRequest.value = null;
+    return;
+  }
+  closeBackupOptionsDialog();
   await exportAppDataWithOptions(mobileBackupFileName(), t('exportBackupProfile'), t('appDataExportCreated'), includeOptions);
 }
 
@@ -13620,6 +13892,57 @@ async function bytesToNumberArrayChunked(bytes: Uint8Array, progressStart = 70, 
     await yieldToUi();
   }
   return result;
+}
+
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(String(value || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function textToBase64(text: string): string {
+  return bytesToBase64(new TextEncoder().encode(text));
+}
+
+
+async function uploadDesktopHandoffResultFile(request: MobileHandoffRequest, bytes: Uint8Array, filename: string, mimeType: string, message: string) {
+  if (!bytes.length) throw new Error(t('invalidBackupFile'));
+  const totalChunks = Math.max(1, Math.ceil(bytes.length / MOBILE_HANDOFF_UPLOAD_CHUNK_BYTES));
+  let savedPath: string | null = null;
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+    const start = chunkIndex * MOBILE_HANDOFF_UPLOAD_CHUNK_BYTES;
+    const end = Math.min(bytes.length, start + MOBILE_HANDOFF_UPLOAD_CHUNK_BYTES);
+    const chunk = bytes.subarray(start, end);
+    const ack = await uploadMobileHandoffResultChunk(state, request.id, {
+      chunk_index: chunkIndex,
+      total_chunks: totalChunks,
+      total_size: bytes.length,
+      result_filename: filename,
+      result_mime_type: mimeType,
+      chunk_base64: bytesToBase64(chunk),
+    });
+    if (ack.saved_path) savedPath = ack.saved_path;
+    exportProgress.value = Math.max(12, Math.min(96, Math.round(12 + ((chunkIndex + 1) / totalChunks) * 82)));
+    await yieldToUi();
+  }
+  await finishDesktopHandoffRequest(request, 'completed', {
+    result_filename: filename,
+    result_mime_type: mimeType,
+    result_saved_path: savedPath,
+    message: savedPath ? `${message} ${savedPath}` : message,
+  });
 }
 
 function fallbackDownloadAppData(bytes: Uint8Array, filename = mobileBackupFileName()) {
@@ -13930,6 +14253,37 @@ async function exportDataForOtherChannel() {
   await exportAppDataWithOptions(channelTransferBackupFileName(), t('channelTransferExportProfile'), t('channelTransferExportCreated'), defaultBackupIncludeOptions());
 }
 
+async function mobileBackupDataTextFromBytes(bytes: Uint8Array): Promise<{ dataText: string; importedState: Partial<AppState> }> {
+  assertValidZipBytes(bytes);
+  const zip = await JSZip.loadAsync(bytes);
+  const manifestText = await zip.file('manifest.json')?.async('string');
+  const rawDataText = await zip.file('mobile-app-data.json')?.async('string');
+  if (!rawDataText) throw new Error(t('invalidBackupFile'));
+  const dataText = await backupDataTextWithMedia(zip, rawDataText);
+  if (manifestText) {
+    const manifest = JSON.parse(manifestText) as { app?: string; formatVersion?: number; exportType?: string; channel?: string };
+    if (manifest.app !== 'nutrino' || manifest.formatVersion !== 1 || manifest.exportType !== 'mobile-app') {
+      throw new Error(t('invalidBackupFile'));
+    }
+  }
+  return { dataText, importedState: JSON.parse(dataText) as Partial<AppState> };
+}
+
+async function applyMobileBackupBytes(bytes: Uint8Array, beforeReason = t('beforeImportBackupProfile'), afterReason = t('importBackupProfile'), successMessage = t('appDataImported')) {
+  const { dataText } = await mobileBackupDataTextFromBytes(bytes);
+  await createBackupProfile(beforeReason);
+  applyImportedState(dataText);
+  for (const entry of state.healthEntries || []) {
+    try {
+      await saveHealthEntryMedia(entry);
+    } catch {
+      // Keep imported diary data even if a media item cannot be cached locally.
+    }
+  }
+  await createBackupProfile(afterReason);
+  showToast(successMessage);
+}
+
 async function importAppDataWithOptions(confirmMessage = t('confirmImportOverwrite'), beforeReason = t('beforeImportBackupProfile'), afterReason = t('importBackupProfile'), successMessage = t('appDataImported')) {
   try {
     const bytes = await pickBackupBytesForImport();
@@ -13965,6 +14319,345 @@ async function importAppDataWithOptions(confirmMessage = t('confirmImportOverwri
 
 async function importAppData() {
   await importAppDataWithOptions();
+}
+
+function desktopHandoffDesktopName(request: MobileHandoffRequest) {
+  return String(request.payload.desktop_name || state.pairing.baseUrl || t('sourceDesktop'));
+}
+
+function desktopHandoffTitle(request: MobileHandoffRequest | null) {
+  if (!request) return '';
+  if (request.kind === 'backup_export') return t('desktopBackupExportRequestTitle');
+  if (request.kind === 'ai_export') return t('desktopAiExportRequestTitle');
+  if (request.kind === 'backup_import') return t('desktopBackupImportRequestTitle');
+  return t('desktopHandoffRequestTitle');
+}
+
+function desktopHandoffBody(request: MobileHandoffRequest | null) {
+  if (!request) return '';
+  const desktopName = desktopHandoffDesktopName(request);
+  if (request.kind === 'backup_export') return t('desktopBackupExportRequestBody').replace('{desktop}', desktopName);
+  if (request.kind === 'ai_export') return t('desktopAiExportRequestBody').replace('{desktop}', desktopName);
+  if (request.kind === 'backup_import') return t('desktopBackupImportRequestBody').replace('{desktop}', desktopName).replace('{filename}', String(request.payload.filename || 'backup.zip'));
+  return t('desktopHandoffRequestBody').replace('{desktop}', desktopName);
+}
+
+function desktopHandoffNotificationBadgeLabel() {
+  return t('desktopHandoffNotificationBadge').replace('{count}', String(pendingDesktopHandoffNotificationCount.value));
+}
+
+function desktopHandoffNotificationId(requestId: string): number {
+  let hash = 0;
+  for (let index = 0; index < requestId.length; index += 1) {
+    hash = ((hash * 31) + requestId.charCodeAt(index)) >>> 0;
+  }
+  return 150000 + (hash % 50000);
+}
+
+function desktopHandoffNotificationActionType(request: MobileHandoffRequest): string {
+  return request.kind === 'backup_import' ? NOTIFICATION_ACTION_TYPES.desktopHandoffImport : NOTIFICATION_ACTION_TYPES.desktopHandoffDecision;
+}
+
+async function cancelDesktopHandoffNotification(requestId: string) {
+  if (!isTauriRuntime() || !isMobileRuntime()) return;
+  try {
+    await cancel([desktopHandoffNotificationId(requestId)]);
+  } catch {
+    // Best-effort cleanup only; the in-app request list is authoritative.
+  }
+}
+
+function openDesktopHandoffNotifications() {
+  desktopHandoffNotificationsOpen.value = true;
+  void pollDesktopHandoffRequests();
+}
+
+function closeDesktopHandoffNotifications() {
+  desktopHandoffNotificationsOpen.value = false;
+}
+
+async function notifyDesktopHandoffRequest(request: MobileHandoffRequest) {
+  if (notifiedDesktopHandoffIds.has(request.id)) return;
+  notifiedDesktopHandoffIds.add(request.id);
+  await notifyUser(desktopHandoffTitle(request), desktopHandoffBody(request), {
+    id: desktopHandoffNotificationId(request.id),
+    kind: 'desktop-handoff',
+    actionTypeId: desktopHandoffNotificationActionType(request),
+    desktopHandoffRequestId: request.id,
+    desktopHandoffKind: request.kind,
+  });
+}
+
+async function pollDesktopHandoffRequests() {
+  if (state.settings.desktop_api_enabled === false || !state.pairing.baseUrl.trim()) return;
+  try {
+    const requests = await listMobileHandoffRequests(state);
+    desktopHandoffRequests.value = requests;
+    if (activeDesktopHandoffRequest.value && !requests.some((request) => request.id === activeDesktopHandoffRequest.value?.id)) {
+      activeDesktopHandoffRequest.value = null;
+    }
+    if (desktopBackupExportScopeRequest.value && !requests.some((request) => request.id === desktopBackupExportScopeRequest.value?.id)) {
+      closeBackupOptionsDialog();
+    }
+    for (const request of requests) void notifyDesktopHandoffRequest(request);
+  } catch {
+    // The normal server health polling already reports connectivity state.
+  }
+}
+
+function sleepMs(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function findDesktopHandoffRequestForAction(requestId: string): Promise<MobileHandoffRequest | null> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await pollDesktopHandoffRequests();
+    const request = desktopHandoffRequests.value.find((item) => item.id === requestId) || null;
+    if (request) return request;
+    if (attempt < 3) await sleepMs(350);
+  }
+  return null;
+}
+
+function removeDesktopHandoffRequestLocally(requestId: string) {
+  desktopHandoffRequests.value = desktopHandoffRequests.value.filter((item) => item.id !== requestId);
+  void cancelDesktopHandoffNotification(requestId);
+  notifiedDesktopHandoffIds.delete(requestId);
+  if (activeDesktopHandoffRequest.value?.id === requestId) activeDesktopHandoffRequest.value = null;
+  if (desktopBackupExportScopeRequest.value?.id === requestId) closeBackupOptionsDialog();
+  if (!desktopHandoffRequests.value.length) desktopHandoffNotificationsOpen.value = false;
+}
+
+function emitDesktopHandoffResolvedEvent(requestId: string, status: string) {
+  window.dispatchEvent(new CustomEvent('nutrino:desktop-handoff-request-resolved', { detail: { requestId, status } }));
+}
+
+function handleDesktopHandoffResolvedEvent(event: Event) {
+  const detail = asRecord((event as CustomEvent<unknown>).detail);
+  const requestId = typeof detail?.requestId === 'string' ? detail.requestId : '';
+  if (!requestId) return;
+  removeDesktopHandoffRequestLocally(requestId);
+}
+
+async function finishDesktopHandoffRequest(request: MobileHandoffRequest, status: 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error', payload: { result_filename?: string; result_mime_type?: string; result_base64?: string; result_saved_path?: string | null; message?: string } = {}) {
+  await respondMobileHandoffRequest(state, request.id, { status, ...payload });
+  emitDesktopHandoffResolvedEvent(request.id, status);
+  removeDesktopHandoffRequestLocally(request.id);
+}
+
+async function rejectDesktopHandoffRequest(request = activeDesktopHandoffRequest.value) {
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  try {
+    await finishDesktopHandoffRequest(request, 'rejected', { message: t('desktopHandoffRejected') });
+    showToast(t('desktopHandoffRejected'));
+  } catch (error) {
+    showToast(String(error));
+  } finally {
+    desktopHandoffBusy.value = false;
+  }
+}
+
+async function sendDesktopBackupExportRequest(request: MobileHandoffRequest, includeOptions = defaultDesktopBackupIncludeOptions()) {
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  exportBusy.value = true;
+  exportTitle.value = t('backupExportInProgress');
+  exportStatus.value = t('backupPreparing');
+  exportProgress.value = 8;
+  try {
+    const bytes = await buildMobileBackupZip(includeOptions);
+    await uploadDesktopHandoffResultFile(
+      request,
+      bytes,
+      mobileBackupFileName(),
+      'application/zip',
+      t('desktopHandoffExportSent'),
+    );
+    showToast(t('desktopHandoffExportSent'));
+  } catch (error) {
+    try {
+      await finishDesktopHandoffRequest(request, 'error', { message: String(error) });
+    } catch {
+      // keep the original error visible below
+    }
+    showToast(String(error));
+  } finally {
+    exportBusy.value = false;
+    exportProgress.value = 0;
+    exportStatus.value = '';
+    exportTitle.value = '';
+    desktopHandoffBusy.value = false;
+  }
+}
+
+async function approveDesktopExportRequest(request = activeDesktopHandoffRequest.value) {
+  if (!request || desktopHandoffBusy.value) return;
+  if (request.kind === 'backup_export') {
+    openDesktopBackupExportScopeDialog(request);
+    return;
+  }
+  desktopHandoffBusy.value = true;
+  exportBusy.value = true;
+  exportTitle.value = t('aiExportAllData');
+  exportStatus.value = t('backupPreparing');
+  exportProgress.value = 8;
+  try {
+    refreshTodayKey();
+    const startKey = typeof request.payload.startKey === 'string' ? request.payload.startKey : dateKeyOffset(todayKey.value, -89);
+    const endKey = typeof request.payload.endKey === 'string' ? request.payload.endKey : todayKey.value;
+    const range = { startKey, endKey, startMs: dayStartMs(startKey), endMs: dayEndMs(endKey) };
+    const markdown = buildAllDataAiMarkdown(range);
+    await uploadDesktopHandoffResultFile(
+      request,
+      new TextEncoder().encode(markdown),
+      `nutrino-mobile-ai-export-${startKey}-${endKey}.md`,
+      'text/markdown',
+      t('desktopHandoffExportSent'),
+    );
+    showToast(t('desktopHandoffExportSent'));
+  } catch (error) {
+    try {
+      await finishDesktopHandoffRequest(request, 'error', { message: String(error) });
+    } catch {
+      // keep the original error visible below
+    }
+    showToast(String(error));
+  } finally {
+    exportBusy.value = false;
+    exportProgress.value = 0;
+    exportStatus.value = '';
+    exportTitle.value = '';
+    desktopHandoffBusy.value = false;
+  }
+}
+
+
+async function useDesktopBackupImportRequest(request = activeDesktopHandoffRequest.value) {
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  try {
+    const bytes = base64ToBytes(String(request.payload.backup_base64 || ''));
+    await applyMobileBackupBytes(bytes, t('beforeImportBackupProfile'), t('importBackupProfile'), t('appDataImported'));
+    await finishDesktopHandoffRequest(request, 'used', { message: t('desktopBackupImportUsed') });
+  } catch (error) {
+    try { await finishDesktopHandoffRequest(request, 'error', { message: String(error) }); } catch {}
+    showToast(String(error));
+  } finally {
+    desktopHandoffBusy.value = false;
+  }
+}
+
+async function keepDesktopBackupImportRequest(request = activeDesktopHandoffRequest.value) {
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  try {
+    const bytes = base64ToBytes(String(request.payload.backup_base64 || ''));
+    const { importedState } = await mobileBackupDataTextFromBytes(bytes);
+    await createBackupProfileFromState(importedState, `${t('desktopBackupImportKept')} · ${String(request.payload.filename || 'backup.zip')}`, 'manual');
+    await finishDesktopHandoffRequest(request, 'kept', { message: t('desktopBackupImportKept') });
+    showToast(t('desktopBackupImportKept'));
+  } catch (error) {
+    try { await finishDesktopHandoffRequest(request, 'error', { message: String(error) }); } catch {}
+    showToast(String(error));
+  } finally {
+    desktopHandoffBusy.value = false;
+  }
+}
+
+async function deleteDesktopBackupImportRequest(request = activeDesktopHandoffRequest.value) {
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  try {
+    await finishDesktopHandoffRequest(request, 'deleted', { message: t('desktopBackupImportDeleted') });
+    showToast(t('desktopBackupImportDeleted'));
+  } catch (error) {
+    showToast(String(error));
+  } finally {
+    desktopHandoffBusy.value = false;
+  }
+}
+
+function closeDesktopHandoffSocket() {
+  if (desktopHandoffReconnectTimer) window.clearTimeout(desktopHandoffReconnectTimer);
+  if (desktopHandoffPingTimer) window.clearInterval(desktopHandoffPingTimer);
+  desktopHandoffReconnectTimer = undefined;
+  desktopHandoffPingTimer = undefined;
+  const socket = desktopHandoffSocket;
+  desktopHandoffSocket = null;
+  if (!socket) return;
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onerror = null;
+  socket.onclose = null;
+  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+}
+
+function scheduleDesktopHandoffSocketReconnect(delayMs = 5000) {
+  if (desktopHandoffReconnectTimer) window.clearTimeout(desktopHandoffReconnectTimer);
+  if (state.settings.desktop_api_enabled === false || !state.pairing.baseUrl.trim()) return;
+  desktopHandoffReconnectTimer = window.setTimeout(() => {
+    desktopHandoffReconnectTimer = undefined;
+    startDesktopHandoffRealtime();
+  }, delayMs);
+}
+
+function handleDesktopHandoffRealtimeMessage(raw: string) {
+  try {
+    const payload = JSON.parse(raw) as { event?: string };
+    if (payload.event === 'connected' || payload.event === 'request_created' || payload.event === 'request_updated' || payload.event === 'resync') {
+      void pollDesktopHandoffRequests();
+    }
+  } catch {
+    // Ignore non-JSON websocket frames; the fallback polling loop still keeps state in sync.
+  }
+}
+
+function startDesktopHandoffRealtime() {
+  if (state.settings.desktop_api_enabled === false || !state.pairing.baseUrl.trim()) return;
+  if (desktopHandoffSocket && (desktopHandoffSocket.readyState === WebSocket.OPEN || desktopHandoffSocket.readyState === WebSocket.CONNECTING)) return;
+
+  const url = mobileHandoffWebSocketUrl(state);
+  if (!url) return;
+
+  try {
+    const socket = new WebSocket(url);
+    desktopHandoffSocket = socket;
+
+    socket.onopen = () => {
+      if (desktopHandoffPingTimer) window.clearInterval(desktopHandoffPingTimer);
+      desktopHandoffPingTimer = window.setInterval(() => {
+        if (desktopHandoffSocket?.readyState === WebSocket.OPEN) {
+          desktopHandoffSocket.send(JSON.stringify({ event: 'ping', sent_at: Date.now() }));
+        }
+      }, 20000);
+      void pollDesktopHandoffRequests();
+    };
+
+    socket.onmessage = (event) => {
+      if (typeof event.data === 'string') handleDesktopHandoffRealtimeMessage(event.data);
+    };
+
+    socket.onerror = () => {
+      socket.close();
+    };
+
+    socket.onclose = () => {
+      if (desktopHandoffSocket === socket) desktopHandoffSocket = null;
+      if (desktopHandoffPingTimer) window.clearInterval(desktopHandoffPingTimer);
+      desktopHandoffPingTimer = undefined;
+      scheduleDesktopHandoffSocketReconnect();
+    };
+  } catch {
+    scheduleDesktopHandoffSocketReconnect();
+  }
+}
+
+function startDesktopHandoffPolling() {
+  if (desktopHandoffTimer) window.clearInterval(desktopHandoffTimer);
+  void pollDesktopHandoffRequests();
+  startDesktopHandoffRealtime();
+  desktopHandoffTimer = window.setInterval(pollDesktopHandoffRequests, 30000);
 }
 
 async function importDataFromOtherChannel() {
@@ -14116,12 +14809,46 @@ function setTab(tab: Tab) {
           <span class="sync-dot" :class="serverOnline ? '' : githubCatalogAvailable ? 'available' : 'offline'"></span>
           {{ syncBusy ? t('syncing') : serverOnline ? t('online') : githubCatalogAvailable ? t('available') : t('offline') }}
         </button>
+        <button v-if="state.settings.desktop_api_enabled !== false" class="appbar-notifications-button" type="button" :aria-label="desktopHandoffNotificationBadgeLabel()" :title="t('desktopHandoffNotifications')" @click="openDesktopHandoffNotifications">
+          <span v-html="lucideSvg('bell')"></span>
+          <em v-if="pendingDesktopHandoffNotificationCount">{{ pendingDesktopHandoffNotificationCount }}</em>
+        </button>
         <button v-if="updateAvailable" class="appbar-update-chip" type="button" :aria-label="updateReleaseTitle()" :title="updateReleaseTitle()" @click="openUpdateCenter"><span v-html="lucideSvg('refreshCw')"></span>{{ updateCheckResult?.release?.version }}</button>
         <button class="settings-button" data-tour="settings" :aria-label="t('settings')" @click="openSettings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8.4 8.4 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A8.4 8.4 0 0 0 7 6L4.6 5 2.6 8.5l2 1.5a8.8 8.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a8.4 8.4 0 0 0 2.6 1.5L10 22h4l.4-2.5A8.4 8.4 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/></svg>
         </button>
       </div>
     </header>
+
+    <div v-if="desktopHandoffNotificationsOpen" class="dialog-backdrop desktop-handoff-notifications-backdrop" @click.self="closeDesktopHandoffNotifications">
+      <article class="settings-dialog desktop-handoff-notifications-dialog" role="dialog" aria-modal="true" :aria-label="t('desktopHandoffNotifications')">
+        <div class="dialog-title-row">
+          <div>
+            <h2>{{ t('desktopHandoffNotifications') }}</h2>
+            <p class="helper">{{ t('desktopHandoffNotificationsBody') }}</p>
+          </div>
+          <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" :disabled="desktopHandoffBusy" @click="closeDesktopHandoffNotifications" v-html="lucideSvg('x')"></button>
+        </div>
+        <p v-if="!desktopHandoffRequests.length" class="empty-line">{{ t('desktopHandoffNoNotifications') }}</p>
+        <div v-else class="desktop-handoff-notification-list">
+          <article v-for="request in desktopHandoffRequests" :key="request.id" class="desktop-handoff-notification-card">
+            <div>
+              <b>{{ desktopHandoffTitle(request) }}</b>
+              <small>{{ desktopHandoffBody(request) }}</small>
+            </div>
+            <div v-if="request.kind === 'backup_import'" class="dialog-actions desktop-handoff-actions">
+              <button class="filled-button" type="button" :disabled="desktopHandoffBusy" @click="useDesktopBackupImportRequest(request)">{{ t('desktopHandoffUseBackup') }}</button>
+              <button class="outlined-button" type="button" :disabled="desktopHandoffBusy" @click="keepDesktopBackupImportRequest(request)">{{ t('desktopHandoffKeepBackup') }}</button>
+              <button class="delete-button" type="button" :disabled="desktopHandoffBusy" @click="deleteDesktopBackupImportRequest(request)">{{ t('desktopHandoffDeleteBackup') }}</button>
+            </div>
+            <div v-else class="dialog-actions desktop-handoff-actions">
+              <button class="filled-button" type="button" :disabled="desktopHandoffBusy" @click="approveDesktopExportRequest(request)">{{ t('desktopHandoffAllow') }}</button>
+              <button class="outlined-button" type="button" :disabled="desktopHandoffBusy" @click="rejectDesktopHandoffRequest(request)">{{ t('desktopHandoffReject') }}</button>
+            </div>
+          </article>
+        </div>
+      </article>
+    </div>
 
     <section v-if="activeTab === 'home'" class="page-stack home-page">
       <article v-if="weightPromptDue" class="card weight-prompt">
@@ -14876,7 +15603,7 @@ function setTab(tab: Tab) {
             <div v-for="[code] in localNameI18nEntries()" :key="code" class="local-i18n-row">
               <span>{{ languageLabel(code) }}</span>
               <input v-model="ensureLocalNameI18n()[code]" class="input" />
-              <button type="button" class="text-button danger" @click="removeLocalNameTranslation(code)">{{ t('delete') }}</button>
+              <button type="button" class="delete-button" @click="removeLocalNameTranslation(code)">{{ t('delete') }}</button>
             </div>
             <select class="input local-i18n-add-select" @change="addLocalNameTranslation($event)">
               <option value="">{{ t('translationAddPlaceholder') }}</option>
@@ -14935,7 +15662,7 @@ function setTab(tab: Tab) {
                     <b>{{ localRecipeRowItem(row) ? localRecipeItemLabel(row.food_id) : t('selectItem') }}</b>
                     <small>{{ localRecipeRowItem(row) ? localRecipeRowHint(row) : t('localRecipeSearchHint') }}</small>
                   </div>
-                  <button class="text-button danger" type="button" @click="removeLocalRecipeItem(index)">{{ t('delete') }}</button>
+                  <button class="delete-button" type="button" @click="removeLocalRecipeItem(index)">{{ t('delete') }}</button>
                 </div>
                 <div class="inline-field-action local-recipe-search-action">
                   <input v-model="row.query" class="input" type="search" autocomplete="off" autocapitalize="none" spellcheck="false" :placeholder="t('searchItem')" @focus="openLocalRecipeRowPicker(row)" />
@@ -15449,10 +16176,10 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="backupOptionsOpen" class="dialog-backdrop app-overlay" @click.self="backupOptionsOpen = false">
+      <div v-if="backupOptionsOpen" class="dialog-backdrop app-overlay" @click.self="closeBackupOptionsDialog">
         <article class="settings-dialog backup-options-dialog">
-          <div class="dialog-title-row"><h2>{{ t('backupOptions') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="backupOptionsOpen = false" v-html="lucideSvg('x')"></button></div>
-          <p class="helper big">{{ t('backupOptionsBody') }}</p>
+          <div class="dialog-title-row"><h2>{{ t(backupOptionsMode === 'desktop-handoff' ? 'desktopBackupExportScopeTitle' : 'backupOptions') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="closeBackupOptionsDialog" v-html="lucideSvg('x')"></button></div>
+          <p class="helper big">{{ t(backupOptionsMode === 'desktop-handoff' ? 'desktopBackupExportScopeBody' : 'backupOptionsBody') }}</p>
           <div class="backup-options-list">
             <label class="source-choice-card source-choice-card-simple backup-option-card">
               <span><b>{{ t('backupIncludeCatalog') }}</b><small>{{ t('backupIncludeCatalogHint') }}</small></span>
@@ -15466,14 +16193,14 @@ function setTab(tab: Tab) {
               <span><b>{{ t('backupIncludeHealthDiary') }}</b><small>{{ t('backupIncludeHealthDiaryHint') }}</small></span>
               <input v-model="backupIncludeOptions.healthDiary" type="checkbox" />
             </label>
-            <label v-if="backupIncludeOptions.healthDiary" class="source-choice-card source-choice-card-simple backup-option-card">
-              <span><b>{{ t('backupIncludeHealthMedia') }}</b><small>{{ t('backupIncludeHealthMediaHint') }}</small></span>
+            <label v-if="backupIncludeOptions.healthDiary" class="source-choice-card source-choice-card-simple backup-option-card backup-option-card-media">
+              <span class="backup-media-option-copy"><b><span class="backup-media-warning-icon" aria-hidden="true">!</span>{{ t('backupIncludeHealthMedia') }}</b><small>{{ t('backupIncludeHealthMediaHint') }}</small><small class="backup-media-warning-text">{{ t('backupIncludeHealthMediaWarning') }}</small></span>
               <input v-model="backupIncludeOptions.healthMedia" type="checkbox" />
             </label>
           </div>
           <div class="dialog-actions">
-            <button class="text-button" type="button" @click="backupOptionsOpen = false">{{ t('cancel') }}</button>
-            <button class="filled-button" type="button" @click="confirmBackupOptionsExport">{{ t('exportAppData') }}</button>
+            <button class="text-button" type="button" @click="closeBackupOptionsDialog">{{ t('cancel') }}</button>
+            <button class="filled-button" type="button" @click="confirmBackupOptionsExport">{{ t(backupOptionsMode === 'desktop-handoff' ? 'desktopBackupExportSendSelected' : 'exportAppData') }}</button>
           </div>
         </article>
       </div>

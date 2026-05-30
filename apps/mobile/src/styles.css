@@ -862,6 +862,32 @@ input[type="number"]:focus {
 .backup-options-dialog { display: grid; gap: 14px; }
 .backup-options-list { display: grid; gap: 10px; }
 .backup-option-card { margin: 0 !important; }
+.backup-option-card-media {
+  border-color: color-mix(in srgb, var(--warning, #f59e0b) 42%, var(--outline-variant)) !important;
+  background: color-mix(in srgb, var(--warning, #f59e0b) 8%, var(--surface-container)) !important;
+}
+.backup-media-option-copy b {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.backup-media-warning-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning, #f59e0b) 88%, var(--primary));
+  color: #1f1300;
+  font-size: 1.15rem;
+  font-weight: 1000;
+  line-height: 1;
+}
+.backup-media-warning-text {
+  margin-top: 6px !important;
+  color: color-mix(in srgb, var(--warning, #f59e0b) 88%, var(--on-surface)) !important;
+  font-weight: 800;
+}
 .danger-text { color: var(--error) !important; }
 @media (max-width: 430px) {
   .sync-chip { padding-inline: 10px; }
@@ -7308,4 +7334,113 @@ select:focus {
 .health-media-toolbar.segmented-pill-toggle button.active,
 .diary-search-sort-row.segmented-pill-toggle button.active {
   border-radius: 999px !important;
+}
+
+.desktop-handoff-backdrop {
+  z-index: 90;
+}
+
+.desktop-handoff-dialog {
+  max-width: 28rem;
+}
+
+.desktop-handoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.appbar-notifications-button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: 999px;
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  transition: background-color .16s ease, color .16s ease, transform .16s ease;
+}
+.appbar-notifications-button:active { transform: scale(.96); }
+.appbar-notifications-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+}
+.appbar-notifications-button em {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 17px;
+  height: 17px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--error);
+  color: var(--on-error);
+  font-size: .68rem;
+  font-style: normal;
+  font-weight: 900;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.desktop-handoff-notifications-dialog {
+  max-width: 32rem;
+}
+.desktop-handoff-notification-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.desktop-handoff-notification-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border-radius: 1.15rem;
+  background: var(--surface-container);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
+}
+.desktop-handoff-notification-card b,
+.desktop-handoff-notification-card small {
+  display: block;
+}
+.desktop-handoff-notification-card small {
+  margin-top: 0.25rem;
+  color: var(--on-surface-variant);
+  line-height: 1.35;
+}
+
+/* Desktop handoff notifications modal */
+.desktop-handoff-notifications-backdrop {
+  z-index: calc(var(--z-overlay-dialog) + 40) !important;
+  background: rgba(0, 0, 0, .64) !important;
+  backdrop-filter: blur(8px) saturate(1.05);
+}
+
+.desktop-handoff-notifications-dialog {
+  width: min(100%, 34rem);
+  display: grid;
+  gap: 1rem;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
+  background: color-mix(in srgb, var(--surface) 96%, var(--surface-container-highest));
+  box-shadow: 0 28px 96px rgba(0, 0, 0, .48);
+}
+
+.desktop-handoff-notifications-dialog h2 {
+  margin: 0;
+}
+
+.desktop-handoff-notifications-dialog .helper {
+  margin: .35rem 0 0;
+}
+
+@media (max-width: 560px) {
+  .desktop-handoff-notifications-dialog {
+    width: calc(100vw - 24px);
+    padding: 18px !important;
+    border-radius: 26px;
+  }
 }

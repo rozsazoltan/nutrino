@@ -234,6 +234,60 @@ export interface WeightLog {
   updated_at: number;
 }
 
+
+export type MobileHandoffKind = 'backup_export' | 'ai_export' | 'backup_import' | string;
+export type MobileHandoffStatus = 'pending' | 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error' | string;
+
+export interface MobileHandoffRequest {
+  id: string;
+  device_id: string;
+  device_name?: string | null;
+  kind: MobileHandoffKind;
+  status: MobileHandoffStatus;
+  created_at: number;
+  responded_at?: number | null;
+  payload: {
+    filename?: string;
+    mime_type?: string;
+    desktop_name?: string;
+    backup_base64?: string;
+    startKey?: string;
+    endKey?: string;
+    [key: string]: unknown;
+  };
+  result_filename?: string | null;
+  result_mime_type?: string | null;
+  result_base64?: string | null;
+  result_saved_path?: string | null;
+  message?: string | null;
+}
+
+export interface MobileHandoffResponseInput {
+  status: 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error';
+  result_filename?: string | null;
+  result_mime_type?: string | null;
+  result_base64?: string | null;
+  result_saved_path?: string | null;
+  message?: string | null;
+}
+
+export interface MobileHandoffResultChunkInput {
+  chunk_index: number;
+  total_chunks: number;
+  chunk_base64: string;
+  total_size?: number | null;
+  result_filename: string;
+  result_mime_type?: string | null;
+}
+
+export interface MobileHandoffResultChunkAck {
+  accepted: boolean;
+  chunk_index: number;
+  received_bytes: number;
+  saved_path?: string | null;
+  server_time: number;
+}
+
 export interface ServerHealth {
   ok: boolean;
   name?: string;
