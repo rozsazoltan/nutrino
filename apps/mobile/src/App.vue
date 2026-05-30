@@ -14071,7 +14071,7 @@ function setTab(tab: Tab) {
     </section>
 
     <section v-if="activeTab === 'diary'" class="page-stack diary-page">
-      <article class="card meal-note-review-card" :class="{ collapsed: !mealNoteReviewOpen }">
+      <article v-if="mealNotesToReview.length" class="card meal-note-review-card" :class="{ collapsed: !mealNoteReviewOpen }">
         <button class="meal-note-review-head" type="button" :aria-expanded="mealNoteReviewOpen" @click="mealNoteReviewOpen = !mealNoteReviewOpen">
           <span class="meal-note-review-copy">
             <h2>{{ t('mealNotesToReview') }}</h2>
@@ -14101,7 +14101,7 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
-      <article v-if="healthDiaryEnabled" class="card meal-note-review-card health-review-card" :class="{ collapsed: !healthReviewOpen }">
+      <article v-if="healthDiaryEnabled && pendingHealthReviewEntries.length" class="card meal-note-review-card health-review-card" :class="{ collapsed: !healthReviewOpen }">
         <button class="meal-note-review-head" type="button" :aria-expanded="healthReviewOpen" @click="healthReviewOpen = !healthReviewOpen">
           <span class="meal-note-review-copy">
             <h2>{{ t('healthEntriesToReview') }}</h2>
