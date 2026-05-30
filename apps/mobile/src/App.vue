@@ -584,11 +584,17 @@ const settingsModules = computed<SettingsModuleConfig[]>(() => [
     ],
   },
   {
+    key: 'ai-export',
+    titleKey: 'settingsModuleAiExport',
+    rows: [
+      settingsButton('ai-export', 'aiExport', 'aiExportAllData', openAiExportDialog, () => t('aiExportAllDataBody')),
+    ],
+  },
+  {
     key: 'data',
     titleKey: 'settingsModuleData',
     rows: [
       settingsButton('export-app-data', 'export', 'exportAppData', exportAppData, () => t('exportAppDataBody')),
-      settingsButton('ai-export', 'aiExport', 'aiExportAllData', openAiExportDialog, () => t('aiExportAllDataBody')),
       settingsButton('import-app-data', 'import', 'importAppData', importAppData, () => t('importAppDataBody')),
       settingsButton('backup-profiles', 'backup', 'backupProfiles', openBackupProfiles, () => `${backupProfiles.value.length} · ${t('backupProfilesBody')}`),
       settingsButton('advanced', 'advanced', 'advanced', () => { settingsDialog.value = 'advanced'; }, () => t('channelDataTransfer')),
@@ -7454,7 +7460,7 @@ const aiExportAndMediaTranslations: Record<string, Partial<Record<string, string
     aiExportStartDate: 'Dátumtól',
     aiExportEndDate: 'Dátumig',
     aiExportMarkdownCreated: 'AI Markdown export elkészült.',
-    aiExportIncludeFood: 'Kaja napló',
+    aiExportIncludeFood: 'Táplálkozási napló',
     aiExportIncludeFoodHint: 'Étkezések, tápanyagok, receptösszetevők, aktivitásnapló és súlynapló.',
     aiExportIncludeHealth: 'Egészségügyi napló',
     aiExportIncludeHealthHint: 'Egészségbejegyzések, jegyzetek és média darabszámok fotó/videó fájlok beágyazása nélkül.',
@@ -7718,6 +7724,7 @@ const settingsModuleTranslations: Record<string, Partial<Record<string, string>>
     settingsModuleApp: 'App',
     settingsModuleNutrition: 'Nutrition',
     settingsModuleDiary: 'Diary',
+    settingsModuleAiExport: 'AI export',
     settingsModuleCatalog: 'Catalog',
     settingsModuleData: 'Data and backups',
     settingsModuleCommunity: 'Community and legal',
@@ -7727,6 +7734,7 @@ const settingsModuleTranslations: Record<string, Partial<Record<string, string>>
     settingsModuleApp: 'App',
     settingsModuleNutrition: 'Táplálkozás',
     settingsModuleDiary: 'Napló',
+    settingsModuleAiExport: 'AI export',
     settingsModuleCatalog: 'Katalógus',
     settingsModuleData: 'Adatok és mentések',
     settingsModuleCommunity: 'Közösség és jogi',
