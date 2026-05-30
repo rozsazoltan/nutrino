@@ -34,6 +34,8 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       previous_tag: ${{ steps.previous-tag.outputs.previous_tag }}
       target_sha: ${{ steps.target.outputs.target_sha }}
+      release_branch: ${{ steps.prepare.outputs.release_branch }}
+      base_branch: ${{ steps.prepare.outputs.base_branch }}
     steps:
       - name: Checkout release ref
         uses: actions/checkout@v6
@@ -68,18 +70,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          RELEASE_BRANCH="${RELEASE_REF#refs/heads/}"
-          if [[ "${RELEASE_BRANCH}" == refs/* ]]; then
-            echo "::error::Release ref must be a branch name so the workflow can push the prepare commit: ${RELEASE_REF}"
+          BASE_BRANCH="${RELEASE_REF#refs/heads/}"
+          if [[ "${BASE_BRANCH}" == refs/* ]]; then
+            echo "::error::Release ref must be a branch name so the workflow can create a release branch from it: ${RELEASE_REF}"
             exit 1
           fi
 
-          if ! git show-ref --verify --quiet "refs/remotes/origin/${RELEASE_BRANCH}"; then
-            echo "::error::Release ref must be an existing branch so the workflow can push the prepare commit: ${RELEASE_REF}"
+          if ! git show-ref --verify --quiet "refs/remotes/origin/${BASE_BRANCH}"; then
+            echo "::error::Release ref must be an existing branch so the workflow can create a release branch from it: ${RELEASE_REF}"
             exit 1
           fi
 
-          git checkout -B "${RELEASE_BRANCH}" "origin/${RELEASE_BRANCH}"
+          RELEASE_BRANCH="release/v${VERSION}"
+          if git ls-remote --exit-code --heads origin "${RELEASE_BRANCH}" >/dev/null 2>&1; then
+            echo "::error::Release branch already exists: ${RELEASE_BRANCH}"
+            exit 1
+          fi
+
+          git checkout -B "${RELEASE_BRANCH}" "origin/${BASE_BRANCH}"
+          echo "base_branch=${BASE_BRANCH}" >> "${GITHUB_OUTPUT}"
+          echo "release_branch=${RELEASE_BRANCH}" >> "${GITHUB_OUTPUT}"
 
           node <<'NODE'
           const fs = require('node:fs');
@@ -171,27 +181,27 @@ jobs:
           updateCargoLockPackage('apps/mobile/src-tauri/Cargo.lock', 'nutrino_mobile');
           NODE
 
-          if git diff --quiet; then
-            echo "Release files are already prepared for v${VERSION}"
-            echo "prepared_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            package.json \
-            packages/shared/package.json \
-            packages/ui/package.json \
-            apps/desktop/package.json \
-            apps/mobile/package.json \
-            apps/desktop/src-tauri/tauri.conf.json \
-            apps/mobile/src-tauri/tauri.conf.json \
-            apps/desktop/src-tauri/Cargo.toml \
-            apps/mobile/src-tauri/Cargo.toml \
-            apps/desktop/src-tauri/Cargo.lock \
-            apps/mobile/src-tauri/Cargo.lock
-          git commit -m "chore: prepare release v${VERSION}"
+
+          if git diff --quiet; then
+            echo "Release files are already prepared for v${VERSION}"
+          else
+            git add \
+              package.json \
+              packages/shared/package.json \
+              packages/ui/package.json \
+              apps/desktop/package.json \
+              apps/mobile/package.json \
+              apps/desktop/src-tauri/tauri.conf.json \
+              apps/mobile/src-tauri/tauri.conf.json \
+              apps/desktop/src-tauri/Cargo.toml \
+              apps/mobile/src-tauri/Cargo.toml \
+              apps/desktop/src-tauri/Cargo.lock \
+              apps/mobile/src-tauri/Cargo.lock
+            git commit -m "chore: prepare release v${VERSION}"
+          fi
+
           git push origin "HEAD:${RELEASE_BRANCH}"
           echo "prepared_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
@@ -357,10 +367,23 @@ jobs:
             artifact: desktop-macos
             rust_targets: "x86_64-apple-darwin aarch64-apple-darwin"
     steps:
-      - name: Checkout release commit
+      - name: Checkout release branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.validate-release.outputs.target_sha }}
+          ref: ${{ needs.validate-release.outputs.release_branch }}
+          fetch-depth: 0
+
+      - name: Verify release branch commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.validate-release.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [ "${ACTUAL_SHA}" != "${TARGET_SHA}" ]; then
+            echo "::error::Release branch HEAD changed. Expected ${TARGET_SHA}, got ${ACTUAL_SHA}."
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -430,10 +453,23 @@ jobs:
     needs: validate-release
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout release commit
+      - name: Checkout release branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.validate-release.outputs.target_sha }}
+          ref: ${{ needs.validate-release.outputs.release_branch }}
+          fetch-depth: 0
+
+      - name: Verify release branch commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.validate-release.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [ "${ACTUAL_SHA}" != "${TARGET_SHA}" ]; then
+            echo "::error::Release branch HEAD changed. Expected ${TARGET_SHA}, got ${ACTUAL_SHA}."
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -525,10 +561,23 @@ jobs:
     if: needs.check-ios-signing.outputs.enabled == 'true'
     runs-on: macos-latest
     steps:
-      - name: Checkout release commit
+      - name: Checkout release branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.validate-release.outputs.target_sha }}
+          ref: ${{ needs.validate-release.outputs.release_branch }}
+          fetch-depth: 0
+
+      - name: Verify release branch commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.validate-release.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [ "${ACTUAL_SHA}" != "${TARGET_SHA}" ]; then
+            echo "::error::Release branch HEAD changed. Expected ${TARGET_SHA}, got ${ACTUAL_SHA}."
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -773,3 +822,79 @@ jobs:
         run: |
           set -euo pipefail
           gh release upload "${TAG}" dist/release-upload/* --clobber
+
+  merge-release-branch:
+    name: Merge release branch
+    needs:
+      - validate-release
+      - publish-release
+    if: needs.publish-release.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate-release.outputs.version }}
+      RELEASE_BRANCH: ${{ needs.validate-release.outputs.release_branch }}
+      BASE_BRANCH: ${{ needs.validate-release.outputs.base_branch }}
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate-release.outputs.base_branch }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge release branch into base branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin "${BASE_BRANCH}" "${RELEASE_BRANCH}"
+          git checkout -B "${BASE_BRANCH}" "origin/${BASE_BRANCH}"
+          git merge --no-ff --no-edit "origin/${RELEASE_BRANCH}" -m "chore: merge release v${VERSION}"
+          git push origin "HEAD:${BASE_BRANCH}"
+
+  cleanup-failed-release-branch:
+    name: Delete failed release branch
+    needs:
+      - validate-release
+      - check-ios-signing
+      - build-desktop
+      - build-android
+      - build-ios
+      - publish-release
+      - merge-release-branch
+    if: >-
+      always()
+      && needs.validate-release.outputs.release_branch != ''
+      && (
+        needs.validate-release.result == 'failure'
+        || needs.validate-release.result == 'cancelled'
+        || needs.check-ios-signing.result == 'failure'
+        || needs.build-desktop.result == 'failure'
+        || needs.build-desktop.result == 'cancelled'
+        || needs.build-android.result == 'failure'
+        || needs.build-android.result == 'cancelled'
+        || needs.build-ios.result == 'failure'
+        || needs.build-ios.result == 'cancelled'
+        || needs.publish-release.result == 'failure'
+        || needs.publish-release.result == 'cancelled'
+        || needs.merge-release-branch.result == 'failure'
+        || needs.merge-release-branch.result == 'cancelled'
+      )
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_BRANCH: ${{ needs.validate-release.outputs.release_branch }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Delete release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin --delete "${RELEASE_BRANCH}" || echo "Release branch was already deleted: ${RELEASE_BRANCH}"
