@@ -863,28 +863,36 @@ input[type="number"]:focus {
 .backup-options-list { display: grid; gap: 10px; }
 .backup-option-card { margin: 0 !important; }
 .backup-option-card-media {
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px !important;
   border-color: color-mix(in srgb, var(--warning, #f59e0b) 42%, var(--outline-variant)) !important;
   background: color-mix(in srgb, var(--warning, #f59e0b) 8%, var(--surface-container)) !important;
 }
-.backup-media-option-copy b {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.backup-media-option-copy {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 8px;
+}
+.backup-media-option-text {
+  min-width: 0;
 }
 .backup-media-warning-icon {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--warning, #f59e0b) 88%, var(--primary));
   color: #1f1300;
-  font-size: 1.15rem;
+  font-size: 1rem;
   font-weight: 1000;
   line-height: 1;
 }
 .backup-media-warning-text {
-  margin-top: 6px !important;
+  margin-top: 4px !important;
   color: color-mix(in srgb, var(--warning, #f59e0b) 88%, var(--on-surface)) !important;
   font-weight: 800;
 }

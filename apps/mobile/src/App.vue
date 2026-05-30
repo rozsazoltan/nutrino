@@ -16194,7 +16194,7 @@ function setTab(tab: Tab) {
               <input v-model="backupIncludeOptions.healthDiary" type="checkbox" />
             </label>
             <label v-if="backupIncludeOptions.healthDiary" class="source-choice-card source-choice-card-simple backup-option-card backup-option-card-media">
-              <span class="backup-media-option-copy"><b><span class="backup-media-warning-icon" aria-hidden="true">!</span>{{ t('backupIncludeHealthMedia') }}</b><small>{{ t('backupIncludeHealthMediaHint') }}</small><small class="backup-media-warning-text">{{ t('backupIncludeHealthMediaWarning') }}</small></span>
+              <span class="backup-media-option-copy"><span class="backup-media-warning-icon" aria-hidden="true">!</span><span class="backup-media-option-text"><b>{{ t('backupIncludeHealthMedia') }}</b><small>{{ t('backupIncludeHealthMediaHint') }}</small><small class="backup-media-warning-text">{{ t('backupIncludeHealthMediaWarning') }}</small></span></span>
               <input v-model="backupIncludeOptions.healthMedia" type="checkbox" />
             </label>
           </div>
