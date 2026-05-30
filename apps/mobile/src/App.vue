@@ -13973,6 +13973,9 @@ function setTab(tab: Tab) {
       </article>
 
       <article class="card dashboard-card" data-tour="dashboard">
+        <button class="home-weight-chip" type="button" :aria-label="t('editWeight')" :title="t('editWeight')" @click="openWeightReminderModal">
+          {{ currentDayWeightKg ? `${Number(currentDayWeightKg).toFixed(1)} kg` : '— kg' }}
+        </button>
         <div class="source-action"><button class="icon-button" :aria-label="t('sources')" v-html="lucideSvg('info')"></button></div>
         <div class="dashboard-row">
           <div class="side-stat">
