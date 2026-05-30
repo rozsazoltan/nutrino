@@ -218,8 +218,10 @@ const state = reactive<AppState>(loadState());
 const githubDraft = ref({ owner: '', repo: '', branch: 'main', path: '', token: '' });
 const githubSyncBusy = ref(false);
 const scanDialogOpen = ref(false);
-const scanDialogMode = ref<'catalog' | 'barcode'>('catalog');
+type ScanDialogMode = 'catalog' | 'barcode' | 'foodBarcodeField';
+const scanDialogMode = ref<ScanDialogMode>('catalog');
 const scanInput = ref('');
+const pendingScannedBarcode = ref('');
 const scanVideo = ref<HTMLVideoElement | null>(null);
 const scannerActive = ref(false);
 type PendingCatalogQrSequence = { id: string; total: number; parts: Record<number, string> };
@@ -8158,7 +8160,7 @@ function resetLocalCatalogForm() {
   localRecipeItems.value = [];
 }
 
-function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient | Recipe | ActivityDefinition, options: { duplicate?: boolean } = {}) {
+function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient | Recipe | ActivityDefinition, options: { duplicate?: boolean; initialBarcode?: string } = {}) {
   catalogMenuOpen.value = false;
   const duplicate = options.duplicate === true;
   localEditorKind.value = kind;
@@ -8172,7 +8174,7 @@ function openLocalCatalogEditor(kind: LocalEditorKind, item?: Food | Ingredient 
       name_i18n: { ...(entry?.name_i18n ?? {}) },
       brand: kind === 'food' ? ((entry as Food | undefined)?.brand ?? '') : '',
       note: entry?.note ?? '',
-      barcode: kind === 'food' ? ((entry as Food | undefined)?.barcode ?? '') : '',
+      barcode: kind === 'food' ? (options.initialBarcode ?? (entry as Food | undefined)?.barcode ?? '') : '',
       default_unit: entry?.default_unit || 'g',
       serving_size_g: entry?.serving_size_g ?? null,
       kcal_per_100g: entry?.kcal_per_100g ?? null,
@@ -13362,9 +13364,59 @@ function recordCatalogQrPart(value: string): boolean {
   }
 }
 
+function stopScannerStream() {
+  scannerActive.value = false;
+  if (scannerStream) {
+    scannerStream.getTracks().forEach((track) => track.stop());
+    scannerStream = null;
+  }
+}
+
+function scannedBarcodeCanCreateFood() {
+  return scanDialogMode.value === 'catalog' || scanDialogMode.value === 'barcode';
+}
+
+function applyScannedBarcodeToFoodForm(value: string) {
+  localCatalogForm.barcode = value;
+  closeScanner();
+  showToast(`${t('barcodeQr')}: ${value}`);
+}
+
+function offerFoodCreationFromScannedBarcode(value: string) {
+  pendingScannedBarcode.value = value;
+  stopScannerStream();
+  showToast(t('noMatchingItem'));
+}
+
+function createFoodFromScannedBarcode() {
+  const barcode = pendingScannedBarcode.value.trim();
+  if (!barcode) return;
+  closeScanner();
+  openLocalCatalogEditor('food', undefined, { initialBarcode: barcode });
+}
+
+async function continueScanningBarcode() {
+  pendingScannedBarcode.value = '';
+  scanInput.value = '';
+  lastScannerRawValue = '';
+  lastScannerRawAt = 0;
+  await nextTick();
+  await startCameraScanner();
+}
+
+function scannerDialogTitle() {
+  return scanDialogMode.value === 'catalog' ? t('scanNutrinoQr') : t('scanBarcodeQr');
+}
+
 function applyScannedValue(rawValue = scanInput.value): boolean {
   const value = normalizeScanValue(rawValue);
   if (!value) return false;
+
+  if (scanDialogMode.value === 'foodBarcodeField') {
+    applyScannedBarcodeToFoodForm(value);
+    return true;
+  }
+
   try {
     const partPrefix = 'nutrino-catalog-part-v1:';
     if (value.startsWith(partPrefix)) return recordCatalogQrPart(value);
@@ -13384,13 +13436,18 @@ function applyScannedValue(rawValue = scanInput.value): boolean {
     showToast(`Selected ${localizedName(item)}.`);
     return true;
   }
-  showToast('No matching food or recipe found for this code.');
+  if (scannedBarcodeCanCreateFood()) {
+    offerFoodCreationFromScannedBarcode(value);
+    return true;
+  }
+  showToast(t('noMatchingItem'));
   return false;
 }
 
-async function openScanner(mode: 'catalog' | 'barcode' = 'catalog') {
+async function openScanner(mode: ScanDialogMode = 'catalog') {
   scanDialogMode.value = mode;
   scanInput.value = '';
+  pendingScannedBarcode.value = '';
   pendingCatalogQrSequence.value = null;
   lastScannerRawValue = '';
   lastScannerRawAt = 0;
@@ -13456,12 +13513,9 @@ async function startCameraScanner() {
 }
 
 function closeScanner() {
-  scannerActive.value = false;
-  if (scannerStream) {
-    scannerStream.getTracks().forEach((track) => track.stop());
-    scannerStream = null;
-  }
+  stopScannerStream();
   scanDialogOpen.value = false;
+  pendingScannedBarcode.value = '';
 }
 
 
@@ -15739,7 +15793,7 @@ function setTab(tab: Tab) {
             <label v-if="localEditorKind === 'food'" class="field-label">{{ t('barcodeQr') }}</label>
             <div v-if="localEditorKind === 'food'" class="inline-field-action">
               <input v-model="localCatalogForm.barcode" class="input" :placeholder="t('optional')" />
-              <button class="scan-button" type="button" :aria-label="t('scanBarcodeQrAria')" @click="openScanner('barcode')" v-html="lucideSvg('scanLine')"></button>
+              <button class="scan-button" type="button" :aria-label="t('scanBarcodeQrAria')" @click="openScanner('foodBarcodeField')" v-html="lucideSvg('scanLine')"></button>
             </div>
             <label class="field-label">{{ t('note') }}</label>
             <input v-model="localCatalogForm.note" class="input" :placeholder="t('optional')" />
@@ -16734,11 +16788,20 @@ function setTab(tab: Tab) {
     <Teleport to="body">
       <div v-if="scanDialogOpen" class="dialog-backdrop app-overlay" @click.self="closeScanner">
         <article class="settings-dialog scanner-dialog">
-          <div class="dialog-title-row"><h2>{{ scanDialogMode === 'barcode' ? t('scanBarcodeQr') : t('scanNutrinoQr') }}</h2><button class="text-button" @click="closeScanner">{{ t('cancel') }}</button></div>
+          <div class="dialog-title-row"><h2>{{ scannerDialogTitle() }}</h2><button class="text-button" @click="closeScanner">{{ t('cancel') }}</button></div>
           <video ref="scanVideo" class="scanner-video" playsinline muted></video>
           <p class="helper big">{{ t('scanHelper') }}</p>
-          <input v-model="scanInput" class="input" :placeholder="t('scanPlaceholder')" @keydown.enter.prevent="applyScannedValue()" autocomplete="off" autocapitalize="none" />
-          <button class="filled-button wide" @click="applyScannedValue()">{{ t('scan') }}</button>
+          <article v-if="pendingScannedBarcode" class="scanner-result-card">
+            <div><b>{{ t('noMatchingItem') }}</b><small>{{ t('barcodeQr') }}: {{ pendingScannedBarcode }}</small></div>
+            <div class="scanner-result-actions">
+              <button class="text-button" type="button" @click="continueScanningBarcode">{{ t('scan') }}</button>
+              <button class="filled-button" type="button" @click="createFoodFromScannedBarcode">{{ t('addLocalFood') }}</button>
+            </div>
+          </article>
+          <template v-else>
+            <input v-model="scanInput" class="input" :placeholder="t('scanPlaceholder')" @keydown.enter.prevent="applyScannedValue()" autocomplete="off" autocapitalize="none" />
+            <button class="filled-button wide" @click="applyScannedValue()">{{ t('scan') }}</button>
+          </template>
         </article>
       </div>
     </Teleport>
