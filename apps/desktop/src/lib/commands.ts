@@ -67,5 +67,7 @@ export const commands = {
   requestMobileBackupExport: (deviceId: string) => invoke<MobileHandoffRequest>('request_mobile_backup_export', { deviceId }),
   requestMobileAiExport: (deviceId: string) => invoke<MobileHandoffRequest>('request_mobile_ai_export', { deviceId }),
   sendMobileBackupImport: (deviceId: string, filename: string, backupBase64: string) => invoke<MobileHandoffRequest>('send_mobile_backup_import', { deviceId, filename, backupBase64 }),
+  getDefaultDownloadDir: () => invoke<string>('get_default_download_dir'),
+  saveFileToDefaultDownloadDir: (filename: string, bytes: number[]) => invoke<string>('save_file_to_default_download_dir', { filename, bytes }),
   downloadAndOpenUpdateInstaller: (url: string, assetName?: string) => invoke<string>('download_and_open_update_installer', { url, assetName }),
 };

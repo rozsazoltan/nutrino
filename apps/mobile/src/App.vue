@@ -9,7 +9,7 @@ import { cancel, createChannel, Importance, isPermissionGranted, onAction, regis
 import { driver, type DriveStep, type Driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
 import JSZip from 'jszip';
-import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, HealthAttachment, HealthCategoryType, HealthEntry, Ingredient, Intake, LocalizedNameMap, MealType, ProfilePurpose, Recipe, RecipeItem, WeightLog, GitHubCsvSource, MobileHandoffRequest } from './types';
+import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, HealthAttachment, HealthCategoryType, HealthEntry, Ingredient, Intake, LocalizedNameMap, MealType, ProfilePurpose, Recipe, RecipeItem, WeightLog, GitHubCsvSource, MobileHandoffKind, MobileHandoffRequest } from './types';
 import {
   ageFromBirthday,
   bmi,
@@ -97,9 +97,9 @@ type HealthMediaGalleryItem = {
   occurrenceAt: number;
   sameOccurrenceDay: boolean;
 };
-type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'deficit' | 'health-review';
-type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-breakfast' | 'log-lunch' | 'log-dinner' | 'open-analysis' | 'open-health-review' | 'dismiss';
-type NutrinoNotificationExtra = { nutrino: true; kind: NutrinoNotificationKind; mealType?: MealType; scheduledTime?: string };
+type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'deficit' | 'health-review' | 'desktop-handoff';
+type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-breakfast' | 'log-lunch' | 'log-dinner' | 'open-analysis' | 'open-health-review' | 'open-desktop-handoff' | 'desktop-handoff-allow' | 'desktop-handoff-reject' | 'desktop-handoff-use-backup' | 'desktop-handoff-keep-backup' | 'desktop-handoff-delete-backup' | 'dismiss';
+type NutrinoNotificationExtra = { nutrino: true; kind: NutrinoNotificationKind; mealType?: MealType; scheduledTime?: string; desktopHandoffRequestId?: string; desktopHandoffKind?: MobileHandoffKind };
 type NutrinoNotificationEvent = {
   actionId?: string;
   action?: string;
@@ -138,6 +138,8 @@ const NOTIFICATION_ACTION_TYPES = {
   mealDinner: 'nutrino-meal-dinner-actions',
   deficit: 'nutrino-deficit-actions',
   healthReview: 'nutrino-health-review-actions',
+  desktopHandoffDecision: 'nutrino-desktop-handoff-decision-actions',
+  desktopHandoffImport: 'nutrino-desktop-handoff-import-actions',
 } as const;
 const REMINDER_NOTIFICATION_IDS = {
   daily: 130100,
@@ -359,7 +361,9 @@ const weightReminderModalOpen = ref(false);
 const notificationHighlightedMealType = ref<MealType | null>(null);
 const desktopHandoffRequests = ref<MobileHandoffRequest[]>([]);
 const activeDesktopHandoffRequest = ref<MobileHandoffRequest | null>(null);
+const desktopHandoffNotificationsOpen = ref(false);
 const desktopHandoffBusy = ref(false);
+const pendingDesktopHandoffNotificationCount = computed(() => desktopHandoffRequests.value.length);
 const notifiedDesktopHandoffIds = new Set<string>();
 
 const languageSearch = ref('');
@@ -7456,6 +7460,10 @@ const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>
   en: {
     desktopHandoffRequestTitle: 'Desktop request',
     desktopHandoffRequestBody: '{desktop} sent a data request.',
+    desktopHandoffNotifications: 'Notifications',
+    desktopHandoffNotificationsBody: 'Desktop requests that need your approval.',
+    desktopHandoffNoNotifications: 'No desktop requests waiting for review.',
+    desktopHandoffNotificationBadge: '{count} pending desktop requests',
     desktopBackupExportRequestTitle: 'Backup export request',
     desktopBackupExportRequestBody: '{desktop} wants to receive a mobile backup export. Allow data transfer?',
     desktopAiExportRequestTitle: 'AI export request',
@@ -7463,6 +7471,8 @@ const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>
     desktopBackupImportRequestTitle: 'New backup from desktop',
     desktopBackupImportRequestBody: '{desktop} sent a new backup ({filename}). Use it, keep it as a local restore point, or delete it?',
     desktopHandoffAllow: 'Allow',
+    desktopHandoffYes: 'Yes',
+    desktopHandoffNo: 'No',
     desktopHandoffReject: 'Reject',
     desktopHandoffUseBackup: 'Use backup',
     desktopHandoffKeepBackup: 'Keep backup',
@@ -7476,6 +7486,10 @@ const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>
   hu: {
     desktopHandoffRequestTitle: 'Desktop kérés',
     desktopHandoffRequestBody: '{desktop} adatkezelési kérést küldött.',
+    desktopHandoffNotifications: 'Értesítések',
+    desktopHandoffNotificationsBody: 'Jóváhagyásra váró desktop kérések.',
+    desktopHandoffNoNotifications: 'Nincs átnézendő desktop kérés.',
+    desktopHandoffNotificationBadge: '{count} függőben lévő desktop kérés',
     desktopBackupExportRequestTitle: 'Backup export kérés',
     desktopBackupExportRequestBody: '{desktop} mobil backup exportot szeretne kapni. Engedélyezed az adattovábbítást?',
     desktopAiExportRequestTitle: 'AI export kérés',
@@ -7483,6 +7497,8 @@ const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>
     desktopBackupImportRequestTitle: 'Új backup érkezett desktopról',
     desktopBackupImportRequestBody: '{desktop} új backupot küldött ({filename}). Használod, megtartod helyi visszaállítási pontként, vagy törlöd?',
     desktopHandoffAllow: 'Engedélyezés',
+    desktopHandoffYes: 'Igen',
+    desktopHandoffNo: 'Nem',
     desktopHandoffReject: 'Elutasítás',
     desktopHandoffUseBackup: 'Használom',
     desktopHandoffKeepBackup: 'Megtartom',
@@ -7734,6 +7750,7 @@ watch(() => state.settings.desktop_api_enabled, (enabled) => {
   closeDesktopHandoffSocket();
   desktopHandoffRequests.value = [];
   activeDesktopHandoffRequest.value = null;
+  desktopHandoffNotificationsOpen.value = false;
   serverOnline.value = false;
   state.pairing.lastSyncError = undefined;
 });
@@ -11583,6 +11600,8 @@ function buildNotificationOptions(options: {
   actionTypeId?: string;
   mealType?: MealType;
   scheduledTime?: string;
+  desktopHandoffRequestId?: string;
+  desktopHandoffKind?: MobileHandoffKind;
   schedule?: Schedule;
 }): NotificationOptions {
   const notification: NotificationOptions = {
@@ -11605,6 +11624,8 @@ function buildNotificationOptions(options: {
       kind: options.kind,
       mealType: options.mealType,
       scheduledTime: options.scheduledTime,
+      desktopHandoffRequestId: options.desktopHandoffRequestId,
+      desktopHandoffKind: options.desktopHandoffKind,
       ...actionMetadata,
     } satisfies NutrinoNotificationExtra & { actionId?: NutrinoNotificationAction; actionTitle?: string };
   }
@@ -11620,6 +11641,8 @@ async function notifyUser(title: string, body: string, options: {
   actionTypeId?: string;
   mealType?: MealType;
   scheduledTime?: string;
+  desktopHandoffRequestId?: string;
+  desktopHandoffKind?: MobileHandoffKind;
 } = {}) {
   try {
     if (await isPermissionGranted()) {
@@ -11681,6 +11704,7 @@ function notificationActionMetadata(kind?: NutrinoNotificationKind, mealType?: M
   if (kind === 'meal' && mealType) return { actionId: mealNotificationActionId(mealType), actionTitle: mealNotificationActionLabel(mealType) };
   if (kind === 'deficit') return { actionId: 'open-analysis', actionTitle: notificationActionTitle('openAnalysis', 'Open analysis') };
   if (kind === 'health-review') return { actionId: 'open-health-review', actionTitle: healthReviewNotificationActionLabel() };
+  if (kind === 'desktop-handoff') return { actionId: 'open-desktop-handoff', actionTitle: t('desktopHandoffNotifications') };
   return {};
 }
 
@@ -11721,6 +11745,21 @@ async function registerNotificationActionTypes() {
       id: NOTIFICATION_ACTION_TYPES.healthReview,
       actions: [
         { id: 'open-health-review', title: healthReviewNotificationActionLabel(), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.desktopHandoffDecision,
+      actions: [
+        { id: 'desktop-handoff-allow', title: t('desktopHandoffYes'), requiresAuthentication: false, foreground: true },
+        { id: 'desktop-handoff-reject', title: t('desktopHandoffNo'), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.desktopHandoffImport,
+      actions: [
+        { id: 'desktop-handoff-use-backup', title: t('desktopHandoffUseBackup'), requiresAuthentication: false, foreground: true },
+        { id: 'desktop-handoff-keep-backup', title: t('desktopHandoffKeepBackup'), requiresAuthentication: false, foreground: true },
+        { id: 'desktop-handoff-delete-backup', title: t('desktopHandoffDeleteBackup'), requiresAuthentication: false, foreground: true },
       ],
     },
   ]);
@@ -11914,7 +11953,7 @@ async function initializeNotifications() {
 
 function normalizeNotificationAction(action: unknown): NutrinoNotificationAction {
   const value = String(action || 'tap');
-  return ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'open-health-review', 'dismiss'].includes(value)
+  return ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'open-health-review', 'open-desktop-handoff', 'desktop-handoff-allow', 'desktop-handoff-reject', 'desktop-handoff-use-backup', 'desktop-handoff-keep-backup', 'desktop-handoff-delete-backup', 'dismiss'].includes(value)
     ? value as NutrinoNotificationAction
     : 'tap';
 }
@@ -11954,9 +11993,11 @@ function normalizeNotificationExtra(extra: unknown): Partial<NutrinoNotification
   };
   const result: Partial<NutrinoNotificationExtra> = {};
   if (merged.nutrino === true) result.nutrino = true;
-  if (['daily', 'weight', 'meal', 'deficit', 'health-review'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
+  if (['daily', 'weight', 'meal', 'deficit', 'health-review', 'desktop-handoff'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
   if (['breakfast', 'lunch', 'dinner', 'snack'].includes(String(merged.mealType))) result.mealType = merged.mealType as MealType;
   if (typeof merged.scheduledTime === 'string') result.scheduledTime = merged.scheduledTime;
+  if (typeof merged.desktopHandoffRequestId === 'string') result.desktopHandoffRequestId = merged.desktopHandoffRequestId;
+  if (typeof merged.desktopHandoffKind === 'string') result.desktopHandoffKind = merged.desktopHandoffKind as MobileHandoffKind;
   return result;
 }
 
@@ -11984,6 +12025,7 @@ function closeTransientSurfacesForNotificationAction() {
   settingsDialog.value = null;
   quickAddOpen.value = false;
   weightReminderModalOpen.value = false;
+  desktopHandoffNotificationsOpen.value = false;
   notificationHighlightedMealType.value = null;
   backupProfilesOpen.value = false;
   duplicateMealTargetOpen.value = false;
@@ -11997,6 +12039,32 @@ function closeTransientSurfacesForNotificationAction() {
 
 async function applyNotificationAction(action: NutrinoNotificationAction, extra: Partial<NutrinoNotificationExtra>) {
   if (action === 'dismiss') return;
+  if (extra.kind === 'desktop-handoff' || action.startsWith('desktop-handoff') || action === 'open-desktop-handoff') {
+    await pollDesktopHandoffRequests();
+    const request = extra.desktopHandoffRequestId ? desktopHandoffRequests.value.find((item) => item.id === extra.desktopHandoffRequestId) : null;
+    if (action === 'desktop-handoff-allow') {
+      if (request) await approveDesktopExportRequest(request);
+      return;
+    }
+    if (action === 'desktop-handoff-reject') {
+      if (request) await rejectDesktopHandoffRequest(request);
+      return;
+    }
+    if (action === 'desktop-handoff-use-backup') {
+      if (request) await useDesktopBackupImportRequest(request);
+      return;
+    }
+    if (action === 'desktop-handoff-keep-backup') {
+      if (request) await keepDesktopBackupImportRequest(request);
+      return;
+    }
+    if (action === 'desktop-handoff-delete-backup') {
+      if (request) await deleteDesktopBackupImportRequest(request);
+      return;
+    }
+    desktopHandoffNotificationsOpen.value = true;
+    return;
+  }
   refreshTodayKey();
   selectedDate.value = todayKey.value;
   calendarMonth.value = new Date(dayStartMs(todayKey.value));
@@ -12064,7 +12132,7 @@ function handleNotificationAction(payload: unknown) {
     ...normalizeNotificationExtra(event.data),
     ...normalizeNotificationExtra(event.extra),
   };
-  const signature = `${notificationId ?? 'unknown'}:${action}:${extra.kind ?? 'unknown'}:${extra.mealType ?? ''}`;
+  const signature = `${notificationId ?? 'unknown'}:${action}:${extra.kind ?? 'unknown'}:${extra.mealType ?? ''}:${extra.desktopHandoffRequestId ?? ''}`;
   const now = Date.now();
   if (signature === lastNotificationActionSignature && now - lastNotificationActionHandledAt < 10000) return;
   lastNotificationActionSignature = signature;
@@ -14140,10 +14208,50 @@ function desktopHandoffBody(request: MobileHandoffRequest | null) {
   return t('desktopHandoffRequestBody').replace('{desktop}', desktopName);
 }
 
+function desktopHandoffNotificationBadgeLabel() {
+  return t('desktopHandoffNotificationBadge').replace('{count}', String(pendingDesktopHandoffNotificationCount.value));
+}
+
+function desktopHandoffNotificationId(requestId: string): number {
+  let hash = 0;
+  for (let index = 0; index < requestId.length; index += 1) {
+    hash = ((hash * 31) + requestId.charCodeAt(index)) >>> 0;
+  }
+  return 150000 + (hash % 50000);
+}
+
+function desktopHandoffNotificationActionType(request: MobileHandoffRequest): string {
+  return request.kind === 'backup_import' ? NOTIFICATION_ACTION_TYPES.desktopHandoffImport : NOTIFICATION_ACTION_TYPES.desktopHandoffDecision;
+}
+
+async function cancelDesktopHandoffNotification(requestId: string) {
+  if (!isTauriRuntime() || !isMobileRuntime()) return;
+  try {
+    await cancel([desktopHandoffNotificationId(requestId)]);
+  } catch {
+    // Best-effort cleanup only; the in-app request list is authoritative.
+  }
+}
+
+function openDesktopHandoffNotifications() {
+  desktopHandoffNotificationsOpen.value = true;
+  void pollDesktopHandoffRequests();
+}
+
+function closeDesktopHandoffNotifications() {
+  desktopHandoffNotificationsOpen.value = false;
+}
+
 async function notifyDesktopHandoffRequest(request: MobileHandoffRequest) {
   if (notifiedDesktopHandoffIds.has(request.id)) return;
   notifiedDesktopHandoffIds.add(request.id);
-  await notifyUser(desktopHandoffTitle(request), desktopHandoffBody(request));
+  await notifyUser(desktopHandoffTitle(request), desktopHandoffBody(request), {
+    id: desktopHandoffNotificationId(request.id),
+    kind: 'desktop-handoff',
+    actionTypeId: desktopHandoffNotificationActionType(request),
+    desktopHandoffRequestId: request.id,
+    desktopHandoffKind: request.kind,
+  });
 }
 
 async function pollDesktopHandoffRequests() {
@@ -14151,10 +14259,10 @@ async function pollDesktopHandoffRequests() {
   try {
     const requests = await listMobileHandoffRequests(state);
     desktopHandoffRequests.value = requests;
-    if (!activeDesktopHandoffRequest.value && requests.length) {
-      activeDesktopHandoffRequest.value = requests[0];
-      await notifyDesktopHandoffRequest(requests[0]);
+    if (activeDesktopHandoffRequest.value && !requests.some((request) => request.id === activeDesktopHandoffRequest.value?.id)) {
+      activeDesktopHandoffRequest.value = null;
     }
+    if (!requests.length) desktopHandoffNotificationsOpen.value = false;
     for (const request of requests) void notifyDesktopHandoffRequest(request);
   } catch {
     // The normal server health polling already reports connectivity state.
@@ -14164,11 +14272,13 @@ async function pollDesktopHandoffRequests() {
 async function finishDesktopHandoffRequest(request: MobileHandoffRequest, status: 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error', payload: { result_filename?: string; result_mime_type?: string; result_base64?: string; message?: string } = {}) {
   await respondMobileHandoffRequest(state, request.id, { status, ...payload });
   desktopHandoffRequests.value = desktopHandoffRequests.value.filter((item) => item.id !== request.id);
-  if (activeDesktopHandoffRequest.value?.id === request.id) activeDesktopHandoffRequest.value = desktopHandoffRequests.value[0] ?? null;
+  await cancelDesktopHandoffNotification(request.id);
+  notifiedDesktopHandoffIds.delete(request.id);
+  if (activeDesktopHandoffRequest.value?.id === request.id) activeDesktopHandoffRequest.value = null;
+  if (!desktopHandoffRequests.value.length) desktopHandoffNotificationsOpen.value = false;
 }
 
-async function rejectDesktopHandoffRequest() {
-  const request = activeDesktopHandoffRequest.value;
+async function rejectDesktopHandoffRequest(request = activeDesktopHandoffRequest.value) {
   if (!request || desktopHandoffBusy.value) return;
   desktopHandoffBusy.value = true;
   try {
@@ -14181,8 +14291,7 @@ async function rejectDesktopHandoffRequest() {
   }
 }
 
-async function approveDesktopExportRequest() {
-  const request = activeDesktopHandoffRequest.value;
+async function approveDesktopExportRequest(request = activeDesktopHandoffRequest.value) {
   if (!request || desktopHandoffBusy.value) return;
   desktopHandoffBusy.value = true;
   exportBusy.value = true;
@@ -14229,8 +14338,7 @@ async function approveDesktopExportRequest() {
   }
 }
 
-async function useDesktopBackupImportRequest() {
-  const request = activeDesktopHandoffRequest.value;
+async function useDesktopBackupImportRequest(request = activeDesktopHandoffRequest.value) {
   if (!request || desktopHandoffBusy.value) return;
   desktopHandoffBusy.value = true;
   try {
@@ -14245,8 +14353,7 @@ async function useDesktopBackupImportRequest() {
   }
 }
 
-async function keepDesktopBackupImportRequest() {
-  const request = activeDesktopHandoffRequest.value;
+async function keepDesktopBackupImportRequest(request = activeDesktopHandoffRequest.value) {
   if (!request || desktopHandoffBusy.value) return;
   desktopHandoffBusy.value = true;
   try {
@@ -14263,8 +14370,7 @@ async function keepDesktopBackupImportRequest() {
   }
 }
 
-async function deleteDesktopBackupImportRequest() {
-  const request = activeDesktopHandoffRequest.value;
+async function deleteDesktopBackupImportRequest(request = activeDesktopHandoffRequest.value) {
   if (!request || desktopHandoffBusy.value) return;
   desktopHandoffBusy.value = true;
   try {
@@ -14508,6 +14614,10 @@ function setTab(tab: Tab) {
           <span class="sync-dot" :class="serverOnline ? '' : githubCatalogAvailable ? 'available' : 'offline'"></span>
           {{ syncBusy ? t('syncing') : serverOnline ? t('online') : githubCatalogAvailable ? t('available') : t('offline') }}
         </button>
+        <button v-if="state.settings.desktop_api_enabled !== false" class="appbar-notifications-button" type="button" :aria-label="desktopHandoffNotificationBadgeLabel()" :title="t('desktopHandoffNotifications')" @click="openDesktopHandoffNotifications">
+          <span v-html="lucideSvg('bell')"></span>
+          <em v-if="pendingDesktopHandoffNotificationCount">{{ pendingDesktopHandoffNotificationCount }}</em>
+        </button>
         <button v-if="updateAvailable" class="appbar-update-chip" type="button" :aria-label="updateReleaseTitle()" :title="updateReleaseTitle()" @click="openUpdateCenter"><span v-html="lucideSvg('refreshCw')"></span>{{ updateCheckResult?.release?.version }}</button>
         <button class="settings-button" data-tour="settings" :aria-label="t('settings')" @click="openSettings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8.4 8.4 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A8.4 8.4 0 0 0 7 6L4.6 5 2.6 8.5l2 1.5a8.8 8.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a8.4 8.4 0 0 0 2.6 1.5L10 22h4l.4-2.5A8.4 8.4 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"/></svg>
@@ -14515,21 +14625,32 @@ function setTab(tab: Tab) {
       </div>
     </header>
 
-    <div v-if="activeDesktopHandoffRequest" class="modal-backdrop desktop-handoff-backdrop">
-      <article class="modal-card desktop-handoff-dialog">
+    <div v-if="desktopHandoffNotificationsOpen" class="modal-backdrop desktop-handoff-backdrop">
+      <article class="modal-card desktop-handoff-dialog desktop-handoff-notifications-dialog">
         <div class="dialog-title-row">
-          <h2>{{ desktopHandoffTitle(activeDesktopHandoffRequest) }}</h2>
-          <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" :disabled="desktopHandoffBusy" @click="rejectDesktopHandoffRequest" v-html="lucideSvg('x')"></button>
+          <div>
+            <h2>{{ t('desktopHandoffNotifications') }}</h2>
+            <p class="helper">{{ t('desktopHandoffNotificationsBody') }}</p>
+          </div>
+          <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" :disabled="desktopHandoffBusy" @click="closeDesktopHandoffNotifications" v-html="lucideSvg('x')"></button>
         </div>
-        <p class="helper big">{{ desktopHandoffBody(activeDesktopHandoffRequest) }}</p>
-        <div v-if="activeDesktopHandoffRequest.kind === 'backup_import'" class="dialog-actions desktop-handoff-actions">
-          <button class="filled-button" type="button" :disabled="desktopHandoffBusy" @click="useDesktopBackupImportRequest">{{ t('desktopHandoffUseBackup') }}</button>
-          <button class="outlined-button" type="button" :disabled="desktopHandoffBusy" @click="keepDesktopBackupImportRequest">{{ t('desktopHandoffKeepBackup') }}</button>
-          <button class="delete-button" type="button" :disabled="desktopHandoffBusy" @click="deleteDesktopBackupImportRequest">{{ t('desktopHandoffDeleteBackup') }}</button>
-        </div>
-        <div v-else class="dialog-actions desktop-handoff-actions">
-          <button class="filled-button" type="button" :disabled="desktopHandoffBusy" @click="approveDesktopExportRequest">{{ t('desktopHandoffAllow') }}</button>
-          <button class="outlined-button" type="button" :disabled="desktopHandoffBusy" @click="rejectDesktopHandoffRequest">{{ t('desktopHandoffReject') }}</button>
+        <p v-if="!desktopHandoffRequests.length" class="empty-line">{{ t('desktopHandoffNoNotifications') }}</p>
+        <div v-else class="desktop-handoff-notification-list">
+          <article v-for="request in desktopHandoffRequests" :key="request.id" class="desktop-handoff-notification-card">
+            <div>
+              <b>{{ desktopHandoffTitle(request) }}</b>
+              <small>{{ desktopHandoffBody(request) }}</small>
+            </div>
+            <div v-if="request.kind === 'backup_import'" class="dialog-actions desktop-handoff-actions">
+              <button class="filled-button" type="button" :disabled="desktopHandoffBusy" @click="useDesktopBackupImportRequest(request)">{{ t('desktopHandoffUseBackup') }}</button>
+              <button class="outlined-button" type="button" :disabled="desktopHandoffBusy" @click="keepDesktopBackupImportRequest(request)">{{ t('desktopHandoffKeepBackup') }}</button>
+              <button class="delete-button" type="button" :disabled="desktopHandoffBusy" @click="deleteDesktopBackupImportRequest(request)">{{ t('desktopHandoffDeleteBackup') }}</button>
+            </div>
+            <div v-else class="dialog-actions desktop-handoff-actions">
+              <button class="filled-button" type="button" :disabled="desktopHandoffBusy" @click="approveDesktopExportRequest(request)">{{ t('desktopHandoffAllow') }}</button>
+              <button class="outlined-button" type="button" :disabled="desktopHandoffBusy" @click="rejectDesktopHandoffRequest(request)">{{ t('desktopHandoffReject') }}</button>
+            </div>
+          </article>
         </div>
       </article>
     </div>

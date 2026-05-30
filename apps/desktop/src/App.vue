@@ -2,9 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { lucideSvg, type IconName } from './icons';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { readFile, writeFile } from '@tauri-apps/plugin-fs';
+import { readFile } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
 import * as QRCode from 'qrcode';
 import { commands } from './lib/commands';
@@ -78,6 +78,16 @@ const updateBusy = ref(false);
 const updateDialogOpen = ref(false);
 const updateCheckResult = ref<UpdateCheckResult | null>(null);
 const updateAvailable = computed(() => updateCheckResult.value?.status === 'available' && Boolean(updateCheckResult.value.release));
+const resolvedDefaultDownloadDir = ref('');
+const savedMobileHandoffResultIdsKey = `nutrino.desktop.${appChannel}.mobileHandoff.savedResults.v1`;
+const savedMobileHandoffResultIds = new Set<string>((() => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(savedMobileHandoffResultIdsKey) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+})());
 const updateRemindLaterKey = `nutrino.desktop.${appChannel}.update.remindLater.v1`;
 let updateCheckUnlisten: UnlistenFn | null = null;
 let mobileHandoffUnlisten: UnlistenFn | null = null;
@@ -4403,6 +4413,12 @@ const desktopUpdateTranslations: Record<string, Record<string, string>> = {
     'ui.updateInstallerFailed': 'Could not start the update installer',
     'ui.updateInstallerFallback': 'Could not start the installer directly; opening the download instead',
     'ui.mobileRequestedDesktopUpdateCheck': 'Mobile requested a desktop update check.',
+    'ui.defaultDownloadFolder': 'Default download folder',
+    'ui.defaultDownloadFolderBody': 'Desktop exports and approved mobile export files are saved here automatically.',
+    'ui.chooseFolder': 'Choose folder',
+    'ui.useSystemDownloads': 'Use system Downloads',
+    'ui.currentDownloadFolder': 'Current folder',
+    'ui.mobileExportAutoSaved': 'Mobile export saved automatically.',
   },
   hu: {
     'ui.appUpdates': 'App frissítések',
@@ -4422,6 +4438,12 @@ const desktopUpdateTranslations: Record<string, Record<string, string>> = {
     'ui.updateInstallerFailed': 'Nem sikerült elindítani a frissítő telepítőt',
     'ui.updateInstallerFallback': 'A telepítő közvetlen indítása nem sikerült; megnyitom a letöltést',
     'ui.mobileRequestedDesktopUpdateCheck': 'A mobil frissítéskeresést kért a desktop appnak.',
+    'ui.defaultDownloadFolder': 'Alapértelmezett letöltési mappa',
+    'ui.defaultDownloadFolderBody': 'A desktop exportok és a jóváhagyott mobil export fájlok automatikusan ide kerülnek.',
+    'ui.chooseFolder': 'Mappa választása',
+    'ui.useSystemDownloads': 'Rendszer Letöltések használata',
+    'ui.currentDownloadFolder': 'Jelenlegi mappa',
+    'ui.mobileExportAutoSaved': 'Mobil export automatikusan mentve.',
   },
 };
 for (const [language, values] of Object.entries(desktopUpdateTranslations)) {
@@ -4447,6 +4469,39 @@ function t(key: string): string {
 function setDesktopLanguage(code: AppLanguage) {
   desktopLanguage.value = code;
   localStorage.setItem(desktopLanguageKey, code);
+}
+
+function rememberSavedMobileHandoffResult(requestId: string) {
+  savedMobileHandoffResultIds.add(requestId);
+  localStorage.setItem(savedMobileHandoffResultIdsKey, JSON.stringify([...savedMobileHandoffResultIds]));
+}
+
+async function refreshDefaultDownloadDir() {
+  try {
+    resolvedDefaultDownloadDir.value = await commands.getDefaultDownloadDir();
+  } catch {
+    resolvedDefaultDownloadDir.value = settings.value?.default_download_dir || '';
+  }
+}
+
+function defaultDownloadDirLabel() {
+  return settings.value?.default_download_dir || resolvedDefaultDownloadDir.value || 'Downloads';
+}
+
+async function chooseDefaultDownloadDir() {
+  if (!settings.value) return;
+  const selected = await open({ directory: true, multiple: false });
+  if (!selected || Array.isArray(selected)) return;
+  settings.value = await commands.saveDesktopSettings({ ...settings.value, default_download_dir: selected });
+  await refreshDefaultDownloadDir();
+  setMessage(t('ui.settingsSaved'));
+}
+
+async function resetDefaultDownloadDir() {
+  if (!settings.value) return;
+  settings.value = await commands.saveDesktopSettings({ ...settings.value, default_download_dir: null });
+  await refreshDefaultDownloadDir();
+  setMessage(t('ui.settingsSaved'));
 }
 
 
@@ -5036,9 +5091,11 @@ async function refreshAll() {
   activities.value = await commands.listActivities();
   if (status.value.port) port.value = status.value.port;
   settings.value = await commands.getDesktopSettings();
+  await refreshDefaultDownloadDir();
   syncInbox.value = await commands.listSyncInbox();
   duplicateSuggestions.value = await commands.listCatalogDuplicateSuggestions();
   mobileHandoffRequests.value = await commands.listMobileHandoffRequests();
+  void autoSaveCompletedMobileHandoffResults();
 }
 
 
@@ -6533,6 +6590,7 @@ function mobileHandoffFileName(request: MobileHandoffRequest) {
 async function refreshMobileHandoffRequests() {
   try {
     mobileHandoffRequests.value = await commands.listMobileHandoffRequests();
+    void autoSaveCompletedMobileHandoffResults();
   } catch {
     mobileHandoffRequests.value = [];
   }
@@ -6582,16 +6640,23 @@ async function sendMobileBackupImport(device: ConnectedDevice) {
   }
 }
 
-async function saveMobileHandoffResult(request: MobileHandoffRequest) {
+async function saveMobileHandoffResult(request: MobileHandoffRequest, automatic = false) {
   if (!request.result_base64) return setMessage('Ehhez a kéréshez nincs menthető fájl.');
   try {
     const bytes = base64ToBytes(request.result_base64);
-    const path = await save({ defaultPath: mobileHandoffFileName(request), filters: [{ name: request.kind === 'ai_export' ? 'Markdown' : 'ZIP', extensions: [request.kind === 'ai_export' ? 'md' : 'zip'] }] });
-    if (!path) return setMessage('Mentés megszakítva.');
-    await writeFile(path, bytes);
-    setMessage(`Mobil export mentve. (${formatBytes(bytes.length)})`);
+    const path = await commands.saveFileToDefaultDownloadDir(mobileHandoffFileName(request), Array.from(bytes));
+    rememberSavedMobileHandoffResult(request.id);
+    await refreshDefaultDownloadDir();
+    setMessage(`${automatic ? t('ui.mobileExportAutoSaved') : 'Mobil export mentve.'} ${path} (${formatBytes(bytes.length)})`);
   } catch (error) {
     setMessage(String(error));
+  }
+}
+
+async function autoSaveCompletedMobileHandoffResults() {
+  const completed = mobileHandoffRequests.value.filter((request) => request.result_base64 && !savedMobileHandoffResultIds.has(request.id));
+  for (const request of completed) {
+    await saveMobileHandoffResult(request, true);
   }
 }
 
@@ -6654,18 +6719,9 @@ async function exportAppDataZip() {
   loading.value = true;
   try {
     const bytes = await buildDesktopBackupZip();
-    const path = await save({ defaultPath: desktopBackupFileName(), filters: [{ name: 'nutrino desktop server backup', extensions: ['zip'] }] });
-    if (!path) return setMessage('Export canceled.');
-    await writeFile(path, bytes);
-    try {
-      const savedBytes = normalizeZipBytes(await readFile(path));
-      assertValidZipBytes(savedBytes);
-      if (savedBytes.length !== bytes.length) throw new Error(`${t('ui.exportSizeMismatch')}: ${formatBytes(savedBytes.length)} / ${formatBytes(bytes.length)}`);
-      setMessage(`Desktop server data exported. (${formatBytes(bytes.length)})`);
-    } catch (verifyError) {
-      fallbackDownloadDataZip(bytes);
-      setMessage(`External ZIP export could not be verified; browser download fallback was attempted. ${String(verifyError)}`);
-    }
+    const path = await commands.saveFileToDefaultDownloadDir(desktopBackupFileName(), Array.from(bytes));
+    await refreshDefaultDownloadDir();
+    setMessage(`Desktop server data exported: ${path} (${formatBytes(bytes.length)})`);
   } catch (error) {
     try {
       const bytes = await buildDesktopBackupZip();
@@ -7409,6 +7465,25 @@ onBeforeUnmount(() => {
                 <div class="desktop-update-actions">
                   <button class="btn-secondary" type="button" :disabled="updateBusy" @click="checkForAppUpdates({ manual: true, ignoreRemindLater: true })">{{ updateBusy ? t('ui.checkingUpdates') : t('ui.checkUpdates') }}</button>
                   <button v-if="updateAvailable" class="btn-primary" type="button" :disabled="updateBusy" @click="installAvailableUpdate">{{ updateBusy ? t('ui.checkingUpdates') : t('ui.installUpdate') }}</button>
+                </div>
+              </article>
+            </section>
+
+            <section class="settings-section-card">
+              <div class="settings-section-head">
+                <div>
+                  <p class="desktop-kicker">Downloads</p>
+                  <h3>{{ t('ui.defaultDownloadFolder') }}</h3>
+                </div>
+              </div>
+              <article class="mobile-settings-list settings-group-list">
+                <div class="mobile-setting-row settings-row-v040 download-folder-row">
+                  <span class="mobile-setting-icon" v-html="icon('download')"></span>
+                  <span class="mobile-setting-copy"><b>{{ t('ui.currentDownloadFolder') }}</b><small>{{ defaultDownloadDirLabel() }}</small><small>{{ t('ui.defaultDownloadFolderBody') }}</small></span>
+                  <span class="download-folder-actions">
+                    <button class="btn-secondary" type="button" :disabled="loading" @click.stop="chooseDefaultDownloadDir">{{ t('ui.chooseFolder') }}</button>
+                    <button class="btn-secondary" type="button" :disabled="loading" @click.stop="resetDefaultDownloadDir">{{ t('ui.useSystemDownloads') }}</button>
+                  </span>
                 </div>
               </article>
             </section>

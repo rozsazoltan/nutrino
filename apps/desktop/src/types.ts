@@ -336,6 +336,7 @@ export interface DesktopSettings {
   close_to_tray: boolean;
   start_hidden_to_tray: boolean;
   check_prerelease_updates: boolean;
+  default_download_dir?: string | null;
   window_x?: number | null;
   window_y?: number | null;
   window_width?: number | null;

@@ -2404,3 +2404,26 @@ body:has(.modal-backdrop) {
 .mobile-handoff-card small {
   display: block;
 }
+
+.download-folder-row {
+  align-items: flex-start;
+  cursor: default;
+}
+.download-folder-row .mobile-setting-copy small:first-of-type {
+  word-break: break-all;
+}
+.download-folder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+@media (max-width: 720px) {
+  .download-folder-row {
+    grid-template-columns: auto 1fr;
+  }
+  .download-folder-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}

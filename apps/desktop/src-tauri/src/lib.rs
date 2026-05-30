@@ -55,6 +55,7 @@ struct DesktopSettings {
     close_to_tray: bool,
     start_hidden_to_tray: bool,
     check_prerelease_updates: bool,
+    default_download_dir: Option<String>,
     window_x: Option<i32>,
     window_y: Option<i32>,
     window_width: Option<u32>,
@@ -732,10 +733,64 @@ pub fn run() {
             request_mobile_backup_export,
             request_mobile_ai_export,
             send_mobile_backup_import,
+            get_default_download_dir,
+            save_file_to_default_download_dir,
             download_and_open_update_installer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running nutrino Desktop");
+}
+
+
+fn safe_download_file_name(raw: &str) -> String {
+    let safe = raw
+        .trim()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | ' ') { ch } else { '-' })
+        .collect::<String>()
+        .trim_matches(|ch: char| ch == '-' || ch == '.' || ch.is_whitespace())
+        .to_string();
+    if safe.is_empty() { format!("nutrino-export-{}.bin", Utc::now().format("%Y%m%d-%H%M%S")) } else { safe }
+}
+
+fn configured_default_download_dir(app: &tauri::AppHandle, db_path: &Path) -> std::result::Result<PathBuf, String> {
+    let configured = open_conn(db_path)
+        .ok()
+        .and_then(|conn| setting(&conn, "default_download_dir").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    if let Some(path) = configured {
+        return Ok(path);
+    }
+    app.path()
+        .download_dir()
+        .map_err(|error| format!("Could not resolve the default download directory: {error}"))
+}
+
+#[tauri::command]
+fn get_default_download_dir(app: tauri::AppHandle, state: State<'_, AppState>) -> std::result::Result<String, String> {
+    configured_default_download_dir(&app, &state.db_path).map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn save_file_to_default_download_dir(app: tauri::AppHandle, state: State<'_, AppState>, filename: String, bytes: Vec<u8>) -> std::result::Result<String, String> {
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = configured_default_download_dir(&app, &db_path)?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("Could not create the default download directory: {error}"))?;
+        let path = dir.join(safe_download_file_name(&filename));
+        let mut file = File::create(&path)
+            .map_err(|error| format!("Could not create export file: {error}"))?;
+        file.write_all(&bytes)
+            .map_err(|error| format!("Could not write export file: {error}"))?;
+        file.flush()
+            .map_err(|error| format!("Could not finish export file: {error}"))?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|error| format!("Export save task failed: {error}"))?
 }
 
 
@@ -1356,6 +1411,7 @@ fn read_desktop_settings(path: &Path) -> Result<DesktopSettings> {
         close_to_tray: read_bool_from_conn(&conn, "close_to_tray", false),
         start_hidden_to_tray: read_bool_from_conn(&conn, "start_hidden_to_tray", false),
         check_prerelease_updates: read_bool_from_conn(&conn, "check_prerelease_updates", false),
+        default_download_dir: setting(&conn, "default_download_dir").ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
         window_x: read_i32_setting(&conn, "window_x"),
         window_y: read_i32_setting(&conn, "window_y"),
         window_width: read_u32_setting(&conn, "window_width"),
@@ -1372,6 +1428,7 @@ fn write_desktop_settings(path: &Path, settings: &DesktopSettings) -> Result<()>
     set_setting(&conn, "close_to_tray", &settings.close_to_tray.to_string())?;
     set_setting(&conn, "start_hidden_to_tray", &settings.start_hidden_to_tray.to_string())?;
     set_setting(&conn, "check_prerelease_updates", &settings.check_prerelease_updates.to_string())?;
+    set_setting(&conn, "default_download_dir", settings.default_download_dir.as_deref().unwrap_or(""))?;
     if let Some(value) = settings.window_x { set_setting(&conn, "window_x", &value.to_string())?; }
     if let Some(value) = settings.window_y { set_setting(&conn, "window_y", &value.to_string())?; }
     if let Some(value) = settings.window_width { set_setting(&conn, "window_width", &value.to_string())?; }
