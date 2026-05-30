@@ -12,6 +12,8 @@ pub fn run() {
             write_mobile_backup_file,
             read_mobile_backup_file,
             export_mobile_backup_via_android_picker,
+            export_text_via_android_picker,
+            export_markdown_via_android_picker,
             import_mobile_backup_via_android_picker,
             exit_mobile_app,
             get_mobile_device_info,
@@ -147,6 +149,35 @@ fn safe_zip_filename(filename: String) -> String {
     }
 }
 
+fn safe_export_filename(filename: String, default_name: &str, default_extension: &str) -> String {
+    let safe_name = filename
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') { ch } else { '-' })
+        .collect::<String>();
+
+    let safe_name = if safe_name.trim().is_empty() {
+        default_name.to_string()
+    } else {
+        safe_name
+    };
+
+    if safe_name.contains('.') {
+        safe_name
+    } else {
+        format!("{safe_name}.{default_extension}")
+    }
+}
+
+fn validate_text_export_bytes(bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Err("Export content is empty".to_string());
+    }
+    if bytes.len() > 64 * 1024 * 1024 {
+        return Err("Export content is too large for a single document export".to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn write_mobile_backup_file(app: tauri::AppHandle, filename: String, bytes: Vec<u8>) -> Result<String, String> {
     validate_zip_bytes(&bytes)?;
@@ -232,6 +263,74 @@ fn export_mobile_backup_via_android_picker(app: tauri::AppHandle, filename: Stri
         let _ = safe_name;
         Err("Android save picker is only available on Android builds".to_string())
     }
+}
+
+
+#[tauri::command]
+fn export_text_via_android_picker(app: tauri::AppHandle, filename: String, mime_type: String, bytes: Vec<u8>) -> Result<String, String> {
+    validate_text_export_bytes(&bytes)?;
+    let extension = if filename.to_ascii_lowercase().ends_with(".json") { "json" } else { "md" };
+    let safe_name = safe_export_filename(filename, "nutrino-export", extension);
+    let mime = if mime_type.trim().is_empty() {
+        if safe_name.to_ascii_lowercase().ends_with(".json") { "application/json" } else { "text/markdown" }.to_string()
+    } else {
+        mime_type
+    };
+
+    #[cfg(target_os = "android")]
+    {
+        use std::io::{Read, Write};
+        use tauri_plugin_android_fs::AndroidFsExt;
+
+        let api = app.android_fs();
+        let selected_path = api
+            .file_picker()
+            .save_file(None, &safe_name, Some(&mime), false)
+            .map_err(|error| format!("Android save picker failed: {error}"))?;
+
+        let Some(selected_path) = selected_path else {
+            return Err("EXPORT_CANCELED".to_string());
+        };
+
+        {
+            let mut file = api
+                .open_file_writable(&selected_path)
+                .map_err(|error| format!("Could not open selected export file for writing: {error}"))?;
+            file.write_all(&bytes)
+                .map_err(|error| format!("Could not write selected export file: {error}"))?;
+            file.flush()
+                .map_err(|error| format!("Could not flush selected export file: {error}"))?;
+            let _ = file.sync_all();
+        }
+
+        let mut saved = Vec::new();
+        {
+            let mut file = api
+                .open_file_readable(&selected_path)
+                .map_err(|error| format!("Could not reopen selected export file: {error}"))?;
+            file.read_to_end(&mut saved)
+                .map_err(|error| format!("Could not verify selected export file: {error}"))?;
+        }
+
+        if saved.len() != bytes.len() {
+            return Err(format!("Export verification failed: saved {} B, expected {} B", saved.len(), bytes.len()));
+        }
+
+        return Ok(format!("{} B", saved.len()));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        let _ = safe_name;
+        let _ = mime;
+        Err("Android save picker is only available on Android builds".to_string())
+    }
+}
+
+#[tauri::command]
+fn export_markdown_via_android_picker(app: tauri::AppHandle, filename: String, bytes: Vec<u8>) -> Result<String, String> {
+    export_text_via_android_picker(app, filename, "text/markdown".to_string(), bytes)
 }
 
 #[tauri::command]

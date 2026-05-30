@@ -9,7 +9,7 @@ import { cancel, createChannel, Importance, isPermissionGranted, onAction, regis
 import { driver, type DriveStep, type Driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
 import JSZip from 'jszip';
-import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, Ingredient, Intake, LocalizedNameMap, MealType, Recipe, RecipeItem, WeightLog, GitHubCsvSource } from './types';
+import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, HealthAttachment, HealthCategoryType, HealthEntry, Ingredient, Intake, LocalizedNameMap, MealType, ProfilePurpose, Recipe, RecipeItem, WeightLog, GitHubCsvSource } from './types';
 import {
   ageFromBirthday,
   bmi,
@@ -29,13 +29,14 @@ import {
   loadState,
   defaultState,
   needsWeightPrompt,
-  saveState,
+  saveStateJson,
 } from './lib/storage';
 import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, syncGitHubCsvSources } from './lib/api';
 import { checkNutrinoUpdates, type UpdateCheckResult } from './lib/releases';
 import { lucideSvg, type IconName } from './icons';
 
 type Tab = 'home' | 'diary' | 'recipes' | 'profile';
+type DiaryTab = 'food' | 'health';
 type AddMode = 'food' | 'activity' | null;
 type MealEntryMode = 'catalog' | 'note';
 type CatalogSearchScope = 'title' | 'all' | 'brand' | 'category' | 'description';
@@ -43,6 +44,15 @@ type WeightTrendMode = 'daily' | 'weekly' | 'monthly';
 type LocalEditorKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 type LocalRecipeDraftItem = { food_id: string; amount_g: number; unit: 'g' | 'serving'; query: string; pickerOpen: boolean };
 type MealNoteSuggestion = { key: string; title: string; description: string; kcal: number; lastUsedAt: number; count: number };
+type HealthEditorMode = 'new' | 'recurrence' | 'duplicate' | 'edit';
+type HealthQuickTime = 'now' | 'minus10' | 'minus60' | 'custom';
+type HealthAnalysisRangeKey = '30' | '180' | '360' | 'all' | 'custom';
+type HealthMediaSortDirection = 'desc' | 'asc';
+type ActivityAnalysisRangeKey = '7' | '14' | '30';
+type BackupIncludeOptions = { catalog: boolean; foodDiary: boolean; healthDiary: boolean; healthMedia: boolean };
+type CalendarSearchKind = 'food' | 'ingredient' | 'recipe' | 'activity' | 'health';
+type CalendarSearchSortDirection = 'desc' | 'asc';
+type CalendarSearchResult = { id: string; kind: CalendarSearchKind; title: string; subtitle: string; at: number; dayKey: string; targetId: string; tab: 'food' | 'health'; icon: IconName };
 
 type OptionalNutrientDefinition = {
   key: string;
@@ -56,8 +66,16 @@ type OptionalNutrientDefinition = {
 type NutrientInsightDialog = { kind: 'day' } | { kind: 'meal'; mealType: MealType };
 type NutrientChartMode = 'important' | 'optional';
 type NutrientChartSlice = { label: string; value: number; amount: string; note?: string; share: number; color: string };
-type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'deficit';
-type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-breakfast' | 'log-lunch' | 'log-dinner' | 'open-analysis' | 'dismiss';
+type HealthMediaGalleryItem = {
+  key: string;
+  attachment: HealthAttachment;
+  entry: HealthEntry;
+  uploadedAt: number;
+  occurrenceAt: number;
+  sameOccurrenceDay: boolean;
+};
+type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'deficit' | 'health-review';
+type NutrinoNotificationAction = 'tap' | 'open-home' | 'log-weight' | 'log-breakfast' | 'log-lunch' | 'log-dinner' | 'open-analysis' | 'open-health-review' | 'dismiss';
 type NutrinoNotificationExtra = { nutrino: true; kind: NutrinoNotificationKind; mealType?: MealType; scheduledTime?: string };
 type NutrinoNotificationEvent = {
   actionId?: string;
@@ -96,6 +114,7 @@ const NOTIFICATION_ACTION_TYPES = {
   mealLunch: 'nutrino-meal-lunch-actions',
   mealDinner: 'nutrino-meal-dinner-actions',
   deficit: 'nutrino-deficit-actions',
+  healthReview: 'nutrino-health-review-actions',
 } as const;
 const REMINDER_NOTIFICATION_IDS = {
   daily: 130100,
@@ -103,9 +122,40 @@ const REMINDER_NOTIFICATION_IDS = {
   mealMorning: 130301,
   mealNoon: 130302,
   mealAfternoon: 130303,
+  healthReview: 130400,
 } as const;
+const HEALTH_REVIEW_REMINDER_TIME = '20:30';
 
 const nutrientChartPalette = ['#31c96f', '#e7b341', '#ef5350', '#5f82ff', '#26a69a', '#ab47bc', '#ff8a65', '#7cb342', '#26c6da', '#ec407a', '#9ccc65'];
+const healthTrendPalette = ['#31c96f', '#5f82ff', '#ef5350', '#e7b341', '#26a69a', '#ab47bc', '#ff8a65', '#7cb342'];
+const activityAnalysisPalette = ['#31c96f', '#5f82ff', '#e7b341', '#ef5350', '#26a69a', '#ab47bc', '#ff8a65', '#7cb342', '#26c6da', '#ec407a'];
+const healthAnalysisRanges: Array<{ key: HealthAnalysisRangeKey; days: number | null; labelKey: string }> = [
+  { key: '30', days: 30, labelKey: 'last30Days' },
+  { key: '180', days: 180, labelKey: 'last180Days' },
+  { key: '360', days: 360, labelKey: 'last360Days' },
+  { key: 'all', days: null, labelKey: 'allTime' },
+];
+
+const profilePurposeOptions: Array<{ key: ProfilePurpose; labelKey: string; hintKey: string; icon: IconName }> = [
+  { key: 'weight_loss', labelKey: 'purposeWeightLoss', hintKey: 'purposeWeightLossHint', icon: 'scale' },
+  { key: 'weight_gain', labelKey: 'purposeWeightGain', hintKey: 'purposeWeightGainHint', icon: 'activity' },
+  { key: 'healthy_eating', labelKey: 'purposeHealthyEating', hintKey: 'purposeHealthyEatingHint', icon: 'salad' },
+  { key: 'meal_logging', labelKey: 'purposeMealLogging', hintKey: 'purposeMealLoggingHint', icon: 'utensils' },
+  { key: 'health_issue_logging', labelKey: 'purposeHealthLogging', hintKey: 'purposeHealthLoggingHint', icon: 'heartPulse' },
+];
+
+const healthCategoryOptions: Array<{ key: HealthCategoryType; labelKey: string; icon: IconName }> = [
+  { key: 'pain', labelKey: 'healthCategoryPain', icon: 'activity' },
+  { key: 'digestive', labelKey: 'healthCategoryDigestive', icon: 'wavesHorizontal' },
+  { key: 'stool', labelKey: 'healthCategoryStool', icon: 'flaskConical' },
+  { key: 'skin', labelKey: 'healthCategorySkin', icon: 'sparkles' },
+  { key: 'respiratory', labelKey: 'healthCategoryRespiratory', icon: 'wind' },
+  { key: 'sleep', labelKey: 'healthCategorySleep', icon: 'clock' },
+  { key: 'mood', labelKey: 'healthCategoryMood', icon: 'heartPulse' },
+  { key: 'injury', labelKey: 'healthCategoryInjury', icon: 'shield' },
+  { key: 'energy', labelKey: 'healthCategoryEnergy', icon: 'flame' },
+  { key: 'other', labelKey: 'healthCategoryOther', icon: 'badgeInfo' },
+];
 
 const optionalNutrientDefinitions: OptionalNutrientDefinition[] = [
   { key: 'sugars_per_100g', field: 'sugars_per_100g', labelKey: 'sugars', unit: 'g', dailyLimit: 50, limitKind: 'max' },
@@ -147,12 +197,21 @@ const scannerActive = ref(false);
 type PendingCatalogQrSequence = { id: string; total: number; parts: Record<number, string> };
 const pendingCatalogQrSequence = ref<PendingCatalogQrSequence | null>(null);
 let scannerStream: MediaStream | null = null;
+let scannerDetector: any | null = null;
 let lastScannerRawValue = '';
 let lastScannerRawAt = 0;
 const activeTab = ref<Tab>('home');
 const selectedDate = ref(dateKey());
+const diaryTab = ref<DiaryTab>('food');
+const healthSearch = ref('');
+const healthSearchOpen = ref(false);
+const healthAnalysisModalOpen = ref(false);
 const todayKey = ref(dateKey());
 const calendarMonth = ref(new Date(dayStartMs(selectedDate.value)));
+const calendarSearch = ref('');
+const calendarSearchOpen = ref(false);
+const calendarSearchSortDirection = ref<CalendarSearchSortDirection>('desc');
+const calendarSearchKinds = reactive<Record<CalendarSearchKind, boolean>>({ food: true, ingredient: true, recipe: true, activity: true, health: true });
 const addMode = ref<AddMode>(null);
 const quickAddOpen = ref(false);
 const addMealType = ref<MealType>('breakfast');
@@ -169,6 +228,40 @@ const activityMinutes = ref<number | null>(null);
 const activityKcal = ref<number | null>(null);
 const activitySource = ref<ActivityLog['source']>('activity_catalog');
 const weightInput = ref<number | null>(null);
+const healthEditorOpen = ref(false);
+const healthEditorMode = ref<HealthEditorMode>('new');
+const healthEditorId = ref<string | null>(null);
+const healthRecurrenceSourceId = ref<string | null>(null);
+const healthRecurrenceSearch = ref('');
+const healthQuickTime = ref<HealthQuickTime>('now');
+const healthAnalysisRange = ref<HealthAnalysisRangeKey>('30');
+const healthCustomRangeOpen = ref(false);
+const healthCustomStartDate = ref('');
+const healthCustomEndDate = ref(dateKey());
+const healthSelectedEventId = ref<string | null>(null);
+const healthEventPickerOpen = ref(false);
+const healthEventPickerSearch = ref('');
+const healthForm = reactive({
+  title: '',
+  description: '',
+  category: 'other' as HealthCategoryType,
+  notes: '',
+  date: selectedDate.value,
+  time: '12:00',
+  ongoing: false,
+  resolvedDate: '',
+  resolvedTime: '',
+  attachments: [] as HealthAttachment[],
+});
+const healthPreviewAttachment = ref<HealthAttachment | null>(null);
+const healthMediaEntry = ref<HealthEntry | null>(null);
+const healthDetailEntry = ref<HealthEntry | null>(null);
+const healthMediaSortDirection = ref<HealthMediaSortDirection>('desc');
+const healthImageZoom = reactive({ scale: 1, x: 0, y: 0 });
+type HealthImagePoint = { x: number; y: number };
+const healthImagePointers = new Map<number, HealthImagePoint>();
+let healthImageGestureStart: { scale: number; x: number; y: number; distance: number; center: HealthImagePoint } | null = null;
+let healthImageLastTapAt = 0;
 const search = ref('');
 const mealEntryMode = ref<MealEntryMode>('catalog');
 const noteTitle = ref('');
@@ -201,13 +294,15 @@ let todayRolloverTimer: number | undefined;
 const offlineToastShown = ref(false);
 const toast = ref('');
 const settingsOpen = ref(false);
-const settingsDialog = ref<'permissions' | 'updates' | 'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'privacy' | 'about' | 'licenses' | 'advanced' | null>(null);
+const settingsDialog = ref<'permissions' | 'updates' | 'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'aiExport' | 'privacy' | 'about' | 'licenses' | 'advanced' | null>(null);
 const updateBusy = ref(false);
 const updateDialogOpen = ref(false);
 const updateInstallInfoOpen = ref(false);
 const updateCheckResult = ref<UpdateCheckResult | null>(null);
 const updateAvailable = computed(() => updateCheckResult.value?.status === 'available' && Boolean(updateCheckResult.value.release));
 const analysisOpen = ref(false);
+const activityAnalysisOpen = ref(false);
+const activityAnalysisRange = ref<ActivityAnalysisRangeKey>('14');
 const deficitInfoOpen = ref(false);
 const micronutrientInfoOpen = ref(false);
 const nutrientInsightsDialog = ref<NutrientInsightDialog | null>(null);
@@ -243,7 +338,10 @@ const editingDayWeight = ref(false);
 const editingIntakeId = ref<string | null>(null);
 const editingActivityLogId = ref<string | null>(null);
 const highlightedReviewIntakeId = ref<string | null>(null);
+const highlightedActivityLogId = ref<string | null>(null);
 const mealNoteReviewOpen = ref(false);
+const healthReviewOpen = ref(false);
+const highlightedHealthReviewEntryId = ref<string | null>(null);
 let highlightedReviewTimer: number | undefined;
 const lastBackPressAt = ref(0);
 const androidBackExitWindowMs = 5000;
@@ -271,6 +369,7 @@ type BackupProfileSummary = {
     intakes: number;
     activityLogs: number;
     weightLogs: number;
+    healthEntries: number;
   };
 };
 
@@ -278,6 +377,19 @@ type StoredBackupProfile = BackupProfileSummary & { state: AppState };
 
 const backupProfilesOpen = ref(false);
 const backupProfiles = ref<BackupProfileSummary[]>([]);
+const backupOptionsOpen = ref(false);
+const exportBusy = ref(false);
+const exportProgress = ref(0);
+const exportStatus = ref('');
+const exportTitle = ref('');
+const aiExportStartDate = ref(defaultAiExportStartDate());
+const aiExportEndDate = ref(dateKey());
+const backupIncludeOptions = reactive<BackupIncludeOptions>({
+  catalog: true,
+  foodDiary: true,
+  healthDiary: true,
+  healthMedia: true,
+});
 
 const nutrinoLogoSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true"> <rect width="64" height="64" rx="18" fill="#0D2514"/> <g fill="#33E36A"> <circle cx="18" cy="14" r="5"/> <circle cx="18" cy="26" r="5"/> <circle cx="18" cy="38" r="5"/> <circle cx="18" cy="50" r="5"/> <circle cx="29" cy="24" r="5"/> <circle cx="35" cy="34" r="5"/> <circle cx="46" cy="14" r="5"/> <circle cx="46" cy="26" r="5"/> <circle cx="46" cy="38" r="5"/> <circle cx="46" cy="50" r="5"/> </g> </svg>';
 
@@ -290,6 +402,7 @@ const onboardingProfile = reactive({
   gender: state.profile.gender,
   activity_level: state.profile.activity_level,
   weekly_goal_kg: state.profile.weekly_goal_kg,
+  usage_purposes: [...(state.profile.usage_purposes || [])] as ProfilePurpose[],
 });
 const mobileStateKey = 'nutrino.mobile.v3.state';
 const mobileOnboardingKey = 'nutrino.mobile.onboarded.v1';
@@ -345,11 +458,13 @@ const settingsIconMap: Record<string, IconName> = {
   activity: 'activity',
   macros: 'chartPie',
   micros: 'flaskConical',
+  health: 'heartPulse',
   catalogProtect: 'shield',
   catalogInactive: 'archiveRestore',
   language: 'languages',
   reminder: 'bell',
   export: 'upload',
+  aiExport: 'fileText',
   import: 'download',
   refresh: 'refreshCw',
   issue: 'bug',
@@ -430,32 +545,147 @@ const mealIconSvg: Record<string, string> = {
   bakery_dining: lucideSvg('cookie'),
 };
 
-watch(state, () => saveState(JSON.parse(JSON.stringify(state)) as AppState), { deep: true });
-watch(() => state.settings.show_micronutrients, (enabled) => {
-  if (enabled) return;
-  if (settingsDialog.value === 'micronutrients') settingsDialog.value = null;
-  micronutrientInfoOpen.value = false;
-  nutrientInsightsDialog.value = null;
-});
-watch(() => state.settings.desktop_api_enabled, (enabled) => {
-  if (enabled) {
-    void pollServerHealth({ syncOnChange: true, quiet: true });
-    return;
+let pendingStateSaveTimer: number | undefined;
+let pendingStateSaveIdle: number | undefined;
+type HealthMediaRecord = { id: string; data_url: string; preview_data_url?: string | null; updated_at: number };
+const healthMediaDbName = 'nutrino.mobile.health-media.v1';
+const healthMediaStoreName = 'attachments';
+
+function runWhenIdle(callback: () => void, timeout = 1400) {
+  const idle = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number }).requestIdleCallback;
+  if (typeof idle === 'function') return idle(callback, { timeout });
+  return window.setTimeout(callback, 0);
+}
+
+function stateSnapshotForLocalPersistence(): AppState {
+  return {
+    ...state,
+    healthEntries: (state.healthEntries || []).map((entry) => ({
+      ...entry,
+      attachments: entry.attachments.map((attachment) => ({
+        ...attachment,
+        data_url: '',
+        preview_data_url: null,
+      })),
+    })),
+  };
+}
+
+function serializeStateForLocalPersistence() {
+  return JSON.stringify(stateSnapshotForLocalPersistence());
+}
+
+function openHealthMediaDb(): Promise<IDBDatabase> {
+  if (!('indexedDB' in window)) return Promise.reject(new Error('IndexedDB is not available'));
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(healthMediaDbName, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(healthMediaStoreName)) {
+        db.createObjectStore(healthMediaStoreName, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('Could not open health media store'));
+  });
+}
+
+async function withHealthMediaStore<T>(mode: IDBTransactionMode, callback: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  const db = await openHealthMediaDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(healthMediaStoreName, mode);
+    const request = callback(tx.objectStore(healthMediaStoreName));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('Health media store request failed'));
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error ?? new Error('Health media store transaction failed'));
+    };
+  });
+}
+
+async function saveHealthAttachmentMedia(attachment: HealthAttachment) {
+  if (!attachment.data_url) return;
+  await withHealthMediaStore('readwrite', (store) => store.put({
+    id: attachment.id,
+    data_url: attachment.data_url,
+    preview_data_url: attachment.preview_data_url || null,
+    updated_at: Date.now(),
+  } satisfies HealthMediaRecord));
+}
+
+async function saveHealthEntryMedia(entry: HealthEntry) {
+  for (const attachment of entry.attachments) {
+    await saveHealthAttachmentMedia(attachment);
+    await yieldToUi();
   }
-  serverOnline.value = false;
-  state.pairing.lastSyncError = undefined;
-});
-watch(() => state.settings.github_csv_enabled, (enabled) => {
-  if (enabled) void syncGitHubDailyIfDue();
-});
-watch(() => notificationPermissionSignature(), () => {
-  void ensureNotificationPermissionForReminders();
-  queueReminderScheduleRefresh();
-});
-watch(() => notificationScheduleSignature(), queueReminderScheduleRefresh);
-watch(selectedDate, () => {
-  editingDayWeight.value = false;
-});
+}
+
+async function hydrateHealthAttachmentMedia() {
+  const ids = [...new Set((state.healthEntries || [])
+    .flatMap((entry) => entry.attachments)
+    .filter((attachment) => !attachment.data_url)
+    .map((attachment) => attachment.id))];
+  if (!ids.length) return;
+  const records = new Map<string, HealthMediaRecord>();
+  for (const id of ids) {
+    try {
+      const record = await withHealthMediaStore<HealthMediaRecord | undefined>('readonly', (store) => store.get(id) as IDBRequest<HealthMediaRecord | undefined>);
+      if (record?.data_url) records.set(id, record);
+    } catch {
+      return;
+    }
+    await yieldToUi();
+  }
+  if (!records.size) return;
+  state.healthEntries = state.healthEntries.map((entry) => ({
+    ...entry,
+    attachments: entry.attachments.map((attachment) => {
+      const record = records.get(attachment.id);
+      return record ? { ...attachment, data_url: record.data_url, preview_data_url: record.preview_data_url || attachment.preview_data_url || null } : attachment;
+    }),
+  }));
+}
+
+function scheduleStateSave() {
+  if (pendingStateSaveTimer) window.clearTimeout(pendingStateSaveTimer);
+  if (pendingStateSaveIdle) {
+    const cancelIdle = (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback;
+    if (typeof cancelIdle === 'function') cancelIdle(pendingStateSaveIdle);
+    else window.clearTimeout(pendingStateSaveIdle);
+  }
+  pendingStateSaveTimer = window.setTimeout(() => {
+    pendingStateSaveIdle = runWhenIdle(() => {
+      try {
+        saveStateJson(serializeStateForLocalPersistence());
+      } catch (error) {
+        console.warn('Could not persist mobile state', error);
+      }
+    });
+  }, 850);
+}
+
+function flushStateSave() {
+  if (pendingStateSaveTimer) window.clearTimeout(pendingStateSaveTimer);
+  pendingStateSaveTimer = undefined;
+  try {
+    saveStateJson(serializeStateForLocalPersistence());
+  } catch (error) {
+    console.warn('Could not persist mobile state', error);
+  }
+}
+
+function yieldToUi(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+function waitForIdle(timeout = 1000): Promise<void> {
+  return new Promise((resolve) => {
+    runWhenIdle(resolve, timeout);
+  });
+}
+
 function updateKeyboardOffset() {
   const viewport = window.visualViewport;
   if (!viewport) {
@@ -695,6 +925,24 @@ function handleBackNavigation(event?: PopStateEvent) {
     return;
   }
 
+  if (healthEventPickerOpen.value) {
+    healthEventPickerOpen.value = false;
+    keepBackInsideApp();
+    return;
+  }
+
+  if (healthAnalysisModalOpen.value) {
+    healthAnalysisModalOpen.value = false;
+    keepBackInsideApp();
+    return;
+  }
+
+  if (healthEditorOpen.value) {
+    closeHealthEditor();
+    keepBackInsideApp();
+    return;
+  }
+
   if (addMode.value) {
     if (recipeCustomizeOpen.value) {
       requestCloseRecipeCustomizerFromBack();
@@ -724,6 +972,12 @@ function handleBackNavigation(event?: PopStateEvent) {
 
   if (backupProfilesOpen.value) {
     backupProfilesOpen.value = false;
+    keepBackInsideApp();
+    return;
+  }
+
+  if (backupOptionsOpen.value) {
+    backupOptionsOpen.value = false;
     keepBackInsideApp();
     return;
   }
@@ -761,6 +1015,12 @@ function handleBackNavigation(event?: PopStateEvent) {
 
   if (analysisOpen.value) {
     analysisOpen.value = false;
+    keepBackInsideApp();
+    return;
+  }
+
+  if (activityAnalysisOpen.value) {
+    activityAnalysisOpen.value = false;
     keepBackInsideApp();
     return;
   }
@@ -821,6 +1081,9 @@ function saveOnboardingProfile() {
   state.profile.gender = onboardingProfile.gender;
   state.profile.activity_level = onboardingProfile.activity_level;
   state.profile.weekly_goal_kg = Number(onboardingProfile.weekly_goal_kg) || 0;
+  const purposes = [...new Set(onboardingProfile.usage_purposes)];
+  state.profile.usage_purposes = purposes;
+  if (onboardingOpen.value) state.settings.health_diary_enabled = purposes.includes('health_issue_logging');
 }
 
 function markOnboardingComplete() {
@@ -830,22 +1093,35 @@ function markOnboardingComplete() {
 async function openOnboardingPermissionsStep() {
   saveOnboardingProfile();
   state.settings.desktop_sync_prompted = true;
-  onboardingStep.value = 2;
+  onboardingStep.value = 3;
   await nextTick();
-  await requestOnboardingPermissions();
 }
 
 function openOnboardingSyncStep() {
+  saveOnboardingProfile();
+  onboardingStep.value = 2;
+}
+
+function openOnboardingProfileStep() {
+  if (!onboardingProfile.usage_purposes.length) {
+    showToast(t('selectAtLeastOnePurpose'));
+    return;
+  }
   saveOnboardingProfile();
   onboardingStep.value = 1;
 }
 
 async function finishOnboarding() {
+  if (!onboardingProfile.usage_purposes.length) {
+    onboardingStep.value = 0;
+    showToast(t('selectAtLeastOnePurpose'));
+    return;
+  }
   saveOnboardingProfile();
   state.settings.desktop_sync_prompted = true;
   onboardingOpen.value = false;
   onboardingStep.value = 0;
-  saveState(JSON.parse(JSON.stringify(state)) as AppState);
+  saveStateJson(serializeStateForLocalPersistence());
   await nextTick();
   startOnboardingTour();
 }
@@ -865,6 +1141,7 @@ function startDevFirstLaunchMode() {
   onboardingProfile.gender = fresh.profile.gender;
   onboardingProfile.activity_level = fresh.profile.activity_level;
   onboardingProfile.weekly_goal_kg = fresh.profile.weekly_goal_kg;
+  onboardingProfile.usage_purposes = [...fresh.profile.usage_purposes];
   localStorage.removeItem(mobileOnboardingKey);
   stopOnboardingTour(false);
   settingsOpen.value = false;
@@ -892,6 +1169,7 @@ async function factoryResetMobile() {
   onboardingProfile.gender = fresh.profile.gender;
   onboardingProfile.activity_level = fresh.profile.activity_level;
   onboardingProfile.weekly_goal_kg = fresh.profile.weekly_goal_kg;
+  onboardingProfile.usage_purposes = [...fresh.profile.usage_purposes];
   settingsDialog.value = null;
   settingsOpen.value = false;
   activeTab.value = 'home';
@@ -906,8 +1184,41 @@ function updateContentScrolled() {
   contentScrolled.value = window.scrollY > 8;
 }
 
+function profilePurposeSelected(key: ProfilePurpose) {
+  return (state.profile.usage_purposes || []).includes(key);
+}
+
+function onboardingPurposeSelected(key: ProfilePurpose) {
+  return onboardingProfile.usage_purposes.includes(key);
+}
+
+function toggleProfilePurpose(key: ProfilePurpose) {
+  const selected = new Set(state.profile.usage_purposes || []);
+  if (selected.has(key)) selected.delete(key);
+  else selected.add(key);
+  state.profile.usage_purposes = [...selected];
+  if (key === 'health_issue_logging') state.settings.health_diary_enabled = selected.has(key);
+}
+
+function toggleOnboardingPurpose(key: ProfilePurpose) {
+  const selected = new Set(onboardingProfile.usage_purposes);
+  if (selected.has(key)) selected.delete(key);
+  else selected.add(key);
+  onboardingProfile.usage_purposes = [...selected];
+}
+
+function profilePurposeSummary() {
+  const values = state.profile.usage_purposes || [];
+  if (!values.length) return t('profilePurposeMissing');
+  return profilePurposeOptions
+    .filter((option) => values.includes(option.key))
+    .map((option) => t(option.labelKey))
+    .join(', ');
+}
+
 onMounted(() => {
   void navigator.storage?.persist?.();
+  void hydrateHealthAttachmentMedia();
   void refreshBackupProfiles();
   void ensureDailyBackupProfile();
   void syncGitHubDailyIfDue();
@@ -920,6 +1231,8 @@ onMounted(() => {
   window.visualViewport?.addEventListener('resize', updateKeyboardOffset);
   window.visualViewport?.addEventListener('scroll', updateKeyboardOffset);
   window.addEventListener('scroll', updateContentScrolled, { passive: true });
+  window.addEventListener('pagehide', flushStateSave);
+  window.addEventListener('beforeunload', flushStateSave);
   document.addEventListener('focusin', scrollFocusedInputIntoView);
   document.addEventListener('visibilitychange', handleVisibilityChange);
   resetBackTrap();
@@ -942,6 +1255,9 @@ onBeforeUnmount(() => {
   window.visualViewport?.removeEventListener('resize', updateKeyboardOffset);
   window.visualViewport?.removeEventListener('scroll', updateKeyboardOffset);
   window.removeEventListener('scroll', updateContentScrolled);
+  window.removeEventListener('pagehide', flushStateSave);
+  window.removeEventListener('beforeunload', flushStateSave);
+  flushStateSave();
   document.removeEventListener('focusin', scrollFocusedInputIntoView);
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('popstate', handleBackNavigation);
@@ -1404,10 +1720,113 @@ const foodSelectionInProgress = computed(() => addMode.value === 'food' && mealE
 const foodFormVisible = computed(() => mealEntryMode.value === 'catalog' && Boolean(selectedCatalog.value) && !catalogPickerOpen.value && !recipeCustomizeOpen.value);
 const activitySelectionInProgress = computed(() => addMode.value === 'activity' && activitySource.value === 'activity_catalog' && (!selectedActivity.value || activityPickerOpen.value));
 const activityFormVisible = computed(() => activitySource.value !== 'activity_catalog' || (Boolean(selectedActivity.value) && !activityPickerOpen.value));
+const healthDiaryEnabled = computed(() => state.settings.health_diary_enabled === true);
+const activeHealthEntries = computed(() => healthDiaryEnabled.value ? (state.healthEntries || []).filter((entry) => !entry.deleted_at) : []);
+const currentDayHealthEntries = computed(() => activeHealthEntries.value
+  .filter((entry) => inSelectedDay(entry.occurred_at))
+  .sort((a, b) => b.occurred_at - a.occurred_at));
+const currentDayHealthAnalysisRows = computed(() => buildHealthEventFrequencyRowsForEntries(currentDayHealthEntries.value));
+const currentDayHealthClinicalSummary = computed(() => buildHealthClinicalSummary(currentDayHealthEntries.value));
+const filteredHealthEntries = computed(() => {
+  const query = healthSearch.value.trim();
+  const source = currentDayHealthEntries.value;
+  if (!query) return source;
+  return source.filter((entry) => matchesSearchQuery(
+    query,
+    entry.title,
+    entry.description,
+    entry.notes,
+    t(healthCategoryLabelKey(entry.category)),
+  ));
+});
+const reusableHealthEvents = computed(() => {
+  const byEvent = new Map<string, HealthEntry>();
+  for (const entry of activeHealthEntries.value) {
+    const current = byEvent.get(entry.event_id);
+    if (!current || entry.occurred_at > current.occurred_at) byEvent.set(entry.event_id, entry);
+  }
+  return [...byEvent.values()].sort((a, b) => b.occurred_at - a.occurred_at);
+});
+const reusableHealthEventOptions = computed(() => {
+  const query = healthRecurrenceSearch.value.trim();
+  const source = reusableHealthEvents.value;
+  if (!query) return [...source].sort((a, b) => b.occurred_at - a.occurred_at);
+  return source
+    .filter((entry) => matchesSearchQuery(
+      query,
+      healthEventEntry(entry).title,
+      healthEventEntry(entry).description,
+      healthEventEntry(entry).notes,
+      healthCategoryLabel(healthEventEntry(entry).category),
+      dateKey(new Date(entry.occurred_at)),
+    ))
+    .sort((a, b) => healthEventEntry(a).title.localeCompare(healthEventEntry(b).title, currentLocale(), { sensitivity: 'base' }));
+});
+const pendingHealthReviewEntries = computed(() => activeHealthEntries.value
+  .filter((entry) => healthEntryNeedsReview(entry))
+  .sort((a, b) => a.occurred_at - b.occurred_at));
+const healthAnalysisEntries = computed(() => currentDayHealthEntries.value);
+const healthAnalysisSummary = computed(() => buildHealthAnalysisSummary());
+const healthRangeAverageDurationDays = computed(() => {
+  const durations = healthAnalysisEntries.value.map((entry) => healthEntryDurationDays(entry)).filter((value) => Number.isFinite(value));
+  return durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
+});
+const healthPeriodSummaryRows = computed(() => buildHealthPeriodSummaryRows());
+const healthEventFrequencyRows = computed(() => buildHealthEventFrequencyRows(healthAnalysisEntries.value));
+const healthEventPickerRows = computed(() => {
+  const query = healthEventPickerSearch.value.trim();
+  const rows = healthEventFrequencyRows.value;
+  if (!query) return rows;
+  return rows
+    .filter((row) => matchesSearchQuery(query, row.title, row.categoryLabel, formatDate(row.lastAt)))
+    .sort((a, b) => a.title.localeCompare(b.title, currentLocale(), { sensitivity: 'base' }));
+});
+const selectedHealthEventAnalysis = computed(() => {
+  if (!healthEventFrequencyRows.value.length) return null;
+  return healthEventFrequencyRows.value.find((row) => row.eventId === healthSelectedEventId.value) || healthEventFrequencyRows.value[0];
+});
+const selectedHealthEventEntries = computed(() => {
+  const eventId = selectedHealthEventAnalysis.value?.eventId;
+  if (!eventId) return [];
+  return healthAnalysisEntries.value.filter((entry) => entry.event_id === eventId).sort((a, b) => a.occurred_at - b.occurred_at);
+});
+const selectedHealthEventStats = computed(() => buildSelectedHealthEventStats());
+const healthCategoryChartRows = computed(() => buildHealthCategoryChartRows(healthAnalysisEntries.value));
+const healthCategoryPieBackground = computed(() => healthConicGradient(healthCategoryChartRows.value));
+const healthTimeOfDayRows = computed(() => buildHealthTimeOfDayRows(healthAnalysisEntries.value));
+const healthWeekdayRows = computed(() => buildHealthWeekdayRows(healthAnalysisEntries.value));
+const healthDurationRows = computed(() => buildHealthDurationRows(healthAnalysisEntries.value));
+const healthBusyDayRows = computed(() => buildHealthBusyDayRows(healthAnalysisEntries.value));
+const healthRecurrenceChartRows = computed(() => buildHealthRecurrenceChartRows());
+const healthSelectedEventTrendRows = computed(() => buildHealthSelectedEventTrendRows());
+const healthDetailEventEntries = computed(() => {
+  const entry = healthDetailEntry.value;
+  if (!entry) return [];
+  const day = dateKey(new Date(entry.occurred_at));
+  return activeHealthEntries.value
+    .filter((item) => item.event_id === entry.event_id && dateKey(new Date(item.occurred_at)) === day)
+    .sort((a, b) => a.occurred_at - b.occurred_at);
+});
+const healthDetailStats = computed(() => buildHealthEntryDetailStats(healthDetailEntry.value));
+const healthDetailDateRows = computed(() => buildHealthDetailDateRows(healthDetailEventEntries.value));
+const healthDetailHeatmapCells = computed(() => buildHealthDetailHeatmapCells(healthDetailEventEntries.value));
+const healthDetailTimeRows = computed(() => buildHealthTimeOfDayRows(healthDetailEventEntries.value));
+const healthDetailWeekdayRows = computed(() => buildHealthWeekdayRows(healthDetailEventEntries.value));
+const healthDetailTrendRows = computed(() => buildHealthMonthTrendRows(healthDetailEventEntries.value));
+const healthMediaGalleryItems = computed(() => healthMediaEntry.value ? healthMediaItemsForEntry(healthMediaEntry.value, healthMediaSortDirection.value) : []);
+const healthMediaSameDayCount = computed(() => healthMediaGalleryItems.value.filter((item) => item.sameOccurrenceDay).length);
+const healthPreviewIsZoomablePhoto = computed(() => Boolean(
+  healthPreviewAttachment.value?.type === 'photo'
+  && healthPreviewAttachment.value
+  && healthAttachmentPreviewSource(healthPreviewAttachment.value),
+));
+const healthImageZoomStyle = computed(() => ({
+  transform: `translate3d(${Math.round(healthImageZoom.x)}px, ${Math.round(healthImageZoom.y)}px, 0) scale(${healthImageZoom.scale})`,
+}));
+const calendarSearchActive = computed(() => calendarSearchOpen.value && (Boolean(calendarSearch.value.trim()) || calendarSearchResults.value.length > 0));
+const calendarSearchResults = computed(() => buildCalendarSearchResults(calendarSearch.value));
+const calendarSearchDayKeys = computed(() => new Set(calendarSearchResults.value.map((result) => result.dayKey)));
 const calendarCells = computed(() => buildCalendar(calendarMonth.value));
-
-
-
 type LanguageOption = { code: AppLanguage; englishName: string; nativeName: string; locale: string; aliases: string[] };
 const languageOptions: LanguageOption[] = [
   { code: 'system', englishName: 'System default', nativeName: 'System default', locale: 'en', aliases: ['auto', 'system'] },
@@ -1483,6 +1902,11 @@ const selectedDiaryDateLabel = computed(() => new Intl.DateTimeFormat(currentLoc
 const currentDeficitStreak = computed(() => calculateDeficitStreak(selectedDate.value));
 const bestDeficitStreak = computed(() => calculateBestDeficitStreak(30));
 const analysisDailyRows = computed(() => buildDailyAnalysisRows(14, selectedDate.value));
+const activityAnalysisRows = computed(() => buildActivityAnalysisRows(Number(activityAnalysisRange.value), selectedDate.value));
+const activityAnalysisTypeRows = computed(() => buildActivityAnalysisTypeRows(activityAnalysisRows.value));
+const activityAnalysisActiveDays = computed(() => activityAnalysisRows.value.filter((row) => row.totalMinutes > 0).length);
+const activityAnalysisTotalMinutes = computed(() => activityAnalysisRows.value.reduce((sum, row) => sum + row.totalMinutes, 0));
+const activityAnalysisTotalKcal = computed(() => activityAnalysisRows.value.reduce((sum, row) => sum + row.totalKcal, 0));
 const analysisWeightRows = computed(() => buildWeightTrendRows(weightTrendMode.value, 12, selectedDate.value));
 const weightChartPoints = computed(() => buildWeightChartPoints(analysisWeightRows.value));
 const calorieChartMax = computed(() => Math.max(1, ...analysisDailyRows.value.map((row) => Math.max(row.consumedKcal, row.dailyLimitKcal, row.effectiveLimitKcal))));
@@ -1506,30 +1930,6 @@ function openAnalysis() {
   selectAnalysisRowsForSelectedDate();
   analysisOpen.value = true;
 }
-
-watch(analysisOpen, (open) => {
-  if (open) selectAnalysisRowsForSelectedDate();
-});
-
-watch(analysisDailyRows, (rows) => {
-  if (!rows.some((row) => row.key === selectedCalorieRowKey.value)) selectedCalorieRowKey.value = selectedDate.value;
-}, { immediate: true });
-watch(analysisWeightRows, (rows) => {
-  if (!rows.some((row) => row.key === selectedWeightRowKey.value)) selectedWeightRowKey.value = rows.find((row) => row.selected)?.key || rows.at(-1)?.key || null;
-}, { immediate: true });
-
-watch([consumedKcal, effectiveDailyGoal, dailyGoal], () => {
-  if (!state.settings.calorie_limit_warning_enabled || !calorieDeficitEnabled.value) return;
-  if (consumedKcal.value <= effectiveDailyGoal.value) return;
-  const key = `${todayKey.value}.deficit-limit`;
-  if (reminderAlreadySent(key)) return;
-  markReminderSent(key);
-  notifyUser(t('deficitWarningTitle'), `${Math.round(consumedKcal.value - effectiveDailyGoal.value)} kcal ${t('overDeficitButWithinLimit')}`, {
-    kind: 'deficit',
-    actionTypeId: NOTIFICATION_ACTION_TYPES.deficit,
-  });
-});
-
 
 const normalizeTranslationValues = (values: Partial<Record<string, string>>): Record<string, string> => Object.fromEntries(
   Object.entries(values).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
@@ -6809,6 +7209,98 @@ for (const [language, values] of Object.entries(mobileVisibleTextTranslations)) 
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
 }
 
+const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, string>>> = {
+  en: {
+    foodDiary: 'Food', healthDiary: 'Health diary', addHealthEntry: 'Add health entry', editHealthEntry: 'Edit health entry', duplicateHealthEntry: 'Duplicate health entry',
+    markAgain: 'Happened again', healthEntrySheetHint: 'Log symptoms, signs or unusual observations with optional context.', newHealthEvent: 'New event', previousHealthEvent: 'Previous event', choosePreviousEvent: 'Choose a previous event',
+    now: 'Now', tenMinutesAgo: '10 min ago', oneHourAgo: '1 hour ago', customDateTime: 'Custom', date: 'Date', time: 'Time',
+    healthTitle: 'Title, e.g. left knee pain', healthDescription: 'Description', healthCategory: 'Category', healthNotes: 'Optional notes', addPhoto: 'Photo', addVideo: 'Video', photoAttachment: 'Photo', videoAttachment: 'Video', attachments: 'attachments', healthMedia: 'Media',
+    healthTitleRequired: 'Health entry title is required.', healthEntrySaved: 'Health entry saved.', healthEntryUpdated: 'Health entry updated.', searchHealthDiary: 'Search this day', healthSearchCurrentDay: 'Current day search', healthSearchHint: 'Searches title, description, category and notes only on the selected day.', noHealthEntries: 'No health entries for this day.', noHealthSearchResults: 'No matching health entries.', healthHomeHint: 'Today’s health notes',
+    healthAnalysis: 'Health analysis', last30Days: 'Last 30 days', last180Days: 'Last 180 days', last360Days: 'Last 360 days', allTime: 'All time', recurringEvents: 'Recurring events', recurrenceChart: 'Recurrence chart', healthNoInsight: 'Add health entries to see recurring patterns.', healthRecurringInsight: 'recurring pattern(s), most often', healthRecentInsight: 'health note(s) in the last 30 days, most often',
+    healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready health summary exported.', selectedDayHealthNote: 'Health entries for the selected day are shown below.', none: 'none', healthDiaryTracking: 'Track health data', healthDiaryTrackingHint: 'Enable the separate health diary, symptom logging and health analysis.', healthDiaryDisabled: 'Health diary is disabled in Settings.', healthEventsShort: 'events', healthAnalysisWindow: 'Analysis window', healthEventFrequency: 'Event frequency', healthFrequencyColumns: '30 / 180 / 360 days / all', healthSelectedEventTrend: 'Monthly frequency for the selected event',
+    backupOptions: 'Backup contents', backupOptionsBody: 'Choose what should be included in this ZIP backup. Everything is selected by default.', backupIncludeCatalog: 'Activity + saved food items', backupIncludeCatalogHint: 'Local and synced foods, ingredients, recipes, activities and catalog sources.', backupIncludeFoodDiary: 'Food diary', backupIncludeFoodDiaryHint: 'Meal entries, activity logs and weight logs.', backupIncludeHealthDiary: 'Health diary', backupIncludeHealthDiaryHint: 'Health entries with recurrence links and attachments.', backupIncludeHealthMedia: 'Health attachments', backupIncludeHealthMediaHint: 'Photos and videos attached to health entries. Turn off for a smaller backup.', backupSelectAtLeastOne: 'Select at least one backup content group.', backupExportInProgress: 'Preparing export', backupPreparing: 'Preparing backup data...', backupPacking: 'Packing ZIP file...', backupPackingMedia: 'Packing health photos and videos...', backupOpeningPicker: 'Opening file picker...',
+    appPurpose: 'App purpose', profilePurposeMissing: 'Choose at least one purpose.', selectAtLeastOnePurpose: 'Select at least one purpose.', onboardingPurposeIntro: 'What do you want to use Nutrino for? Select at least one option.',
+    purposeWeightLoss: 'Weight loss', purposeWeightLossHint: 'Track a calorie deficit and progress.', purposeWeightGain: 'Weight gain', purposeWeightGainHint: 'Track enough intake and weight changes.', purposeHealthyEating: 'Healthy eating', purposeHealthyEatingHint: 'Focus on nutrients and balanced days.', purposeMealLogging: 'Meal logging', purposeMealLoggingHint: 'Keep a simple food diary.', purposeHealthLogging: 'Health issue logging', purposeHealthLoggingHint: 'Track symptoms and recurring signs.',
+    healthAnalysisDayHint: 'Open analysis for the selected day, recurrence context and longer-term trends.', healthClinicalContext: 'Clinical context', healthClinicalContextHint: 'Focuses on recurrence, timing, attachments and category mix. Useful for preparing a concise doctor visit summary.', healthDayPatternAnalysis: 'Selected day patterns', healthDayPatternHint: 'Today / all-time count / average recurrence interval.', healthAverageInterval: 'avg every', healthRecurringSignal: 'recurring', healthNewEvent: 'new', healthNotFrequent: 'not frequent', healthClinicalDisclaimer: 'This summary is a structured diary view, not a diagnosis. Share severe, worsening or urgent symptoms with a clinician.', healthStillOngoing: 'Still ongoing', healthStillOngoingHint: 'Ask again tomorrow if this symptom has not resolved.', healthResolvedAt: 'Resolved at', healthNeedsReview: 'needs review', healthResolvedSameDay: 'same day', healthEntriesToReview: 'Health entries to review', healthEntriesToReviewHint: 'Confirm whether symptoms resolved or are still ongoing.', noHealthEntriesToReview: 'No health entries need review.', healthReviewReminderTitle: 'Health diary review', healthReviewReminderBody: 'Review unresolved health entries and symptom duration.', healthOngoing: 'Ongoing', healthAverageDuration: 'Avg duration', searchPreviousHealthEvents: 'Search previous health events', searchHealthEvents: 'Search health events', chooseHealthEvent: 'Choose event', healthNoPreviousEvents: 'No previous health events yet.', healthAttachmentStorageHint: 'Attachments are stored in local app data and can be included or omitted from ZIP backups.', healthAttachmentPreview: 'Preview attachment', healthAttachmentName: 'Attachment name', healthAttachmentMissingData: 'This backup does not contain the attachment file data.', healthAttachmentPreviewUnavailable: 'This photo format cannot be previewed on this device.', lastUsed: 'last used', ignore: 'Ignore', activityAnalysis: 'Activity analysis', activityAnalysisHint: 'Each day shows total active minutes and one pie chart split by activity type.', activityAnalysisRange: 'Activity analysis range', activeDays: 'Active days', activityTypeBreakdown: 'Minutes by activity type', minutesShort: 'min', healthCategoryDistribution: 'Category mix', healthTimingPattern: 'Time-of-day pattern', healthWeekdayPattern: 'Weekday pattern', healthDurationDistribution: 'Duration distribution', healthRecurrenceSignals: 'Recurrence signals', healthBusyDays: 'Days with most entries', healthNoAnalysisData: 'No health data in this period.', healthEntryDetails: 'Entry details', healthOccurrences: 'Occurrences', healthFirstSeen: 'First seen', healthLastSeen: 'Last seen', healthOccurrenceHistory: 'Occurrence history', healthEventDates: 'Dates', healthPatternHeatmap: 'Pattern heatmap', healthTimeMorning: 'Morning', healthTimeAfternoon: 'Afternoon', healthTimeEvening: 'Evening', healthTimeNight: 'Night', healthDurationSameDay: 'Same day', healthDurationTwoThreeDays: '2-3 days', healthDurationFourSevenDays: '4-7 days', healthDurationLong: '8+ days', healthDurationOngoing: 'Ongoing', healthCategoryPain: 'Pain', healthCategoryDigestive: 'Digestive', healthCategoryStool: 'Stool changes', healthCategorySkin: 'Skin', healthCategoryRespiratory: 'Respiratory', healthCategorySleep: 'Sleep', healthCategoryMood: 'Mood', healthCategoryInjury: 'Injury', healthCategoryEnergy: 'Energy', healthCategoryOther: 'Other',
+  },
+  hu: {
+    foodDiary: 'Étel', healthDiary: 'Egészségnapló', addHealthEntry: 'Egészségbejegyzés', editHealthEntry: 'Egészségbejegyzés szerkesztése', duplicateHealthEntry: 'Egészségbejegyzés duplikálása',
+    markAgain: 'Újra megtörtént', healthEntrySheetHint: 'Tünetek, jelek vagy szokatlan megfigyelések rögzítése opcionális kontextussal.', newHealthEvent: 'Új esemény', previousHealthEvent: 'Korábbi esemény', choosePreviousEvent: 'Válassz korábbi eseményt',
+    now: 'Most', tenMinutesAgo: '10 perce', oneHourAgo: '1 órája', customDateTime: 'Egyedi', date: 'Dátum', time: 'Idő',
+    healthTitle: 'Cím, pl. bal térdfájdalom', healthDescription: 'Leírás', healthCategory: 'Kategória', healthNotes: 'Opcionális jegyzetek', addPhoto: 'Fotó', addVideo: 'Videó', photoAttachment: 'Fotó', videoAttachment: 'Videó', attachments: 'csatolmány', healthMedia: 'Média',
+    healthTitleRequired: 'Az egészségbejegyzés címe kötelező.', healthEntrySaved: 'Egészségbejegyzés mentve.', healthEntryUpdated: 'Egészségbejegyzés frissítve.', searchHealthDiary: 'Keresés ezen a napon', healthSearchCurrentDay: 'Keresés az aktuális napon', healthSearchHint: 'Csak a kiválasztott nap címeiben, leírásaiban, kategóriáiban és jegyzeteiben keres.', noHealthEntries: 'Nincs egészségbejegyzés erre a napra.', noHealthSearchResults: 'Nincs találat az egészségnaplóban.', healthHomeHint: 'Mai egészségjegyzetek',
+    healthAnalysis: 'Egészség analízis', last30Days: 'Utolsó 30 nap', last180Days: 'Utolsó 180 nap', last360Days: 'Utolsó 360 nap', allTime: 'Összes idő', recurringEvents: 'Visszatérő események', recurrenceChart: 'Ismétlődés diagram', healthNoInsight: 'Adj hozzá egészségbejegyzéseket a visszatérő mintákhoz.', healthRecurringInsight: 'visszatérő minta, leggyakrabban', healthRecentInsight: 'egészségjegyzet az utolsó 30 napban, leggyakrabban',
+    healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready egészség összefoglaló exportálva.', selectedDayHealthNote: 'A kiválasztott nap egészségbejegyzései lent láthatók.', none: 'nincs', healthDiaryTracking: 'Egészségügyi adatok vezetése', healthDiaryTrackingHint: 'Külön egészségnapló, tünetrögzítés és egészség analízis bekapcsolása.', healthDiaryDisabled: 'Az egészségnapló ki van kapcsolva a beállításokban.', healthEventsShort: 'esemény', healthAnalysisWindow: 'Elemzési időszak', healthEventFrequency: 'Esemény gyakoriság', healthFrequencyColumns: '30 / 180 / 360 nap / összes', healthSelectedEventTrend: 'A kiválasztott esemény havi gyakorisága',
+    backupOptions: 'Backup tartalma', backupOptionsBody: 'Válaszd ki, mi kerüljön ebbe a ZIP mentésbe. Alapból minden be van pipálva.', backupIncludeCatalog: 'Aktivitás + étel mentett tételek', backupIncludeCatalogHint: 'Helyi és szinkronizált ételek, alapanyagok, receptek, aktivitások és katalógusforrások.', backupIncludeFoodDiary: 'Étel napló', backupIncludeFoodDiaryHint: 'Étkezések, aktivitásnaplók és súlynapló.', backupIncludeHealthDiary: 'Egészségügyi napló', backupIncludeHealthDiaryHint: 'Egészségbejegyzések ismétlődési kapcsolatokkal és csatolmányokkal.', backupIncludeHealthMedia: 'Egészségügyi csatolmányok', backupIncludeHealthMediaHint: 'Az egészségbejegyzésekhez csatolt fotók és videók. Kisebb backuphoz kapcsold ki.', backupSelectAtLeastOne: 'Legalább egy backup tartalmi csoportot válassz ki.', backupExportInProgress: 'Export készítése', backupPreparing: 'Backup adatok előkészítése...', backupPacking: 'ZIP fájl csomagolása...', backupPackingMedia: 'Egészségügyi fotók és videók csomagolása...', backupOpeningPicker: 'Fájlkezelő megnyitása...',
+    appPurpose: 'App használati cél', profilePurposeMissing: 'Válassz legalább egy célt.', selectAtLeastOnePurpose: 'Válassz legalább egy célt.', onboardingPurposeIntro: 'Mire szeretnéd használni a Nutrinót? Válassz legalább egy opciót.',
+    purposeWeightLoss: 'Fogyás', purposeWeightLossHint: 'Deficit és haladás követése.', purposeWeightGain: 'Tömegnövelés', purposeWeightGainHint: 'Elég bevitel és súlyváltozás követése.', purposeHealthyEating: 'Egészséges étkezés', purposeHealthyEatingHint: 'Tápanyagok és kiegyensúlyozott napok.', purposeMealLogging: 'Étkezésnapló', purposeMealLoggingHint: 'Egyszerű ételnapló vezetése.', purposeHealthLogging: 'Egészségprobléma naplózás', purposeHealthLoggingHint: 'Tünetek és visszatérő jelek követése.',
+    healthAnalysisDayHint: 'Elemzés megnyitása a kiválasztott naphoz, ismétlődési kontextussal és hosszabb távú trendekkel.', healthClinicalContext: 'Klinikai kontextus', healthClinicalContextHint: 'Ismétlődésre, időzítésre, csatolmányokra és kategória-eloszlásra fókuszál. Orvosi konzultáció előkészítéséhez hasznos.', healthDayPatternAnalysis: 'Kiválasztott napi minták', healthDayPatternHint: 'Mai / összes előfordulás / átlagos ismétlődési távolság.', healthAverageInterval: 'átlagosan ennyi naponta:', healthRecurringSignal: 'visszatérő', healthNewEvent: 'új', healthNotFrequent: 'nem gyakori', healthClinicalDisclaimer: 'Ez strukturált naplóösszefoglaló, nem diagnózis. Súlyosbodó, erős vagy sürgős tünettel fordulj orvoshoz.', healthStillOngoing: 'Még nem múlt el', healthStillOngoingHint: 'Ha még tart, holnap újra rákérdez az app.', healthResolvedAt: 'Elmúlt ekkor', healthNeedsReview: 'átnézendő', healthResolvedSameDay: 'azonos nap', healthEntriesToReview: 'Átnézendő egészségügyi bejegyzések', healthEntriesToReviewHint: 'Jelöld, hogy elmúlt-e a tünet, vagy még tart.', noHealthEntriesToReview: 'Nincs átnézendő egészségügyi bejegyzés.', healthReviewReminderTitle: 'Egészségnapló átnézés', healthReviewReminderBody: 'Nézd át a nyitott egészségbejegyzéseket és a tünetek időtartamát.', healthOngoing: 'Még tart', healthAverageDuration: 'Átlag időtartam', searchPreviousHealthEvents: 'Korábbi egészségesemények keresése', searchHealthEvents: 'Egészségesemény keresése', chooseHealthEvent: 'Esemény választása', healthNoPreviousEvents: 'Még nincs korábbi egészségesemény.', healthAttachmentStorageHint: 'A csatolmányok helyi appadatként vannak tárolva, és ZIP backupba betehetők vagy kihagyhatók.', healthAttachmentPreview: 'Csatolmány megtekintése', healthAttachmentName: 'Csatolmány neve', healthAttachmentMissingData: 'Ez a backup nem tartalmazza a csatolmány fájladatát.', healthAttachmentPreviewUnavailable: 'Ezt a fotóformátumot ezen az eszközön nem lehet előnézetben megjeleníteni.', lastUsed: 'utoljára', ignore: 'Figyelmen kívül hagyás', activityAnalysis: 'Aktivitás analízis', activityAnalysisHint: 'Minden napnál látszik az aktív perc összesen, és egy kördiagram típusok szerinti percmegosztással.', activityAnalysisRange: 'Aktivitás elemzési időszak', activeDays: 'Aktív napok', activityTypeBreakdown: 'Percek aktivitástípus szerint', minutesShort: 'perc', healthCategoryDistribution: 'Kategória-megoszlás', healthTimingPattern: 'Napszak szerinti minta', healthWeekdayPattern: 'Heti minta', healthDurationDistribution: 'Időtartam-megoszlás', healthRecurrenceSignals: 'Ismétlődési jelek', healthBusyDays: 'Legtöbb bejegyzéses napok', healthNoAnalysisData: 'Nincs egészségadat ebben az időszakban.', healthEntryDetails: 'Bejegyzés részletei', healthOccurrences: 'Előfordulások', healthFirstSeen: 'Első alkalom', healthLastSeen: 'Utolsó alkalom', healthOccurrenceHistory: 'Előfordulási előzmények', healthEventDates: 'Dátumok', healthPatternHeatmap: 'Mintázat hőtérkép', healthTimeMorning: 'Reggel', healthTimeAfternoon: 'Délután', healthTimeEvening: 'Este', healthTimeNight: 'Éjszaka', healthDurationSameDay: 'Azonos nap', healthDurationTwoThreeDays: '2-3 nap', healthDurationFourSevenDays: '4-7 nap', healthDurationLong: '8+ nap', healthDurationOngoing: 'Még tart', healthCategoryPain: 'Fájdalom', healthCategoryDigestive: 'Emésztés', healthCategoryStool: 'Székletváltozás', healthCategorySkin: 'Bőr', healthCategoryRespiratory: 'Légzés', healthCategorySleep: 'Alvás', healthCategoryMood: 'Hangulat', healthCategoryInjury: 'Sérülés', healthCategoryEnergy: 'Energia', healthCategoryOther: 'Egyéb',
+  },
+};
+translations.en = { ...translations.en, ...normalizeTranslationValues(mobileHealthDiaryTranslations.en || {}) };
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...normalizeTranslationValues(mobileHealthDiaryTranslations[language] || {}),
+  };
+}
+
+const aiExportAndMediaTranslations: Record<string, Partial<Record<string, string>>> = {
+  en: {
+    aiExportAllData: 'Export for AI',
+    aiExportAllDataBody: 'Save a compact Markdown file with food, activity, health and weight data.',
+    aiExportMarkdownHint: 'Choose a date range. The export is Markdown optimized for AI tools and includes nutrition details, recipe components, activity logs, health entries and media counts, but not photo or video files.',
+    aiExportStartDate: 'From date',
+    aiExportEndDate: 'To date',
+    aiExportMarkdownCreated: 'AI Markdown export created.',
+    last90Days: 'Last 90 days',
+    invalidDateRange: 'Invalid date range.',
+    healthMediaEventGallery: 'All media for this recurring event',
+    healthMediaUploadedAt: 'Uploaded',
+    healthMediaSameDay: 'on this day',
+    newestFirst: 'Newest first',
+    oldestFirst: 'Oldest first',
+    aiExportPreparing: 'Preparing AI export...',
+    calendarSearch: 'Search calendar',
+    calendarSearchHint: 'Food, recipe, ingredient, activity or health entry',
+    calendarSearchNoResults: 'No calendar results in your diary.',
+    calendarSearchDays: 'matching days',
+    jumpLatestOccurrence: 'Jump to latest',
+    goToday: 'Today',
+  },
+  hu: {
+    aiExportAllData: 'Export AI-nak',
+    aiExportAllDataBody: 'Kompakt Markdown mentése étkezés, aktivitás, egészség és súly adatokkal.',
+    aiExportMarkdownHint: 'Válassz dátumtartományt. Az export AI-eszközökhöz optimalizált Markdown: tápanyagok, receptösszetevők, aktivitások, egészségbejegyzések és média darabszámok benne vannak, fotó/videó fájlok nélkül.',
+    aiExportStartDate: 'Dátumtól',
+    aiExportEndDate: 'Dátumig',
+    aiExportMarkdownCreated: 'AI Markdown export elkészült.',
+    last90Days: 'Utolsó 90 nap',
+    invalidDateRange: 'Érvénytelen dátumtartomány.',
+    healthMediaEventGallery: 'Az ismétlődő esemény összes médiája',
+    healthMediaUploadedAt: 'Feltöltve',
+    healthMediaSameDay: 'ezen a napon',
+    newestFirst: 'Legújabb elöl',
+    oldestFirst: 'Legrégebbi elöl',
+    aiExportPreparing: 'AI export előkészítése...',
+    calendarSearch: 'Keresés a naptárban',
+    calendarSearchHint: 'Étel, recept, alapanyag, aktivitás vagy egészségbejegyzés',
+    calendarSearchNoResults: 'Nincs naptári találat a naplóban.',
+    calendarSearchDays: 'találati nap',
+    jumpLatestOccurrence: 'Ugrás az utolsó előforduláshoz',
+    goToday: 'Mai nap',
+  },
+};
+translations.en = { ...translations.en, ...normalizeTranslationValues(aiExportAndMediaTranslations.en || {}) };
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...normalizeTranslationValues(aiExportAndMediaTranslations[language] || {}),
+  };
+}
+
 const onboardingGuideTranslations: Record<string, Partial<Record<string, string>>> = {
   en: {
     permissionsReady: 'permissions ready',
@@ -6969,8 +7461,79 @@ for (const language of Object.keys(translations)) {
 // end generated completeMobileLanguageTranslations
 
 function t(key: string) {
-  return translations[activeLanguage.value]?.[key] ?? translations.en[key] ?? key;
+  const table = translations || {};
+  return table[activeLanguage.value]?.[key] ?? table.en?.[key] ?? key;
 }
+
+
+watch(state, scheduleStateSave, { deep: true });
+watch(healthEventFrequencyRows, (rows) => {
+  if (!rows.length) {
+    healthSelectedEventId.value = null;
+    return;
+  }
+  if (!rows.some((row) => row.eventId === healthSelectedEventId.value)) {
+    healthSelectedEventId.value = rows[0].eventId;
+  }
+});
+watch(() => state.settings.show_micronutrients, (enabled) => {
+  if (enabled) return;
+  if (settingsDialog.value === 'micronutrients') settingsDialog.value = null;
+  micronutrientInfoOpen.value = false;
+  nutrientInsightsDialog.value = null;
+});
+watch(() => state.settings.health_diary_enabled, (enabled) => {
+  if (enabled) return;
+  if (diaryTab.value === 'health') diaryTab.value = 'food';
+  healthEditorOpen.value = false;
+  healthAnalysisModalOpen.value = false;
+  healthPreviewAttachment.value = null;
+  healthDetailEntry.value = null;
+  healthReviewOpen.value = false;
+  healthSearch.value = '';
+  healthSearchOpen.value = false;
+});
+watch(() => state.settings.desktop_api_enabled, (enabled) => {
+  if (enabled) {
+    void pollServerHealth({ syncOnChange: true, quiet: true });
+    return;
+  }
+  serverOnline.value = false;
+  state.pairing.lastSyncError = undefined;
+});
+watch(() => state.settings.github_csv_enabled, (enabled) => {
+  if (enabled) void syncGitHubDailyIfDue();
+});
+watch(() => notificationPermissionSignature(), () => {
+  void ensureNotificationPermissionForReminders();
+  queueReminderScheduleRefresh();
+});
+watch(() => notificationScheduleSignature(), queueReminderScheduleRefresh);
+watch(selectedDate, () => {
+  editingDayWeight.value = false;
+  healthSearch.value = '';
+  healthSearchOpen.value = false;
+});
+watch(analysisOpen, (open) => {
+  if (open) selectAnalysisRowsForSelectedDate();
+});
+watch(analysisDailyRows, (rows) => {
+  if (!rows.some((row) => row.key === selectedCalorieRowKey.value)) selectedCalorieRowKey.value = selectedDate.value;
+}, { immediate: true });
+watch(analysisWeightRows, (rows) => {
+  if (!rows.some((row) => row.key === selectedWeightRowKey.value)) selectedWeightRowKey.value = rows.find((row) => row.selected)?.key || rows.at(-1)?.key || null;
+}, { immediate: true });
+watch([consumedKcal, effectiveDailyGoal, dailyGoal], () => {
+  if (!state.settings.calorie_limit_warning_enabled || !calorieDeficitEnabled.value) return;
+  if (consumedKcal.value <= effectiveDailyGoal.value) return;
+  const key = `${todayKey.value}.deficit-limit`;
+  if (reminderAlreadySent(key)) return;
+  markReminderSent(key);
+  notifyUser(t('deficitWarningTitle'), `${Math.round(consumedKcal.value - effectiveDailyGoal.value)} kcal ${t('overDeficitButWithinLimit')}`, {
+    kind: 'deficit',
+    actionTypeId: NOTIFICATION_ACTION_TYPES.deficit,
+  });
+});
 
 function currentLocale() {
   return languageOptions.find((language) => language.code === activeLanguage.value)?.locale || 'en-US';
@@ -6994,7 +7557,7 @@ function selectedLanguageLabel() {
 
 function setLanguage(code: AppLanguage) {
   state.settings.language = code;
-  saveState(state);
+  saveStateJson(serializeStateForLocalPersistence());
 }
 
 function ensureLocalNameI18n(): LocalizedNameMap {
@@ -7860,6 +8423,16 @@ function timestampForLogDay(key: string, now = Date.now()) {
   return dayStartMs(key) + offset;
 }
 
+function dateKeyOffset(key: string, days: number) {
+  const date = new Date(dayStartMs(key));
+  date.setDate(date.getDate() + days);
+  return dateKey(date);
+}
+
+function defaultAiExportStartDate() {
+  return dateKeyOffset(dateKey(), -89);
+}
+
 function timestampForActiveLogDay(now = Date.now()) {
   return timestampForLogDay(activeLogDateKey.value, now);
 }
@@ -8245,8 +8818,1666 @@ function keepMealNoteAsFinal(entry: Intake) {
   state.intakes = state.intakes.map((item) => item.id === entry.id ? { ...item, note_final: true, pending_sync: false, updated_at: now } : item);
 }
 
+function healthCategoryLabelKey(category: HealthCategoryType | string) {
+  return healthCategoryOptions.find((option) => option.key === category)?.labelKey || 'healthCategoryOther';
+}
+
+function healthCategoryIcon(category: HealthCategoryType | string): IconName {
+  return healthCategoryOptions.find((option) => option.key === category)?.icon || 'heartPulse';
+}
+
+function healthCategoryLabel(category: HealthCategoryType | string) {
+  return t(healthCategoryLabelKey(category));
+}
+
+function healthEventEntry(entry: HealthEntry) {
+  return activeHealthEntries.value.find((item) => item.id === entry.event_id)
+    || activeHealthEntries.value.find((item) => item.event_id === entry.event_id)
+    || entry;
+}
+
+function healthRecurrenceCount(entry: HealthEntry) {
+  return activeHealthEntries.value.filter((item) => item.event_id === entry.event_id).length;
+}
+
+function healthEntrySubtitle(entry: HealthEntry) {
+  const count = healthRecurrenceCount(entry);
+  const parts = [formatDateTime(entry.occurred_at), healthCategoryLabel(entry.category), healthDurationText(entry)];
+  if (count > 1) parts.push(`${count}x`);
+  return parts.join(' · ');
+}
+
+function healthAutoResolvedAt(entry: HealthEntry, now = Date.now()) {
+  if (entry.ongoing === true) return null;
+  const end = dayEndMs(dateKey(new Date(entry.occurred_at))) - 1;
+  return now > end ? end : null;
+}
+
+function healthEntryResolvedAt(entry: HealthEntry, now = Date.now()) {
+  const explicit = Number(entry.resolved_at || 0);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.max(explicit, entry.occurred_at);
+  return healthAutoResolvedAt(entry, now);
+}
+
+function healthEntryDurationDays(entry: HealthEntry, now = Date.now()) {
+  const end = healthEntryResolvedAt(entry, now) ?? now;
+  return Math.max(1, Math.ceil((end - entry.occurred_at + 1) / 86400000));
+}
+
+function healthDurationText(entry: HealthEntry) {
+  if (entry.ongoing === true && !entry.resolved_at) return t('healthStillOngoing');
+  const resolvedAt = healthEntryResolvedAt(entry);
+  if (!resolvedAt) return t('healthNeedsReview');
+  const days = healthEntryDurationDays(entry, resolvedAt);
+  return days <= 1 ? t('healthResolvedSameDay') : `${days} ${t('days')}`;
+}
+
+function healthEntryNeedsReview(entry: HealthEntry) {
+  if (!healthDiaryEnabled.value || entry.deleted_at) return false;
+  if (healthEntryResolvedAt(entry)) return false;
+  const today = todayKey.value;
+  if (entry.review_dismissed_at && dateKey(new Date(entry.review_dismissed_at)) === today) return false;
+  if (entry.ongoing === true) return dateKey(new Date(entry.last_reviewed_at || 0)) !== today;
+  return dateKey(new Date(entry.occurred_at)) === today;
+}
+
+function healthReviewSubtitle(entry: HealthEntry) {
+  const started = formatDateTime(entry.occurred_at);
+  return `${started} · ${healthCategoryLabel(entry.category)} · ${healthDurationText(entry)}`;
+}
+
+function ignoreHealthReview(entry: HealthEntry) {
+  const now = Date.now();
+  state.healthEntries = state.healthEntries.map((item) => item.id === entry.id ? {
+    ...item,
+    review_dismissed_at: now,
+    updated_at: now,
+  } : item);
+  queueReminderScheduleRefresh();
+}
+
+function openHealthReviewDay(entry: HealthEntry) {
+  const key = dateKey(new Date(entry.occurred_at));
+  selectedDate.value = key;
+  calendarMonth.value = new Date(dayStartMs(key));
+  unlockedDiaryDate.value = key;
+  activeTab.value = 'diary';
+  diaryTab.value = 'health';
+  healthReviewOpen.value = true;
+  highlightedHealthReviewEntryId.value = entry.id;
+  if (highlightedReviewTimer) window.clearTimeout(highlightedReviewTimer);
+  highlightedReviewTimer = window.setTimeout(() => {
+    if (highlightedHealthReviewEntryId.value === entry.id) highlightedHealthReviewEntryId.value = null;
+  }, 6500);
+  showToast(activeLanguage.value === 'hu' ? `${key} nap betöltve.` : `${key} loaded.`);
+  void nextTick(() => {
+    const target = document.getElementById(`health-entry-${entry.id}`);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    else scrollToPageTop();
+  });
+}
+
+function openHealthReviewEntry(entry: HealthEntry) {
+  openHealthReviewDay(entry);
+  healthEditorMode.value = 'edit';
+  healthEditorId.value = entry.id;
+  healthRecurrenceSourceId.value = entry.event_id;
+  fillHealthFormFromEntry(entry);
+  if (!entry.ongoing && !entry.resolved_at) setHealthFormResolvedTimestamp(Date.now());
+  healthEditorOpen.value = true;
+}
+
+function setHealthFormTimestamp(value: number) {
+  const date = new Date(value);
+  healthForm.date = dateKey(date);
+  healthForm.time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function healthFormOccurredAt() {
+  const [year, month, day] = healthForm.date.split('-').map(Number);
+  const [hour, minute] = healthForm.time.split(':').map(Number);
+  const value = new Date(year || new Date().getFullYear(), (month || 1) - 1, day || 1, hour || 0, minute || 0, 0, 0).getTime();
+  return Number.isFinite(value) ? value : Date.now();
+}
+
+function setHealthFormResolvedTimestamp(value: number | null) {
+  if (!value || !Number.isFinite(value)) {
+    healthForm.resolvedDate = '';
+    healthForm.resolvedTime = '';
+    return;
+  }
+  const date = new Date(value);
+  healthForm.resolvedDate = dateKey(date);
+  healthForm.resolvedTime = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function healthFormResolvedAt(): number | null {
+  if (healthForm.ongoing || !healthForm.resolvedDate || !healthForm.resolvedTime) return null;
+  const [year, month, day] = healthForm.resolvedDate.split('-').map(Number);
+  const [hour, minute] = healthForm.resolvedTime.split(':').map(Number);
+  const value = new Date(year || new Date().getFullYear(), (month || 1) - 1, day || 1, hour || 0, minute || 0, 0, 0).getTime();
+  return Number.isFinite(value) ? Math.max(value, healthFormOccurredAt()) : null;
+}
+
+function applyHealthQuickTime(option: HealthQuickTime) {
+  healthQuickTime.value = option;
+  if (option === 'custom') return;
+  const now = Date.now();
+  const offset = option === 'minus10' ? 10 * 60 * 1000 : option === 'minus60' ? 60 * 60 * 1000 : 0;
+  setHealthFormTimestamp(now - offset);
+}
+
+function resetHealthForm(timestamp = timestampForLogDay(activeLogDateKey.value)) {
+  healthForm.title = '';
+  healthForm.description = '';
+  healthForm.category = 'other';
+  healthForm.notes = '';
+  healthForm.ongoing = false;
+  setHealthFormResolvedTimestamp(null);
+  healthForm.attachments = [];
+  healthEditorId.value = null;
+  healthRecurrenceSourceId.value = null;
+  healthRecurrenceSearch.value = '';
+  applyHealthQuickTime('now');
+  if (activeLogDateKey.value !== todayKey.value) {
+    healthQuickTime.value = 'custom';
+    setHealthFormTimestamp(timestamp);
+  }
+}
+
+function fillHealthFormFromEntry(entry: HealthEntry, timestamp = entry.occurred_at, includeAttachments = true) {
+  healthForm.title = entry.title;
+  healthForm.description = entry.description;
+  healthForm.category = entry.category;
+  healthForm.notes = entry.notes || '';
+  healthForm.ongoing = entry.ongoing === true;
+  setHealthFormResolvedTimestamp(entry.resolved_at || null);
+  healthForm.attachments = includeAttachments ? entry.attachments.map((attachment) => ({ ...attachment })) : [];
+  healthQuickTime.value = 'custom';
+  setHealthFormTimestamp(timestamp);
+}
+
+function openNewHealthEntry() {
+  if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
+  if (!ensureSelectedDayEditing()) return;
+  healthEditorMode.value = 'new';
+  resetHealthForm();
+  healthEditorOpen.value = true;
+  nextTick(() => scrollFocusedInputIntoView());
+}
+
+function openHealthRecurrence(entry?: HealthEntry) {
+  if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
+  if (!ensureSelectedDayEditing()) return;
+  const source = entry || reusableHealthEvents.value[0];
+  healthEditorMode.value = 'recurrence';
+  resetHealthForm();
+  healthRecurrenceSearch.value = '';
+  if (source) {
+    healthRecurrenceSourceId.value = source.event_id;
+    fillHealthFormFromEntry(healthEventEntry(source), timestampForLogDay(activeLogDateKey.value), false);
+  }
+  healthEditorOpen.value = true;
+  nextTick(() => scrollFocusedInputIntoView());
+}
+
+function editHealthEntry(entry: HealthEntry) {
+  if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
+  if (!ensureSelectedDayEditing()) return;
+  healthEditorMode.value = 'edit';
+  healthEditorId.value = entry.id;
+  healthRecurrenceSourceId.value = entry.event_id;
+  fillHealthFormFromEntry(entry);
+  healthEditorOpen.value = true;
+  nextTick(() => scrollFocusedInputIntoView());
+}
+
+function duplicateHealthEntry(entry: HealthEntry) {
+  if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
+  if (!ensureSelectedDayEditing()) return;
+  healthEditorMode.value = 'duplicate';
+  healthEditorId.value = null;
+  healthRecurrenceSourceId.value = entry.event_id;
+  fillHealthFormFromEntry(entry, timestampForLogDay(activeLogDateKey.value), false);
+  healthEditorOpen.value = true;
+  nextTick(() => scrollFocusedInputIntoView());
+}
+
+function closeHealthEditor() {
+  healthEditorOpen.value = false;
+  healthEditorId.value = null;
+}
+
+function selectedHealthRecurrenceSource() {
+  const eventId = healthRecurrenceSourceId.value;
+  return eventId ? reusableHealthEvents.value.find((entry) => entry.event_id === eventId) || null : null;
+}
+
+function selectHealthRecurrenceEvent(entry: HealthEntry) {
+  healthRecurrenceSourceId.value = entry.event_id;
+  if (healthEditorMode.value === 'recurrence') fillHealthFormFromEntry(healthEventEntry(entry), healthFormOccurredAt(), false);
+}
+
+function chooseHealthRecurrenceSource(event: Event) {
+  const eventId = (event.target as HTMLSelectElement | null)?.value || '';
+  healthRecurrenceSourceId.value = eventId || null;
+  const source = eventId ? reusableHealthEvents.value.find((entry) => entry.event_id === eventId) : null;
+  if (source && healthEditorMode.value === 'recurrence') fillHealthFormFromEntry(healthEventEntry(source), healthFormOccurredAt(), false);
+}
+
+async function saveHealthEntry() {
+  const title = healthForm.title.trim();
+  if (!title) return showToast(t('healthTitleRequired'));
+  const description = healthForm.description.trim();
+  const now = Date.now();
+  const occurredAt = healthFormOccurredAt();
+  const existing = healthEditorId.value ? state.healthEntries.find((entry) => entry.id === healthEditorId.value) : null;
+  const source = selectedHealthRecurrenceSource();
+  if (healthEditorMode.value === 'recurrence' && !source) return showToast(t('choosePreviousEvent'));
+  const id = existing?.id || generateId('health-entry');
+  const eventId = healthEditorMode.value === 'new'
+    ? id
+    : source?.event_id || existing?.event_id || healthRecurrenceSourceId.value || id;
+  const recurrenceOfId = healthEditorMode.value === 'new'
+    ? null
+    : source?.id || existing?.recurrence_of_id || null;
+  const resolvedAt = healthFormResolvedAt();
+  const payload: HealthEntry = {
+    id,
+    profile_id: state.profile.id,
+    event_id: eventId,
+    recurrence_of_id: recurrenceOfId,
+    title,
+    description,
+    occurred_at: occurredAt,
+    category: healthForm.category,
+    notes: healthForm.notes.trim() || null,
+    attachments: healthForm.attachments.map((attachment) => ({ ...attachment })),
+    ongoing: healthForm.ongoing === true,
+    resolved_at: healthForm.ongoing ? null : resolvedAt,
+    last_reviewed_at: healthForm.ongoing || resolvedAt ? now : existing?.last_reviewed_at ?? null,
+    review_dismissed_at: existing?.review_dismissed_at ?? null,
+    created_at: existing?.created_at || now,
+    updated_at: now,
+    deleted_at: null,
+  };
+  try {
+    await saveHealthEntryMedia(payload);
+  } catch (error) {
+    console.warn('Could not persist health attachment media', error);
+  }
+  if (existing) state.healthEntries = state.healthEntries.map((entry) => entry.id === existing.id ? payload : entry);
+  else state.healthEntries.push(payload);
+  closeHealthEditor();
+  queueReminderScheduleRefresh();
+  showToast(t(healthEditorMode.value === 'edit' ? 'healthEntryUpdated' : 'healthEntrySaved'));
+}
+
+function removeHealthEntry(id: string) {
+  if (!window.confirm(t('deleteEntryConfirm'))) return;
+  const now = Date.now();
+  state.healthEntries = state.healthEntries.map((entry) => entry.id === id ? { ...entry, deleted_at: now, updated_at: now } : entry);
+}
+
+function healthAttachmentDisplayName(attachment: HealthAttachment) {
+  return String(attachment.display_name || attachment.name || '').trim();
+}
+
+function healthAttachmentFileFingerprint(file: File, type: 'photo' | 'video') {
+  return `${type}:${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function healthAttachmentSignature(attachment: HealthAttachment) {
+  return attachment.fingerprint || `${attachment.type}:${attachment.name}:${attachment.size}:${String(attachment.data_url || '').slice(0, 80)}`;
+}
+
+function healthAttachmentUploadedAt(attachment: HealthAttachment, entry: HealthEntry) {
+  const value = Number(attachment.created_at || entry.updated_at || entry.created_at || entry.occurred_at || 0);
+  return Number.isFinite(value) && value > 0 ? value : Date.now();
+}
+
+function healthMediaItemsForEntry(entry: HealthEntry, direction: HealthMediaSortDirection = 'desc'): HealthMediaGalleryItem[] {
+  const sourceDay = dateKey(new Date(entry.occurred_at));
+  const byAttachment = new Map<string, HealthMediaGalleryItem>();
+  const eventEntries = (state.healthEntries || [])
+    .filter((item) => !item.deleted_at)
+    .filter((item) => item.event_id === entry.event_id)
+    .sort((a, b) => a.occurred_at - b.occurred_at);
+
+  for (const eventEntry of eventEntries) {
+    for (const attachment of eventEntry.attachments || []) {
+      const key = attachment.id || healthAttachmentSignature(attachment);
+      if (byAttachment.has(key)) continue;
+      const uploadedAt = healthAttachmentUploadedAt(attachment, eventEntry);
+      const uploadDay = dateKey(new Date(uploadedAt));
+      const occurrenceDay = dateKey(new Date(eventEntry.occurred_at));
+      byAttachment.set(key, {
+        key: `${eventEntry.id}:${key}`,
+        attachment,
+        entry: eventEntry,
+        uploadedAt,
+        occurrenceAt: eventEntry.occurred_at,
+        sameOccurrenceDay: occurrenceDay === sourceDay || uploadDay === sourceDay,
+      });
+    }
+  }
+
+  return [...byAttachment.values()].sort((a, b) => {
+    const value = a.uploadedAt - b.uploadedAt || a.occurrenceAt - b.occurrenceAt || a.key.localeCompare(b.key);
+    return direction === 'asc' ? value : -value;
+  });
+}
+
+function healthMediaCountForEntry(entry: HealthEntry) {
+  return healthMediaItemsForEntry(entry).length;
+}
+
+function healthMediaSameDayLabel(item: HealthMediaGalleryItem) {
+  return dateKey(new Date(item.occurrenceAt)) === dateKey(new Date(item.uploadedAt))
+    ? formatDate(item.occurrenceAt)
+    : `${formatDate(item.occurrenceAt)} · ${t('healthMediaUploadedAt')} ${formatDate(item.uploadedAt)}`;
+}
+
+function clampHealthImageScale(value: number) {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(5, Math.max(1, value));
+}
+
+function clampHealthImageOffset(value: number, scale: number, axisSize: number) {
+  if (scale <= 1.01) return 0;
+  const limit = Math.max(64, axisSize * (scale - 1) * 0.58);
+  return Math.min(limit, Math.max(-limit, value));
+}
+
+function applyHealthImageZoom(scale: number, x = healthImageZoom.x, y = healthImageZoom.y) {
+  const nextScale = clampHealthImageScale(scale);
+  healthImageZoom.scale = Math.round(nextScale * 100) / 100;
+  healthImageZoom.x = clampHealthImageOffset(x, nextScale, window.innerWidth || 360);
+  healthImageZoom.y = clampHealthImageOffset(y, nextScale, window.innerHeight || 640);
+}
+
+function resetHealthImageZoom() {
+  healthImagePointers.clear();
+  healthImageGestureStart = null;
+  healthImageLastTapAt = 0;
+  healthImageZoom.scale = 1;
+  healthImageZoom.x = 0;
+  healthImageZoom.y = 0;
+}
+
+function healthImagePoint(event: PointerEvent): HealthImagePoint {
+  return { x: event.clientX, y: event.clientY };
+}
+
+function healthImageDistance(a: HealthImagePoint, b: HealthImagePoint) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function healthImageCenter(a: HealthImagePoint, b: HealthImagePoint): HealthImagePoint {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function toggleHealthImageZoomAt(point: HealthImagePoint) {
+  if (healthImageZoom.scale > 1.05) {
+    resetHealthImageZoom();
+    return;
+  }
+  const x = ((window.innerWidth || 360) / 2 - point.x) * 1.15;
+  const y = ((window.innerHeight || 640) / 2 - point.y) * 1.15;
+  applyHealthImageZoom(2.5, x, y);
+}
+
+function zoomHealthImage(delta: number) {
+  applyHealthImageZoom(healthImageZoom.scale + delta);
+}
+
+function startHealthImageGesture(points: HealthImagePoint[]) {
+  if (points.length >= 2) {
+    const [a, b] = points;
+    healthImageGestureStart = {
+      scale: healthImageZoom.scale,
+      x: healthImageZoom.x,
+      y: healthImageZoom.y,
+      distance: Math.max(1, healthImageDistance(a, b)),
+      center: healthImageCenter(a, b),
+    };
+    return;
+  }
+  const point = points[0];
+  healthImageGestureStart = point
+    ? { scale: healthImageZoom.scale, x: healthImageZoom.x, y: healthImageZoom.y, distance: 0, center: point }
+    : null;
+}
+
+function handleHealthImagePointerDown(event: PointerEvent) {
+  if (!healthPreviewIsZoomablePhoto.value) return;
+  (event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId);
+  healthImagePointers.set(event.pointerId, healthImagePoint(event));
+  startHealthImageGesture([...healthImagePointers.values()]);
+  event.preventDefault();
+}
+
+function handleHealthImagePointerMove(event: PointerEvent) {
+  if (!healthPreviewIsZoomablePhoto.value || !healthImagePointers.has(event.pointerId) || !healthImageGestureStart) return;
+  healthImagePointers.set(event.pointerId, healthImagePoint(event));
+  const points = [...healthImagePointers.values()];
+  if (points.length >= 2) {
+    const [a, b] = points;
+    const center = healthImageCenter(a, b);
+    const ratio = healthImageDistance(a, b) / Math.max(1, healthImageGestureStart.distance);
+    applyHealthImageZoom(
+      healthImageGestureStart.scale * ratio,
+      healthImageGestureStart.x + center.x - healthImageGestureStart.center.x,
+      healthImageGestureStart.y + center.y - healthImageGestureStart.center.y,
+    );
+  } else if (points[0]) {
+    applyHealthImageZoom(
+      healthImageGestureStart.scale,
+      healthImageGestureStart.x + points[0].x - healthImageGestureStart.center.x,
+      healthImageGestureStart.y + points[0].y - healthImageGestureStart.center.y,
+    );
+  }
+  event.preventDefault();
+}
+
+function handleHealthImagePointerUp(event: PointerEvent) {
+  if (!healthPreviewIsZoomablePhoto.value) return;
+  const point = healthImagePoint(event);
+  const start = healthImageGestureStart;
+  const wasSingleTap = healthImagePointers.size === 1 && start && healthImageDistance(point, start.center) < 10;
+  (event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId);
+  healthImagePointers.delete(event.pointerId);
+  if (wasSingleTap) {
+    const now = Date.now();
+    if (now - healthImageLastTapAt < 320) {
+      toggleHealthImageZoomAt(point);
+      healthImageLastTapAt = 0;
+    } else {
+      healthImageLastTapAt = now;
+    }
+  }
+  startHealthImageGesture([...healthImagePointers.values()]);
+  event.preventDefault();
+}
+
+function handleHealthImagePointerCancel(event: PointerEvent) {
+  (event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId);
+  healthImagePointers.delete(event.pointerId);
+  startHealthImageGesture([...healthImagePointers.values()]);
+}
+
+function handleHealthImageWheel(event: WheelEvent) {
+  if (!healthPreviewIsZoomablePhoto.value) return;
+  const direction = event.deltaY < 0 ? 0.35 : -0.35;
+  zoomHealthImage(direction);
+  event.preventDefault();
+}
+
+function handleHealthImageDoubleClick(event: MouseEvent) {
+  if (!healthPreviewIsZoomablePhoto.value) return;
+  toggleHealthImageZoomAt({ x: event.clientX, y: event.clientY });
+  event.preventDefault();
+}
+
+function openHealthMediaGrid(entry: HealthEntry) {
+  if (!healthMediaCountForEntry(entry)) return;
+  healthMediaSortDirection.value = 'desc';
+  healthMediaEntry.value = entry;
+}
+
+function closeHealthMediaGrid() {
+  healthMediaEntry.value = null;
+  healthPreviewAttachment.value = null;
+  resetHealthImageZoom();
+}
+
+function openHealthAttachmentPreview(attachment: HealthAttachment) {
+  if (!attachment.data_url) {
+    showToast(t('healthAttachmentMissingData'));
+    return;
+  }
+  resetHealthImageZoom();
+  healthPreviewAttachment.value = attachment;
+}
+
+function closeHealthAttachmentPreview() {
+  healthPreviewAttachment.value = null;
+  resetHealthImageZoom();
+}
+
+function healthAttachmentIsHeic(attachment: Pick<HealthAttachment, 'name' | 'mime_type'>) {
+  return /image\/hei[cf]/i.test(attachment.mime_type || '') || /\.(hei[cf])$/i.test(attachment.name || '');
+}
+
+function healthAttachmentPreviewSource(attachment: HealthAttachment) {
+  if (attachment.type === 'video') return attachment.data_url;
+  return attachment.preview_data_url || (healthAttachmentIsHeic(attachment) ? '' : attachment.data_url);
+}
+
+function guessHealthAttachmentMime(file: File, type: 'photo' | 'video') {
+  if (file.type) return file.type;
+  if (/\.(heic)$/i.test(file.name)) return 'image/heic';
+  if (/\.(heif)$/i.test(file.name)) return 'image/heif';
+  return type === 'photo' ? 'image/*' : 'video/*';
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function createPhotoPreviewDataUrl(file: File) {
+  if (!/\.(hei[cf])$/i.test(file.name) && !/image\/hei[cf]/i.test(file.type || '')) return null;
+  if (typeof createImageBitmap !== 'function') return null;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxDimension = 1800;
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return canvas.toDataURL('image/jpeg', 0.9);
+  } catch {
+    return null;
+  }
+}
+
+async function readHealthAttachmentFile(file: File, type: 'photo' | 'video'): Promise<HealthAttachment> {
+  const dataUrl = await readFileAsDataUrl(file);
+  const mime = guessHealthAttachmentMime(file, type);
+  const previewDataUrl = type === 'photo' ? await createPhotoPreviewDataUrl(file) : null;
+  return {
+    id: generateId('health-attachment'),
+    type,
+    name: file.name || `${type}-${Date.now()}`,
+    display_name: file.name || `${type}-${Date.now()}`,
+    mime_type: mime,
+    size: file.size,
+    data_url: dataUrl,
+    preview_data_url: previewDataUrl,
+    fingerprint: healthAttachmentFileFingerprint(file, type),
+    created_at: Date.now(),
+  };
+}
+
+async function addHealthAttachments(event: Event, type: 'photo' | 'video') {
+  const input = event.target as HTMLInputElement | null;
+  const files = Array.from(input?.files || []).slice(0, Math.max(0, 8 - healthForm.attachments.length));
+  if (!files.length) return;
+  const loaded: HealthAttachment[] = [];
+  const seen = new Set(healthForm.attachments.map(healthAttachmentSignature));
+  for (const file of files) {
+    await yieldToUi();
+    const attachment = await readHealthAttachmentFile(file, type);
+    const signature = healthAttachmentSignature(attachment);
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    loaded.push(attachment);
+  }
+  healthForm.attachments = [...healthForm.attachments, ...loaded].slice(0, 8);
+  if (input) input.value = '';
+}
+
+function removeHealthAttachment(id: string) {
+  healthForm.attachments = healthForm.attachments.filter((attachment) => attachment.id !== id);
+}
+
+function attachmentTypeLabel(type: string) {
+  return type === 'video' ? t('videoAttachment') : t('photoAttachment');
+}
+
+function healthRangeDays(range: HealthAnalysisRangeKey) {
+  return healthAnalysisRanges.find((item) => item.key === range)?.days ?? null;
+}
+
+function healthRangeLabel(range: HealthAnalysisRangeKey) {
+  if (range === 'custom') return t('customDateTime');
+  const option = healthAnalysisRanges.find((item) => item.key === range);
+  return t(option?.labelKey || 'allTime');
+}
+
+function dateInputStartMs(value: string): number | null {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return null;
+  const ms = dayStartMs(trimmed);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function dateInputEndMs(value: string): number | null {
+  const start = dateInputStartMs(value);
+  return start === null ? null : start + 86400000 - 1;
+}
+
+function filterHealthEntriesByRange(entries: HealthEntry[], range: HealthAnalysisRangeKey, customStart = '', customEnd = '') {
+  if (range === 'custom') {
+    const start = dateInputStartMs(customStart);
+    const end = dateInputEndMs(customEnd || dateKey());
+    return entries.filter((entry) => (start === null || entry.occurred_at >= start) && (end === null || entry.occurred_at <= end));
+  }
+  const days = healthRangeDays(range);
+  if (!days) return [...entries];
+  const start = Date.now() - days * 24 * 60 * 60 * 1000;
+  return entries.filter((entry) => entry.occurred_at >= start);
+}
+
+function countRecurringHealthEvents(entries: HealthEntry[]) {
+  const counts = new Map<string, number>();
+  for (const entry of entries) counts.set(entry.event_id, (counts.get(entry.event_id) || 0) + 1);
+  return [...counts.values()].filter((count) => count > 1).length;
+}
+
+function latestHealthEntry(entries: HealthEntry[]) {
+  return [...entries].sort((a, b) => b.occurred_at - a.occurred_at)[0] || null;
+}
+
+function buildHealthAnalysisSummary() {
+  const entries = activeHealthEntries.value;
+  const recent = filterHealthEntriesByRange(entries, '30');
+  const recent180 = filterHealthEntriesByRange(entries, '180');
+  const recent360 = filterHealthEntriesByRange(entries, '360');
+  const eventIds = new Set(entries.map((entry) => entry.event_id));
+  const recurringEvents = countRecurringHealthEvents(entries);
+  const categoryCounts = new Map<HealthCategoryType, number>();
+  for (const entry of entries) categoryCounts.set(entry.category, (categoryCounts.get(entry.category) || 0) + 1);
+  const topCategory = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const latest = latestHealthEntry(entries);
+  const topEvent = buildHealthEventFrequencyRows(entries)[0] || null;
+  const ongoing = entries.filter((entry) => entry.ongoing === true && !healthEntryResolvedAt(entry)).length;
+  const durations = entries.map((entry) => healthEntryDurationDays(entry)).filter((value) => Number.isFinite(value));
+  const averageDurationDays = durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
+  return {
+    total: entries.length,
+    recent: recent.length,
+    recent180: recent180.length,
+    recent360: recent360.length,
+    uniqueEvents: eventIds.size,
+    recurringEvents,
+    topCategory: topCategory ? healthCategoryLabel(topCategory[0]) : t('none'),
+    topEventTitle: topEvent?.title || t('none'),
+    latest,
+    ongoing,
+    averageDurationDays,
+  };
+}
+
+function buildHealthCategoryChartRows(entries = healthAnalysisEntries.value) {
+  const counts = new Map<HealthCategoryType, number>();
+  for (const entry of entries) counts.set(entry.category, (counts.get(entry.category) || 0) + 1);
+  const total = Math.max(1, entries.length);
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, count], index) => ({
+      category,
+      label: healthCategoryLabel(category),
+      count,
+      percent: Math.round(count / total * 100),
+      color: healthTrendPalette[index % healthTrendPalette.length],
+    }));
+}
+
+function healthConicGradient(rows: Array<{ count: number; color: string }>) {
+  const total = rows.reduce((sum, row) => sum + row.count, 0);
+  if (total <= 0) return 'conic-gradient(var(--surface-container-highest) 0 100%)';
+  let cursor = 0;
+  const segments = rows.map((row) => {
+    const start = cursor;
+    cursor += row.count / total * 100;
+    return `${row.color} ${start}% ${cursor}%`;
+  });
+  return `conic-gradient(${segments.join(', ')})`;
+}
+
+function healthPercent(count: number, total: number) {
+  if (total <= 0 || count <= 0) return 0;
+  return Math.max(4, Math.round(count / total * 100));
+}
+
+function buildHealthTimeOfDayRows(entries: HealthEntry[]) {
+  const rows = [
+    { key: 'morning', label: t('healthTimeMorning'), icon: 'coffee' as IconName, color: healthTrendPalette[0], count: 0, percent: 0 },
+    { key: 'afternoon', label: t('healthTimeAfternoon'), icon: 'activity' as IconName, color: healthTrendPalette[1], count: 0, percent: 0 },
+    { key: 'evening', label: t('healthTimeEvening'), icon: 'clock' as IconName, color: healthTrendPalette[2] || '#e7b341', count: 0, percent: 0 },
+    { key: 'night', label: t('healthTimeNight'), icon: 'clock' as IconName, color: healthTrendPalette[3] || '#ef5350', count: 0, percent: 0 },
+  ];
+  for (const entry of entries) {
+    const hour = new Date(entry.occurred_at).getHours();
+    const key = hour >= 5 && hour < 12 ? 'morning' : hour >= 12 && hour < 18 ? 'afternoon' : hour >= 18 && hour < 23 ? 'evening' : 'night';
+    const row = rows.find((item) => item.key === key);
+    if (row) row.count += 1;
+  }
+  const total = entries.length;
+  for (const row of rows) row.percent = healthPercent(row.count, total);
+  return rows;
+}
+
+function buildHealthWeekdayRows(entries: HealthEntry[]) {
+  const baseMonday = new Date(2024, 0, 1);
+  const rows = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(baseMonday);
+    date.setDate(baseMonday.getDate() + index);
+    return {
+      key: String(index),
+      label: new Intl.DateTimeFormat(currentLocale(), { weekday: 'short' }).format(date),
+      count: 0,
+      percent: 0,
+      color: healthTrendPalette[index % healthTrendPalette.length],
+    };
+  });
+  for (const entry of entries) {
+    const index = (new Date(entry.occurred_at).getDay() + 6) % 7;
+    rows[index].count += 1;
+  }
+  const total = entries.length;
+  for (const row of rows) row.percent = healthPercent(row.count, total);
+  return rows;
+}
+
+function buildHealthDurationRows(entries: HealthEntry[]) {
+  const rows = [
+    { key: 'same', label: t('healthDurationSameDay'), count: 0, percent: 0, color: healthTrendPalette[0] },
+    { key: 'short', label: t('healthDurationTwoThreeDays'), count: 0, percent: 0, color: healthTrendPalette[1] },
+    { key: 'medium', label: t('healthDurationFourSevenDays'), count: 0, percent: 0, color: healthTrendPalette[2] || '#e7b341' },
+    { key: 'long', label: t('healthDurationLong'), count: 0, percent: 0, color: healthTrendPalette[3] || '#ef5350' },
+    { key: 'ongoing', label: t('healthDurationOngoing'), count: 0, percent: 0, color: healthTrendPalette[4] || '#26a69a' },
+  ];
+  for (const entry of entries) {
+    if (entry.ongoing === true && !healthEntryResolvedAt(entry)) {
+      rows[4].count += 1;
+      continue;
+    }
+    const days = healthEntryDurationDays(entry);
+    if (days <= 1) rows[0].count += 1;
+    else if (days <= 3) rows[1].count += 1;
+    else if (days <= 7) rows[2].count += 1;
+    else rows[3].count += 1;
+  }
+  const total = entries.length;
+  for (const row of rows) row.percent = healthPercent(row.count, total);
+  return rows;
+}
+
+function buildHealthBusyDayRows(entries: HealthEntry[]) {
+  const byDate = new Map<string, { key: string; label: string; count: number; categories: Map<string, number>; percent: number }>();
+  for (const entry of entries) {
+    const key = dateKey(new Date(entry.occurred_at));
+    const row = byDate.get(key) || { key, label: formatDate(dayStartMs(key)), count: 0, categories: new Map<string, number>(), percent: 0 };
+    row.count += 1;
+    row.categories.set(entry.category, (row.categories.get(entry.category) || 0) + 1);
+    byDate.set(key, row);
+  }
+  const rows = [...byDate.values()].sort((a, b) => b.count - a.count || b.key.localeCompare(a.key)).slice(0, 10);
+  const max = Math.max(1, ...rows.map((row) => row.count));
+  return rows.map((row) => ({
+    ...row,
+    percent: Math.max(8, Math.round(row.count / max * 100)),
+    categoryLabel: [...row.categories.entries()].sort((a, b) => b[1] - a[1]).map(([category]) => healthCategoryLabel(category)).slice(0, 2).join(' · '),
+  }));
+}
+
+function buildHealthPeriodSummaryRows() {
+  return healthAnalysisRanges.map((range) => {
+    const entries = filterHealthEntriesByRange(activeHealthEntries.value, range.key);
+    const latest = latestHealthEntry(entries);
+    return {
+      key: range.key,
+      label: t(range.labelKey),
+      entries: entries.length,
+      events: new Set(entries.map((entry) => entry.event_id)).size,
+      recurring: countRecurringHealthEvents(entries),
+      latestAt: latest?.occurred_at ?? 0,
+      latestLabel: latest ? formatDateTime(latest.occurred_at) : t('none'),
+    };
+  });
+}
+
+function buildHealthEventFrequencyRows(entriesSource = healthAnalysisEntries.value) {
+  const byEvent = new Map<string, HealthEntry[]>();
+  for (const entry of entriesSource) {
+    const rows = byEvent.get(entry.event_id) || [];
+    rows.push(entry);
+    byEvent.set(entry.event_id, rows);
+  }
+  const total = Math.max(1, entriesSource.length);
+  return [...byEvent.entries()]
+    .map(([eventId, entries], index) => {
+      const ordered = [...entries].sort((a, b) => a.occurred_at - b.occurred_at);
+      const allOrdered = activeHealthEntries.value.filter((entry) => entry.event_id === eventId).sort((a, b) => a.occurred_at - b.occurred_at);
+      const intervals = allOrdered.slice(1).map((entry, intervalIndex) => Math.max(1, Math.round((entry.occurred_at - allOrdered[intervalIndex].occurred_at) / 86400000)));
+      const durations = allOrdered.map((entry) => healthEntryDurationDays(entry)).filter((value) => Number.isFinite(value));
+      const event = healthEventEntry(ordered[0]);
+      const latest = ordered[ordered.length - 1];
+      return {
+        eventId,
+        title: event.title,
+        category: event.category,
+        categoryLabel: healthCategoryLabel(event.category),
+        count: entries.length,
+        last30: filterHealthEntriesByRange(entries, '30').length,
+        last180: filterHealthEntriesByRange(entries, '180').length,
+        last360: filterHealthEntriesByRange(entries, '360').length,
+        firstAt: ordered[0]?.occurred_at || 0,
+        lastAt: latest?.occurred_at || 0,
+        percent: Math.max(4, Math.round(entries.length / total * 100)),
+        averageIntervalDays: intervals.length ? Math.round(intervals.reduce((sum, value) => sum + value, 0) / intervals.length) : 0,
+        averageDurationDays: durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0,
+        ongoingCount: allOrdered.filter((entry) => entry.ongoing === true && !healthEntryResolvedAt(entry)).length,
+        color: healthTrendPalette[index % healthTrendPalette.length],
+      };
+    })
+    .sort((a, b) => b.count - a.count || b.lastAt - a.lastAt);
+}
+
+
+function buildHealthEventFrequencyRowsForEntries(entries: HealthEntry[]) {
+  const byEvent = new Map<string, HealthEntry[]>();
+  for (const entry of entries) {
+    const rows = byEvent.get(entry.event_id) || [];
+    rows.push(entry);
+    byEvent.set(entry.event_id, rows);
+  }
+  return [...byEvent.entries()]
+    .map(([eventId, localEntries], index) => {
+      const allEntries = activeHealthEntries.value.filter((entry) => entry.event_id === eventId).sort((a, b) => a.occurred_at - b.occurred_at);
+      const event = healthEventEntry(localEntries[0]);
+      const latestLocal = [...localEntries].sort((a, b) => b.occurred_at - a.occurred_at)[0];
+      const previousBeforeDay = [...allEntries].reverse().find((entry) => entry.occurred_at < latestLocal.occurred_at && !inSelectedDay(entry.occurred_at));
+      const intervals = allEntries.slice(1).map((entry, idx) => Math.max(1, Math.round((entry.occurred_at - allEntries[idx].occurred_at) / 86400000)));
+      const averageIntervalDays = intervals.length ? Math.round(intervals.reduce((sum, value) => sum + value, 0) / intervals.length) : 0;
+      const statusKey = allEntries.length <= 1 ? 'healthNewEvent' : averageIntervalDays > 30 ? 'healthNotFrequent' : 'healthRecurringSignal';
+      return {
+        eventId,
+        title: event.title,
+        category: event.category,
+        categoryLabel: healthCategoryLabel(event.category),
+        todayCount: localEntries.length,
+        totalCount: allEntries.length,
+        lastAt: latestLocal.occurred_at,
+        previousAt: previousBeforeDay?.occurred_at || 0,
+        averageIntervalDays,
+        status: t(statusKey),
+        color: healthTrendPalette[index % healthTrendPalette.length],
+      };
+    })
+    .sort((a, b) => b.todayCount - a.todayCount || b.lastAt - a.lastAt);
+}
+
+function buildHealthClinicalSummary(entries: HealthEntry[]) {
+  const uniqueEvents = new Set(entries.map((entry) => entry.event_id)).size;
+  const recurringToday = buildHealthEventFrequencyRowsForEntries(entries).filter((row) => row.totalCount > 1).length;
+  const attachments = entries.reduce((sum, entry) => sum + entry.attachments.length, 0);
+  const categories = new Set(entries.map((entry) => entry.category)).size;
+  return { entries: entries.length, uniqueEvents, recurringToday, attachments, categories };
+}
+
+function healthIntervalText(row: { averageIntervalDays: number; previousAt: number; totalCount: number }) {
+  if (row.totalCount <= 1) return t('healthNewEvent');
+  if (!row.averageIntervalDays) return t('healthNotFrequent');
+  return `${t('healthAverageInterval')} ${row.averageIntervalDays} ${t('days')}`;
+}
+
+function openHealthAnalysisModal() {
+  if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
+  if (!healthCustomEndDate.value) healthCustomEndDate.value = dateKey();
+  healthAnalysisModalOpen.value = true;
+}
+
+function selectHealthAnalysisEvent(eventId: string) {
+  healthSelectedEventId.value = eventId;
+  healthEventPickerOpen.value = false;
+  healthEventPickerSearch.value = '';
+}
+
+function setHealthAnalysisRange(range: HealthAnalysisRangeKey) {
+  healthAnalysisRange.value = range;
+  healthCustomRangeOpen.value = range === 'custom';
+  if (range === 'custom' && !healthCustomEndDate.value) healthCustomEndDate.value = dateKey();
+}
+
+function buildSelectedHealthEventStats() {
+  const selected = selectedHealthEventAnalysis.value;
+  if (!selected) return null;
+  const allEntries = activeHealthEntries.value.filter((entry) => entry.event_id === selected.eventId).sort((a, b) => a.occurred_at - b.occurred_at);
+  const rangeEntries = selectedHealthEventEntries.value;
+  const intervals = allEntries.slice(1).map((entry, index) => Math.max(1, Math.round((entry.occurred_at - allEntries[index].occurred_at) / 86400000)));
+  const durations = allEntries.map((entry) => healthEntryDurationDays(entry)).filter((value) => Number.isFinite(value));
+  const averageIntervalDays = intervals.length ? Math.round(intervals.reduce((sum, value) => sum + value, 0) / intervals.length) : 0;
+  const averageDurationDays = durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
+  const latest = allEntries.at(-1) || null;
+  const previous = allEntries.length > 1 ? allEntries.at(-2) || null : null;
+  const statusKey = allEntries.length <= 1 ? 'healthNewEvent' : averageIntervalDays > 30 ? 'healthNotFrequent' : 'healthRecurringSignal';
+  return {
+    title: selected.title,
+    categoryLabel: selected.categoryLabel,
+    countInRange: rangeEntries.length,
+    countAllTime: allEntries.length,
+    firstAt: allEntries[0]?.occurred_at || 0,
+    lastAt: latest?.occurred_at || 0,
+    previousAt: previous?.occurred_at || 0,
+    averageIntervalDays,
+    averageDurationDays,
+    ongoingCount: allEntries.filter((entry) => entry.ongoing === true && !healthEntryResolvedAt(entry)).length,
+    status: t(statusKey),
+  };
+}
+
+function buildHealthEntryDetailStats(entry: HealthEntry | null) {
+  if (!entry) return null;
+  const rows = activeHealthEntries.value.filter((item) => item.event_id === entry.event_id).sort((a, b) => a.occurred_at - b.occurred_at);
+  const intervals = rows.slice(1).map((item, index) => Math.max(1, Math.round((item.occurred_at - rows[index].occurred_at) / 86400000)));
+  const durations = rows.map((item) => healthEntryDurationDays(item)).filter((value) => Number.isFinite(value));
+  const first = rows[0] || entry;
+  const latest = rows.at(-1) || entry;
+  const averageIntervalDays = intervals.length ? Math.round(intervals.reduce((sum, value) => sum + value, 0) / intervals.length) : 0;
+  const averageDurationDays = durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
+  const ongoingCount = rows.filter((item) => item.ongoing === true && !healthEntryResolvedAt(item)).length;
+  const statusKey = rows.length <= 1 ? 'healthNewEvent' : averageIntervalDays > 30 ? 'healthNotFrequent' : 'healthRecurringSignal';
+  return {
+    count: rows.length,
+    firstAt: first.occurred_at,
+    lastAt: latest.occurred_at,
+    averageIntervalDays,
+    averageDurationDays,
+    ongoingCount,
+    status: t(statusKey),
+  };
+}
+
+function buildHealthDetailDateRows(entries: HealthEntry[]) {
+  const byDate = new Map<string, { key: string; label: string; count: number; latestAt: number }>();
+  for (const entry of entries) {
+    const key = dateKey(new Date(entry.occurred_at));
+    const row = byDate.get(key) || { key, label: formatDate(dayStartMs(key)), count: 0, latestAt: 0 };
+    row.count += 1;
+    row.latestAt = Math.max(row.latestAt, entry.occurred_at);
+    byDate.set(key, row);
+  }
+  return [...byDate.values()].sort((a, b) => b.latestAt - a.latestAt);
+}
+
+function buildHealthDetailHeatmapCells(entries: HealthEntry[]) {
+  const latestAt = entries.at(-1)?.occurred_at || Date.now();
+  const end = dayStartMs(dateKey(new Date(latestAt)));
+  const start = end - 83 * 86400000;
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const key = dateKey(new Date(entry.occurred_at));
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const max = Math.max(1, ...counts.values());
+  return Array.from({ length: 84 }, (_, index) => {
+    const value = start + index * 86400000;
+    const key = dateKey(new Date(value));
+    const count = counts.get(key) || 0;
+    return {
+      key,
+      label: formatDate(value),
+      count,
+      tone: count <= 0 ? 0 : Math.max(1, Math.ceil(count / max * 4)),
+      selected: healthDetailEntry.value ? key === dateKey(new Date(healthDetailEntry.value.occurred_at)) : false,
+    };
+  });
+}
+
+function buildHealthMonthTrendRows(entries: HealthEntry[]) {
+  const end = new Date(dayStartMs(selectedDate.value));
+  end.setDate(1);
+  const months = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(end);
+    date.setMonth(end.getMonth() - (11 - index), 1);
+    const key = monthKeyForTimestamp(date.getTime());
+    return {
+      key,
+      label: new Intl.DateTimeFormat(currentLocale(), { month: 'short' }).format(date),
+      count: 0,
+      percent: 0,
+    };
+  });
+  const byKey = new Map(months.map((row) => [row.key, row]));
+  for (const entry of entries) {
+    const row = byKey.get(monthKeyForTimestamp(entry.occurred_at));
+    if (row) row.count += 1;
+  }
+  const max = Math.max(1, ...months.map((row) => row.count));
+  for (const row of months) row.percent = Math.round(row.count / max * 100);
+  return months;
+}
+
+function openHealthEntryDetail(entry: HealthEntry) {
+  healthDetailEntry.value = entry;
+}
+
+function healthDayEventEntry(eventId: string) {
+  return currentDayHealthEntries.value.find((entry) => entry.event_id === eventId) || null;
+}
+
+function openHealthDayEventDetail(eventId: string) {
+  const entry = healthDayEventEntry(eventId);
+  if (entry) openHealthEntryDetail(entry);
+}
+
+function healthDayEventMediaCount(eventId: string) {
+  const entry = healthDayEventEntry(eventId);
+  return entry ? healthMediaCountForEntry(entry) : 0;
+}
+
+function closeHealthEntryDetail() {
+  healthDetailEntry.value = null;
+}
+
+function buildHealthRecurrenceChartRows() {
+  return healthEventFrequencyRows.value
+    .map((row) => ({
+      eventId: row.eventId,
+      title: row.title,
+      count: row.count,
+      latestAt: row.lastAt,
+      color: row.color,
+    }))
+    .filter((row) => row.count > 1)
+    .sort((a, b) => b.count - a.count || b.latestAt - a.latestAt)
+    .slice(0, 8);
+}
+
+function monthKeyForTimestamp(value: number) {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function buildHealthSelectedEventTrendRows() {
+  const selected = selectedHealthEventAnalysis.value;
+  if (!selected) return [];
+  const end = new Date(dayStartMs(selectedDate.value));
+  end.setDate(1);
+  const months = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(end);
+    date.setMonth(end.getMonth() - (11 - index), 1);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    return {
+      key,
+      label: new Intl.DateTimeFormat(currentLocale(), { month: 'short' }).format(date),
+      count: 0,
+      percent: 0,
+    };
+  });
+  const byKey = new Map(months.map((row) => [row.key, row]));
+  for (const entry of selectedHealthEventEntries.value) {
+    const row = byKey.get(monthKeyForTimestamp(entry.occurred_at));
+    if (row) row.count += 1;
+  }
+  const max = Math.max(1, ...months.map((row) => row.count));
+  for (const row of months) row.percent = Math.round(row.count / max * 100);
+  return months;
+}
+
+function healthInsightText() {
+  const summary = healthAnalysisSummary.value;
+  if (!summary.total) return t('healthNoInsight');
+  if (summary.recurringEvents > 0) return `${summary.recurringEvents} ${t('healthRecurringInsight')} ${summary.topCategory}.`;
+  return `${summary.recent} ${t('healthRecentInsight')} ${summary.topCategory}.`;
+}
+
+function healthHomeSummaryText() {
+  return `${currentDayHealthEntries.value.length}
+${t('healthEventsShort')}`;
+}
+
+function resetAiExportRange() {
+  refreshTodayKey();
+  aiExportEndDate.value = todayKey.value;
+  aiExportStartDate.value = dateKeyOffset(todayKey.value, -89);
+}
+
+function openAiExportDialog() {
+  resetAiExportRange();
+  settingsDialog.value = 'aiExport';
+}
+
+function aiExportRange() {
+  const startKey = aiExportStartDate.value || defaultAiExportStartDate();
+  const endKey = aiExportEndDate.value || dateKey();
+  const startMs = dayStartMs(startKey);
+  const endMs = dayEndMs(endKey);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs) {
+    showToast(t('invalidDateRange'));
+    return null;
+  }
+  return { startKey, endKey, startMs, endMs };
+}
+
+function isWithinAiExportRange(value: number, range: { startMs: number; endMs: number }) {
+  return Number.isFinite(value) && value >= range.startMs && value < range.endMs;
+}
+
+function markdownInline(value: unknown) {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/[|`]+/g, ' ')
+    .trim();
+}
+
+function markdownBlock(value: unknown) {
+  return String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+}
+
+function aiMetricNumber(value: number, decimals = 1) {
+  if (!Number.isFinite(value)) return '0';
+  const multiplier = 10 ** decimals;
+  const rounded = Math.round(value * multiplier) / multiplier;
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+function aiFoodNutrition(intake: Intake) {
+  const food = foodFromIntake(intake);
+  const amount = Math.max(0, Number(intake.amount_g || 0));
+  return {
+    kcal: Math.round(food ? calculateKcal(food, amount) : 0),
+    carbs: food ? Number(food.carbs_per_100g || 0) * amount / 100 : 0,
+    fat: food ? Number(food.fat_per_100g || 0) * amount / 100 : 0,
+    protein: food ? Number(food.protein_per_100g || 0) * amount / 100 : 0,
+  };
+}
+
+function aiNutrientMapForFood(food: Food | undefined, amountG: number) {
+  if (!food) return 'none';
+  const entries = optionalNutrientDefinitions
+    .map((nutrient) => {
+      const value = optionalNutrientPer100g(food, nutrient) * Math.max(0, Number(amountG || 0)) / 100;
+      return value > 0 ? `${nutrient.key}=${formatNutrientAmount(value, nutrient.unit)}` : null;
+    })
+    .filter(Boolean);
+  return entries.length ? entries.join(', ') : 'none';
+}
+
+function aiRecipeComponentRows(intake: Intake, food: Food | undefined) {
+  if (intake.item_type !== 'recipe') return [];
+  const snapshot = food as (Food & { recipe_components?: Array<{ key?: string; food_id?: string; amount_g?: number; base_amount_g?: number }> }) | undefined;
+  const snapshotComponents = Array.isArray(snapshot?.recipe_components) ? snapshot.recipe_components : [];
+  const recipeId = intake.food_id.startsWith('recipe:') ? intake.food_id.slice('recipe:'.length) : intake.food_id;
+  const components = snapshotComponents.length
+    ? snapshotComponents.map((component) => ({ food_id: String(component.food_id || ''), amount_g: Number(component.amount_g || 0), key: String(component.key || '') }))
+    : state.recipeItems
+      .filter((item) => item.recipe_id === recipeId && !item.deleted_at)
+      .map((item) => ({ food_id: item.food_id, amount_g: Number(item.amount_g || 0), key: item.id }));
+  return components
+    .filter((component) => component.food_id && component.amount_g > 0)
+    .map((component) => {
+      const componentFood = findCatalogItem(state, component.food_id);
+      const kcal = componentFood ? calculateKcal(componentFood, component.amount_g) : 0;
+      return `  - component food_id=${component.food_id} name="${markdownInline(itemTitle(componentFood))}" amount_g=${aiMetricNumber(component.amount_g)} kcal=${Math.round(kcal)} macros={carbs_g:${aiMetricNumber(componentFood ? Number(componentFood.carbs_per_100g || 0) * component.amount_g / 100 : 0)},fat_g:${aiMetricNumber(componentFood ? Number(componentFood.fat_per_100g || 0) * component.amount_g / 100 : 0)},protein_g:${aiMetricNumber(componentFood ? Number(componentFood.protein_per_100g || 0) * component.amount_g / 100 : 0)}} micros={${aiNutrientMapForFood(componentFood, component.amount_g)}}`;
+    });
+}
+
+function aiIntakeMarkdown(entry: Intake) {
+  const food = foodFromIntake(entry);
+  const nutrition = aiFoodNutrition(entry);
+  const base = [
+    `time=${new Date(entry.consumed_at).toISOString()}`,
+    `meal=${entry.meal_type}`,
+    `type=${entry.item_type}`,
+    `name="${markdownInline(entry.note_title || itemTitle(food))}"`,
+    `amount_g=${aiMetricNumber(Number(entry.amount_g || 0))}`,
+    `unit=${entry.unit}`,
+    `kcal=${nutrition.kcal}`,
+    `macros={carbs_g:${aiMetricNumber(nutrition.carbs)},fat_g:${aiMetricNumber(nutrition.fat)},protein_g:${aiMetricNumber(nutrition.protein)}}`,
+    `micros={${aiNutrientMapForFood(food, Number(entry.amount_g || 0))}}`,
+  ];
+  if (entry.note_description) base.push(`note="${markdownInline(entry.note_description)}"`);
+  const lines = [`- ${base.join(' ')}`];
+  const components = aiRecipeComponentRows(entry, food);
+  if (components.length) lines.push(...components);
+  return lines.join('\n');
+}
+
+function aiActivityMarkdown(entry: ActivityLog) {
+  const definition = activityDefinitionForLog(entry);
+  return `- time=${new Date(entry.performed_at).toISOString()} name="${markdownInline(entry.activity_name)}" type=${markdownInline(activityTypeLabel(activityTypeForLog(entry)))} source=${entry.source} duration_min=${aiMetricNumber(Number(entry.duration_min || 0))} kcal=${Math.round(Number(entry.kcal || 0))}${definition?.description ? ` description="${markdownInline(definition.description)}"` : ''}`;
+}
+
+function aiHealthMediaCounts(entry: HealthEntry) {
+  const items = healthMediaItemsForEntry(entry);
+  const photoCount = items.filter((item) => item.attachment.type === 'photo').length;
+  const videoCount = items.filter((item) => item.attachment.type === 'video').length;
+  const sameDayPhotoCount = items.filter((item) => item.sameOccurrenceDay && item.attachment.type === 'photo').length;
+  const sameDayVideoCount = items.filter((item) => item.sameOccurrenceDay && item.attachment.type === 'video').length;
+  return { photoCount, videoCount, sameDayPhotoCount, sameDayVideoCount };
+}
+
+function aiHealthMarkdown(entry: HealthEntry) {
+  const media = aiHealthMediaCounts(entry);
+  const resolvedAt = healthEntryResolvedAt(entry);
+  const parts = [
+    `time=${new Date(entry.occurred_at).toISOString()}`,
+    `event_id=${entry.event_id}`,
+    `entry_id=${entry.id}`,
+    `recurrence_of=${entry.recurrence_of_id || 'none'}`,
+    `title="${markdownInline(entry.title)}"`,
+    `category=${entry.category}`,
+    `status=${entry.ongoing ? 'ongoing' : resolvedAt ? 'resolved' : 'unreviewed'}`,
+    `duration_days=${healthEntryDurationDays(entry)}`,
+    `media_total={photos:${media.photoCount},videos:${media.videoCount}}`,
+    `media_on_this_day={photos:${media.sameDayPhotoCount},videos:${media.sameDayVideoCount}}`,
+  ];
+  if (resolvedAt) parts.push(`resolved_at=${new Date(resolvedAt).toISOString()}`);
+  if (entry.description) parts.push(`description="${markdownInline(entry.description)}"`);
+  if (entry.notes) parts.push(`notes="${markdownInline(entry.notes)}"`);
+  return `- ${parts.join(' ')}`;
+}
+
+function aiDayNutritionSummary(intakes: Intake[]) {
+  const macro = macroForEntries(intakes);
+  const micronutrients = buildDailyNutrientRows(intakes)
+    .filter((row) => row.value > 0)
+    .map((row) => `${row.key}=${formatNutrientAmount(row.value, row.unit)} limit=${formatNutrientAmount(row.limit, row.unit)}${row.isOver ? ' over_limit=true' : ''}`);
+  return `kcal=${macro.kcal} macros={carbs_g:${macro.carbs},fat_g:${macro.fat},protein_g:${macro.protein}} micros={${micronutrients.length ? micronutrients.join('; ') : 'none'}}`;
+}
+
+function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; startMs: number; endMs: number }) {
+  const intakes = state.intakes.filter((entry) => isWithinAiExportRange(entry.consumed_at, range)).sort((a, b) => a.consumed_at - b.consumed_at);
+  const activities = state.activityLogs.filter((entry) => isWithinAiExportRange(entry.performed_at, range)).sort((a, b) => a.performed_at - b.performed_at);
+  const healthEntries = (state.healthEntries || []).filter((entry) => !entry.deleted_at && isWithinAiExportRange(entry.occurred_at, range)).sort((a, b) => a.occurred_at - b.occurred_at);
+  const weights = state.weightLogs.filter((entry) => isWithinAiExportRange(entry.measured_at, range)).sort((a, b) => a.measured_at - b.measured_at);
+  const dayKeys = [...new Set([
+    ...intakes.map((entry) => dateKey(new Date(entry.consumed_at))),
+    ...activities.map((entry) => dateKey(new Date(entry.performed_at))),
+    ...healthEntries.map((entry) => dateKey(new Date(entry.occurred_at))),
+    ...weights.map((entry) => dateKey(new Date(entry.measured_at))),
+  ])].sort();
+  const healthEventCounts = new Map<string, number>();
+  for (const entry of healthEntries) healthEventCounts.set(entry.event_id, (healthEventCounts.get(entry.event_id) || 0) + 1);
+  const lines: string[] = [
+    '# Nutrino AI export',
+    '',
+    '## Metadata',
+    `- app=nutrino version=${appVersion} channel=${appChannel}`,
+    `- exported_at=${new Date().toISOString()}`,
+    `- range_start=${range.startKey}`,
+    `- range_end=${range.endKey}`,
+    `- format=compact_markdown_for_llm`,
+    `- note=media_files_are_not_embedded_only_photo_video_counts_are_included`,
+    '',
+    '## Profile',
+    `- profile_id=${state.profile.id}`,
+    `- age_years=${age.value}`,
+    `- gender=${state.profile.gender}`,
+    `- height_cm=${state.profile.height_cm}`,
+    `- current_weight_kg=${state.profile.current_weight_kg}`,
+    `- weekly_goal_kg=${state.profile.weekly_goal_kg}`,
+    `- usage_purposes=${(state.profile.usage_purposes || []).join(',') || 'none'}`,
+    '',
+    '## Range summary',
+    `- days_with_data=${dayKeys.length}`,
+    `- food_entries=${intakes.length}`,
+    `- activity_entries=${activities.length}`,
+    `- health_entries=${healthEntries.length}`,
+    `- health_unique_events=${healthEventCounts.size}`,
+    `- weight_logs=${weights.length}`,
+    '',
+    '## Health event index',
+  ];
+
+  for (const [eventId, count] of [...healthEventCounts.entries()].sort((a, b) => b[1] - a[1])) {
+    const eventEntries = healthEntries.filter((entry) => entry.event_id === eventId);
+    const first = eventEntries[0];
+    const last = eventEntries.at(-1) || first;
+    const media = first ? aiHealthMediaCounts(first) : { photoCount: 0, videoCount: 0 };
+    lines.push(`- event_id=${eventId} title="${markdownInline(first?.title || '')}" category=${first?.category || 'unknown'} count=${count} first=${first ? new Date(first.occurred_at).toISOString() : ''} last=${last ? new Date(last.occurred_at).toISOString() : ''} media_total={photos:${media.photoCount},videos:${media.videoCount}}`);
+  }
+
+  lines.push('', '## Daily timeline');
+  if (!dayKeys.length) lines.push('- no_data_in_range=true');
+  for (const key of dayKeys) {
+    const dayIntakeRows = intakes.filter((entry) => dateKey(new Date(entry.consumed_at)) === key);
+    const dayActivityRows = activities.filter((entry) => dateKey(new Date(entry.performed_at)) === key);
+    const dayHealthRows = healthEntries.filter((entry) => dateKey(new Date(entry.occurred_at)) === key);
+    const dayWeightRows = weights.filter((entry) => dateKey(new Date(entry.measured_at)) === key);
+    lines.push('', `### ${key}`);
+    if (dayWeightRows.length) {
+      lines.push('#### Weight');
+      for (const entry of dayWeightRows) lines.push(`- time=${new Date(entry.measured_at).toISOString()} weight_kg=${aiMetricNumber(entry.weight_kg)} bmi=${aiMetricNumber(entry.bmi)} source=${entry.source}`);
+    }
+    if (dayIntakeRows.length) {
+      lines.push('#### Food');
+      lines.push(`- day_totals ${aiDayNutritionSummary(dayIntakeRows)}`);
+      for (const entry of dayIntakeRows) lines.push(aiIntakeMarkdown(entry));
+    }
+    if (dayActivityRows.length) {
+      lines.push('#### Activity');
+      for (const entry of dayActivityRows) lines.push(aiActivityMarkdown(entry));
+    }
+    if (dayHealthRows.length) {
+      lines.push('#### Health');
+      for (const entry of dayHealthRows) lines.push(aiHealthMarkdown(entry));
+    }
+  }
+
+  lines.push('', '## Raw health notes');
+  for (const entry of healthEntries.filter((entry) => entry.description || entry.notes)) {
+    lines.push(`### ${dateKey(new Date(entry.occurred_at))} · ${markdownInline(entry.title)}`);
+    if (entry.description) lines.push(markdownBlock(entry.description));
+    if (entry.notes) lines.push(`notes: ${markdownBlock(entry.notes)}`);
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
+function friendlyExportError(error: unknown) {
+  const message = String(error || '');
+  if (message.includes('EXPORT_CANCELED') || (typeof error === 'object' && error && 'name' in error && String((error as { name?: unknown }).name) === 'AbortError')) {
+    return t('exportCanceled');
+  }
+  if (message.includes('fs.write_file not allowed') || message.includes('not allowed') || message.includes('Permissions associated with this command')) {
+    return activeLanguage.value === 'hu'
+      ? 'Az app nem kapott jogosultságot erre a mentési útvonalra. Válassz fájlt a rendszer mentési ablakában, vagy próbáld újra az exportot.'
+      : 'The app does not have permission to write to that location. Choose a file in the system save dialog, or try the export again.';
+  }
+  if (message.includes('Android save picker failed')) {
+    return activeLanguage.value === 'hu'
+      ? 'A rendszer mentési ablak nem nyílt meg. Próbáld újra, vagy válassz másik tárhely alkalmazást.'
+      : 'The system save picker could not be opened. Try again or choose another storage app.';
+  }
+  return message.replace(/^Error:\s*/i, '');
+}
+
+async function saveMarkdownExport(content: string, filename: string, title: string, successMessage: string) {
+  const bytes = new TextEncoder().encode(content);
+  if (isTauriRuntime() && isAndroidRuntime()) {
+    await exportMarkdownWithAndroidDocumentPicker(bytes, filename);
+    showToast(`${successMessage} (${formatBytes(bytes.length)})`);
+    return;
+  }
+  if (isTauriRuntime()) {
+    const path = await save({
+      defaultPath: filename,
+      filters: [{ name: title, extensions: ['md'] }],
+    });
+    if (!path) {
+      showToast(t('exportCanceled'));
+      return;
+    }
+    await writeFile(path, bytes);
+    const savedBytes = normalizeBackupBytes(await readFile(path));
+    if (savedBytes.length !== bytes.length) throw new Error(`${t('backupVerifySizeMismatch')} ${formatBytes(savedBytes.length)} / ${formatBytes(bytes.length)}`);
+    showToast(successMessage);
+    return;
+  }
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+  const file = new File([blob], filename, { type: 'text/markdown' });
+  try {
+    if (navigator.canShare?.({ files: [file] }) && navigator.share) {
+      await navigator.share({ files: [file], title });
+      showToast(successMessage);
+      return;
+    }
+  } catch {
+    // Fall back to direct download below.
+  }
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+  showToast(successMessage);
+}
+
+async function exportAllDataAiMarkdown() {
+  if (exportBusy.value) return;
+  const range = aiExportRange();
+  if (!range) return;
+  exportBusy.value = true;
+  exportProgress.value = 4;
+  exportTitle.value = t('aiExportAllData');
+  exportStatus.value = t('aiExportPreparing');
+  await nextTick();
+  try {
+    await waitForIdle();
+    exportProgress.value = 18;
+    exportStatus.value = t('aiExportPreparing');
+    await yieldToUi();
+    const content = buildAllDataAiMarkdown(range);
+    exportProgress.value = 62;
+    await yieldToUi();
+    await saveMarkdownExport(
+      content,
+      `nutrino-ai-export-${range.startKey}-to-${range.endKey}-${timestampForBackupName()}.md`,
+      t('aiExportAllData'),
+      t('aiExportMarkdownCreated'),
+    );
+    exportProgress.value = 100;
+  } catch (error) {
+    showToast(`${t('exportFailed')}: ${friendlyExportError(error)}`);
+  } finally {
+    window.setTimeout(() => {
+      exportBusy.value = false;
+      exportProgress.value = 0;
+      exportStatus.value = '';
+      exportTitle.value = '';
+    }, 350);
+  }
+}
+
+function buildHealthAiSummary() {
+  const entries = [...activeHealthEntries.value].sort((a, b) => a.occurred_at - b.occurred_at);
+  const series = reusableHealthEvents.value.map((event) => {
+    const items = entries.filter((entry) => entry.event_id === event.event_id);
+    return {
+      event_id: event.event_id,
+      title: healthEventEntry(event).title,
+      category: healthEventEntry(event).category,
+      occurrence_count: items.length,
+      first_seen: new Date(items[0]?.occurred_at || event.occurred_at).toISOString(),
+      last_seen: new Date(items.at(-1)?.occurred_at || event.occurred_at).toISOString(),
+    };
+  });
+  return {
+    app: 'nutrino',
+    export_type: 'mobile-health-diary-ai-summary',
+    version: appVersion,
+    exported_at: new Date().toISOString(),
+    profile: {
+      id: state.profile.id,
+      usage_purposes: state.profile.usage_purposes || [],
+      age_years: age.value,
+      gender: state.profile.gender,
+    },
+    summary: healthAnalysisSummary.value,
+    analysis_windows: healthPeriodSummaryRows.value,
+    event_frequency: healthEventFrequencyRows.value.map((row) => ({
+      event_id: row.eventId,
+      title: row.title,
+      category: row.category,
+      occurrences_all_time: row.count,
+      occurrences_last_30_days: row.last30,
+      occurrences_last_180_days: row.last180,
+      occurrences_last_360_days: row.last360,
+      first_seen: new Date(row.firstAt).toISOString(),
+      last_seen: new Date(row.lastAt).toISOString(),
+    })),
+    recurrence_series: series,
+    timeline: entries.map((entry) => ({
+      id: entry.id,
+      event_id: entry.event_id,
+      recurrence_of_id: entry.recurrence_of_id || null,
+      occurred_at: new Date(entry.occurred_at).toISOString(),
+      local_date: dateKey(new Date(entry.occurred_at)),
+      title: entry.title,
+      description: entry.description,
+      category: entry.category,
+      notes: entry.notes || '',
+      ongoing: entry.ongoing === true,
+      resolved_at: healthEntryResolvedAt(entry) ? new Date(healthEntryResolvedAt(entry) || 0).toISOString() : null,
+      duration_days: healthEntryDurationDays(entry),
+      needs_review: healthEntryNeedsReview(entry),
+      attachments: entry.attachments.map((attachment) => ({
+        id: attachment.id,
+        type: attachment.type,
+        name: healthAttachmentDisplayName(attachment),
+        mime_type: attachment.mime_type,
+        size: attachment.size,
+      })),
+    })),
+  };
+}
+
+async function exportHealthAiSummary() {
+  if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
+  await waitForIdle();
+  const summary = buildHealthAiSummary();
+  await yieldToUi();
+  const content = JSON.stringify(summary, null, 2);
+  const filename = `nutrino-health-diary-ai-summary-${timestampForBackupName()}.json`;
+  const bytes = new TextEncoder().encode(content);
+  if (isTauriRuntime()) {
+    try {
+      if (isAndroidRuntime()) {
+        await exportJsonWithAndroidDocumentPicker(bytes, filename);
+        showToast(t('healthAiExportCreated'));
+        return;
+      }
+      const path = await save({
+        defaultPath: filename,
+        filters: [{ name: 'nutrino health diary AI summary', extensions: ['json'] }],
+      });
+      if (!path) return showToast(t('exportCanceled'));
+      await writeFile(path, bytes);
+      const savedBytes = normalizeBackupBytes(await readFile(path));
+      if (savedBytes.length !== bytes.length) {
+        throw new Error(`${t('backupVerifySizeMismatch')} ${formatBytes(savedBytes.length)} / ${formatBytes(bytes.length)}`);
+      }
+      showToast(t('healthAiExportCreated'));
+      return;
+    } catch (error) {
+      showToast(`${t('exportFailed')}: ${friendlyExportError(error)}`);
+      return;
+    }
+  }
+  const blob = new Blob([content], { type: 'application/json' });
+  const file = new File([blob], filename, { type: 'application/json' });
+  try {
+    if (navigator.canShare?.({ files: [file] }) && navigator.share) {
+      await navigator.share({ files: [file], title: t('healthAiExport') });
+      showToast(t('healthAiExportCreated'));
+      return;
+    }
+  } catch {
+    // Fall back to a direct download below.
+  }
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+  showToast(t('healthAiExportCreated'));
+}
+
 function activityType(activity: ActivityDefinition) {
   return activity.type ?? activity.activity_type ?? 'custom';
+}
+
+function activityDefinitionForLog(entry: ActivityLog) {
+  return entry.activity_id ? state.activities.find((activity) => activity.id === entry.activity_id) || null : null;
+}
+
+function activityTypeForLog(entry: ActivityLog) {
+  const definition = activityDefinitionForLog(entry);
+  if (definition) return activityType(definition) || 'custom';
+  if (entry.source === 'watch') return 'watch';
+  if (entry.source === 'manual') return 'manual';
+  return 'custom';
+}
+
+function activityTypeLabel(type: string) {
+  if (type === 'watch') return t('watch');
+  if (type === 'manual') return t('manual');
+  if (type === 'custom') return activeLanguage.value === 'hu' ? 'Egyedi' : 'Custom';
+  return type
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toLocaleUpperCase(currentLocale()));
+}
+
+function activityColorForType(type: string, fallbackIndex = 0) {
+  let hash = 0;
+  for (const char of type) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return activityAnalysisPalette[(hash || fallbackIndex) % activityAnalysisPalette.length];
+}
+
+function activityPieBackground(segments: Array<{ color: string; percent: number }>) {
+  if (!segments.length) return 'conic-gradient(var(--surface-container-highest) 0 100%)';
+  let cursor = 0;
+  const stops = segments.map((segment, index) => {
+    const start = cursor;
+    const end = index === segments.length - 1 ? 100 : Math.min(100, cursor + segment.percent);
+    cursor = end;
+    return `${segment.color} ${start}% ${end}%`;
+  });
+  return `conic-gradient(${stops.join(', ')})`;
+}
+
+function buildActivityAnalysisRows(days: number, centerKey = selectedDate.value) {
+  return buildCenteredDateKeys(centerKey, Math.max(1, days)).map((key) => {
+    const entries = dayActivities(key).sort((a, b) => a.performed_at - b.performed_at);
+    const byType = new Map<string, { type: string; label: string; minutes: number; kcal: number; color: string }>();
+    for (const entry of entries) {
+      const type = activityTypeForLog(entry);
+      const current = byType.get(type) || {
+        type,
+        label: activityTypeLabel(type),
+        minutes: 0,
+        kcal: 0,
+        color: activityColorForType(type, byType.size),
+      };
+      current.minutes += Math.max(0, Math.round(Number(entry.duration_min || 0)));
+      current.kcal += Math.max(0, Math.round(Number(entry.kcal || 0)));
+      byType.set(type, current);
+    }
+    const totalMinutes = [...byType.values()].reduce((sum, row) => sum + row.minutes, 0);
+    const segments = [...byType.values()]
+      .sort((a, b) => b.minutes - a.minutes || a.label.localeCompare(b.label, currentLocale(), { sensitivity: 'base' }))
+      .map((row) => ({
+        ...row,
+        percent: totalMinutes ? Math.round(row.minutes / totalMinutes * 1000) / 10 : 0,
+      }));
+    return {
+      key,
+      label: formatDate(dayStartMs(key)),
+      selected: key === selectedDate.value,
+      entries,
+      totalMinutes,
+      totalKcal: entries.reduce((sum, entry) => sum + Math.max(0, Math.round(Number(entry.kcal || 0))), 0),
+      segments,
+    };
+  });
+}
+
+function buildActivityAnalysisTypeRows(rows: ReturnType<typeof buildActivityAnalysisRows>) {
+  const byType = new Map<string, { type: string; label: string; minutes: number; kcal: number; color: string }>();
+  for (const row of rows) {
+    for (const segment of row.segments) {
+      const current = byType.get(segment.type) || { type: segment.type, label: segment.label, minutes: 0, kcal: 0, color: segment.color };
+      current.minutes += segment.minutes;
+      current.kcal += segment.kcal;
+      byType.set(segment.type, current);
+    }
+  }
+  const total = Math.max(1, [...byType.values()].reduce((sum, row) => sum + row.minutes, 0));
+  return [...byType.values()]
+    .sort((a, b) => b.minutes - a.minutes || a.label.localeCompare(b.label, currentLocale(), { sensitivity: 'base' }))
+    .map((row) => ({ ...row, percent: Math.round(row.minutes / total * 1000) / 10 }));
+}
+
+function openActivityAnalysis() {
+  activityAnalysisOpen.value = true;
 }
 
 function activityDisplayName(activity: ActivityDefinition) {
@@ -8525,6 +10756,10 @@ function dayIntakes(key: string) {
 
 function dayActivities(key: string) {
   return state.activityLogs.filter((entry) => dateKey(new Date(entry.performed_at)) === key);
+}
+
+function healthEntriesForDay(key: string) {
+  return activeHealthEntries.value.filter((entry) => dateKey(new Date(entry.occurred_at)) === key);
 }
 
 function profileForDay(key: string): AppState['profile'] {
@@ -8911,7 +11146,7 @@ async function requestCameraPermission() {
     return;
   }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     stream.getTracks().forEach((track) => track.stop());
     localStorage.setItem(mobileCameraPermissionGrantedKey, '1');
     cameraPermission.value = 'granted';
@@ -8978,7 +11213,8 @@ async function ensureNotificationPermissionForReminders() {
   if (!state.settings.daily_reminder
     && !state.settings.daily_weight_reminder_enabled
     && !state.settings.meal_reminders_enabled
-    && !state.settings.calorie_limit_warning_enabled) {
+    && !state.settings.calorie_limit_warning_enabled
+    && !state.settings.health_diary_enabled) {
     return;
   }
 
@@ -9007,6 +11243,8 @@ function notificationScheduleSignature(): string {
     state.settings.meal_reminder_noon_time,
     state.settings.meal_reminder_afternoon_time,
     state.settings.calorie_limit_warning_enabled,
+    state.settings.health_diary_enabled,
+    state.healthEntries.filter((entry) => !entry.deleted_at && !entry.resolved_at && entry.ongoing === true).length,
   ].join('|');
 }
 
@@ -9016,6 +11254,7 @@ function notificationPermissionSignature(): string {
     state.settings.daily_weight_reminder_enabled,
     state.settings.meal_reminders_enabled,
     state.settings.calorie_limit_warning_enabled,
+    state.settings.health_diary_enabled,
   ].join('|');
 }
 
@@ -9193,10 +11432,15 @@ function weightNotificationActionLabel(): string {
   return activeLanguage.value === 'hu' ? 'Súly rögzítése' : 'Log weight';
 }
 
+function healthReviewNotificationActionLabel(): string {
+  return activeLanguage.value === 'hu' ? 'Átnézés' : 'Review';
+}
+
 function notificationActionMetadata(kind?: NutrinoNotificationKind, mealType?: MealType): { actionId?: NutrinoNotificationAction; actionTitle?: string } {
   if (kind === 'weight') return { actionId: 'log-weight', actionTitle: weightNotificationActionLabel() };
   if (kind === 'meal' && mealType) return { actionId: mealNotificationActionId(mealType), actionTitle: mealNotificationActionLabel(mealType) };
   if (kind === 'deficit') return { actionId: 'open-analysis', actionTitle: notificationActionTitle('openAnalysis', 'Open analysis') };
+  if (kind === 'health-review') return { actionId: 'open-health-review', actionTitle: healthReviewNotificationActionLabel() };
   return {};
 }
 
@@ -9231,6 +11475,12 @@ async function registerNotificationActionTypes() {
       id: NOTIFICATION_ACTION_TYPES.deficit,
       actions: [
         { id: 'open-analysis', title: notificationActionTitle('openAnalysis', 'Open analysis'), requiresAuthentication: false, foreground: true },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.healthReview,
+      actions: [
+        { id: 'open-health-review', title: healthReviewNotificationActionLabel(), requiresAuthentication: false, foreground: true },
       ],
     },
   ]);
@@ -9304,6 +11554,17 @@ function scheduledReminderDefinitions(): ScheduledReminderConfig[] {
         actionTypeId: mealNotificationActionType('dinner'),
       },
     );
+  }
+  if (state.settings.health_diary_enabled && pendingHealthReviewEntries.value.length) {
+    reminders.push({
+      id: REMINDER_NOTIFICATION_IDS.healthReview,
+      key: 'health.review',
+      time: HEALTH_REVIEW_REMINDER_TIME,
+      title: t('healthReviewReminderTitle'),
+      body: t('healthReviewReminderBody'),
+      kind: 'health-review',
+      actionTypeId: NOTIFICATION_ACTION_TYPES.healthReview,
+    });
   }
   return reminders.filter((reminder) => parseReminderTime(reminder.time));
 }
@@ -9413,7 +11674,7 @@ async function initializeNotifications() {
 
 function normalizeNotificationAction(action: unknown): NutrinoNotificationAction {
   const value = String(action || 'tap');
-  return ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'dismiss'].includes(value)
+  return ['tap', 'open-home', 'log-weight', 'log-breakfast', 'log-lunch', 'log-dinner', 'open-analysis', 'open-health-review', 'dismiss'].includes(value)
     ? value as NutrinoNotificationAction
     : 'tap';
 }
@@ -9453,7 +11714,7 @@ function normalizeNotificationExtra(extra: unknown): Partial<NutrinoNotification
   };
   const result: Partial<NutrinoNotificationExtra> = {};
   if (merged.nutrino === true) result.nutrino = true;
-  if (['daily', 'weight', 'meal', 'deficit'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
+  if (['daily', 'weight', 'meal', 'deficit', 'health-review'].includes(String(merged.kind))) result.kind = merged.kind as NutrinoNotificationKind;
   if (['breakfast', 'lunch', 'dinner', 'snack'].includes(String(merged.mealType))) result.mealType = merged.mealType as MealType;
   if (typeof merged.scheduledTime === 'string') result.scheduledTime = merged.scheduledTime;
   return result;
@@ -9472,6 +11733,7 @@ function notificationExtraFromId(notificationId: number | undefined): Partial<Nu
   if (notificationId === REMINDER_NOTIFICATION_IDS.mealMorning) return { nutrino: true, kind: 'meal', mealType: 'breakfast' };
   if (notificationId === REMINDER_NOTIFICATION_IDS.mealNoon) return { nutrino: true, kind: 'meal', mealType: 'lunch' };
   if (notificationId === REMINDER_NOTIFICATION_IDS.mealAfternoon) return { nutrino: true, kind: 'meal', mealType: 'dinner' };
+  if (notificationId === REMINDER_NOTIFICATION_IDS.healthReview) return { nutrino: true, kind: 'health-review' };
   return {};
 }
 
@@ -9512,6 +11774,13 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
   }
   if (effectiveAction === 'open-analysis') {
     analysisOpen.value = true;
+    scrollToPageTop();
+    return;
+  }
+  if (effectiveAction === 'open-health-review' || (action === 'tap' && extra.kind === 'health-review')) {
+    activeTab.value = 'diary';
+    diaryTab.value = healthDiaryEnabled.value ? 'health' : 'food';
+    healthReviewOpen.value = true;
     scrollToPageTop();
     return;
   }
@@ -9584,9 +11853,21 @@ function markReminderSent(key: string) {
 }
 
 function checkReminderNotifications() {
-  if (nativeReminderSchedulesActive.value) return;
   const today = todayKey.value;
   const now = new Date();
+  if (state.settings.health_diary_enabled && pendingHealthReviewEntries.value.length && currentTimeMatchesReminderMinute(HEALTH_REVIEW_REMINDER_TIME, now)) {
+    const key = `${today}.health-review.${HEALTH_REVIEW_REMINDER_TIME}`;
+    if (!reminderAlreadySent(key)) {
+      markReminderSent(key);
+      notifyUser(t('healthReviewReminderTitle'), t('healthReviewReminderBody'), {
+        kind: 'health-review',
+        actionTypeId: NOTIFICATION_ACTION_TYPES.healthReview,
+        scheduledTime: HEALTH_REVIEW_REMINDER_TIME,
+      });
+    }
+  }
+
+  if (nativeReminderSchedulesActive.value) return;
 
   if (state.settings.daily_reminder && currentTimeMatchesReminderMinute(state.settings.daily_reminder_time, now)) {
     const key = `${today}.daily.${state.settings.daily_reminder_time}`;
@@ -9632,6 +11913,188 @@ function checkReminderNotifications() {
   }
 }
 
+function calendarSearchKindLabel(kind: CalendarSearchKind) {
+  if (kind === 'health') return t('healthDiary');
+  if (kind === 'activity') return t('activity');
+  if (kind === 'recipe') return t('recipe');
+  if (kind === 'ingredient') return t('ingredient');
+  return t('food');
+}
+
+function calendarSearchKindIcon(kind: CalendarSearchKind): IconName {
+  if (kind === 'health') return 'heartPulse';
+  if (kind === 'activity') return 'activity';
+  if (kind === 'recipe') return 'chefHat';
+  if (kind === 'ingredient') return 'wheat';
+  return 'utensils';
+}
+
+function calendarSearchIntakeKind(entry: Intake, food?: Food): CalendarSearchKind {
+  if (entry.item_type === 'recipe' || entry.food_id.startsWith('recipe:') || food?.id?.startsWith('recipe:')) return 'recipe';
+  if (entry.item_type === 'ingredient' || entry.food_id.startsWith('ingredient:') || food?.catalog_kind === 'ingredient') return 'ingredient';
+  return 'food';
+}
+
+function calendarSearchKindEnabled(kind: CalendarSearchKind) {
+  if (kind === 'health' && !healthDiaryEnabled.value) return false;
+  return calendarSearchKinds[kind] !== false;
+}
+
+function calendarSearchMatches(query: string, ...values: unknown[]) {
+  const q = query.trim();
+  if (!q) return true;
+  return matchesSearchQuery(q, ...values);
+}
+
+function buildCalendarSearchResults(query: string): CalendarSearchResult[] {
+  const q = query.trim();
+  const results: CalendarSearchResult[] = [];
+
+  for (const entry of state.intakes) {
+    const food = foodFromIntake(entry);
+    const kind = calendarSearchIntakeKind(entry, food);
+    if (!calendarSearchKindEnabled(kind)) continue;
+    if (!calendarSearchMatches(
+      q,
+      itemTitle(food),
+      entry.note_title,
+      entry.note_description,
+      food?.note,
+      food?.brand,
+      food?.barcode,
+      catalogKindLabel(food || ({ id: kind === 'ingredient' ? 'ingredient:unknown' : kind === 'recipe' ? 'recipe:unknown' : 'food:unknown', name: '', catalog_kind: kind === 'ingredient' ? 'ingredient' : 'food' } as Food)),
+      entry.meal_type,
+      dateKey(new Date(entry.consumed_at)),
+    )) continue;
+    const title = markdownInline(entry.note_title || itemTitle(food) || t(kind));
+    results.push({
+      id: `intake-${entry.id}`,
+      kind,
+      title,
+      subtitle: `${formatDateTime(entry.consumed_at)} · ${calendarSearchKindLabel(kind)} · ${t(entry.meal_type)}`,
+      at: entry.consumed_at,
+      dayKey: dateKey(new Date(entry.consumed_at)),
+      targetId: entry.id,
+      tab: 'food',
+      icon: calendarSearchKindIcon(kind),
+    });
+  }
+
+  for (const entry of state.activityLogs) {
+    if (!calendarSearchKindEnabled('activity')) continue;
+    const definition = activityDefinitionForLog(entry);
+    if (!calendarSearchMatches(
+      q,
+      entry.activity_name,
+      definition?.name,
+      definition?.description,
+      activityTypeLabel(activityTypeForLog(entry)),
+      entry.source,
+      dateKey(new Date(entry.performed_at)),
+    )) continue;
+    results.push({
+      id: `activity-${entry.id}`,
+      kind: 'activity',
+      title: markdownInline(entry.activity_name || t('activity')),
+      subtitle: `${formatDateTime(entry.performed_at)} · ${Math.round(entry.duration_min || 0)} ${t('minutesShort')} · ${Math.round(entry.kcal || 0)} kcal`,
+      at: entry.performed_at,
+      dayKey: dateKey(new Date(entry.performed_at)),
+      targetId: entry.id,
+      tab: 'food',
+      icon: calendarSearchKindIcon('activity'),
+    });
+  }
+
+  if (healthDiaryEnabled.value && calendarSearchKindEnabled('health')) {
+    for (const entry of state.healthEntries || []) {
+      if (entry.deleted_at) continue;
+      if (!calendarSearchMatches(
+        q,
+        entry.title,
+        entry.description,
+        entry.notes,
+        healthCategoryLabel(entry.category),
+        entry.event_id,
+        dateKey(new Date(entry.occurred_at)),
+      )) continue;
+      results.push({
+        id: `health-${entry.id}`,
+        kind: 'health',
+        title: markdownInline(entry.title || t('healthDiary')),
+        subtitle: `${formatDateTime(entry.occurred_at)} · ${healthCategoryLabel(entry.category)} · ${healthDurationText(entry)}`,
+        at: entry.occurred_at,
+        dayKey: dateKey(new Date(entry.occurred_at)),
+        targetId: entry.id,
+        tab: 'health',
+        icon: calendarSearchKindIcon('health'),
+      });
+    }
+  }
+
+  const direction = calendarSearchSortDirection.value === 'asc' ? 1 : -1;
+  return results
+    .sort((a, b) => direction * (a.at - b.at) || a.title.localeCompare(b.title, currentLocale(), { sensitivity: 'base' }))
+    .slice(0, 160);
+}
+
+function calendarSearchKindOptions() {
+  return (['food', 'ingredient', 'recipe', 'activity', 'health'] as CalendarSearchKind[])
+    .filter((kind) => kind !== 'health' || healthDiaryEnabled.value)
+    .map((kind) => ({ kind, label: calendarSearchKindLabel(kind), icon: calendarSearchKindIcon(kind) }));
+}
+
+function openCalendarSearch() {
+  calendarSearchOpen.value = true;
+  void nextTick(() => document.getElementById('calendar-search-modal-input')?.focus());
+}
+
+function closeCalendarSearch() {
+  calendarSearchOpen.value = false;
+  hideKeyboard();
+}
+
+function setCalendarSearchSort(direction: CalendarSearchSortDirection) {
+  calendarSearchSortDirection.value = direction;
+}
+
+function toggleCalendarSearchKind(kind: CalendarSearchKind) {
+  const next = !calendarSearchKinds[kind];
+  const enabledCount = Object.entries(calendarSearchKinds).filter(([key, enabled]) => enabled && (key !== 'health' || healthDiaryEnabled.value)).length;
+  if (!next && enabledCount <= 1) return;
+  calendarSearchKinds[kind] = next;
+}
+
+function highlightDiarySearchTarget(result: CalendarSearchResult) {
+  highlightedReviewIntakeId.value = result.kind === 'food' || result.kind === 'ingredient' || result.kind === 'recipe' ? result.targetId : null;
+  highlightedActivityLogId.value = result.kind === 'activity' ? result.targetId : null;
+  highlightedHealthReviewEntryId.value = result.kind === 'health' ? result.targetId : null;
+  if (highlightedReviewTimer) window.clearTimeout(highlightedReviewTimer);
+  highlightedReviewTimer = window.setTimeout(() => {
+    highlightedReviewIntakeId.value = null;
+    highlightedActivityLogId.value = null;
+    highlightedHealthReviewEntryId.value = null;
+  }, 6500);
+}
+
+function jumpToCalendarSearchResult(result: CalendarSearchResult) {
+  selectCalendarDate(result.dayKey);
+  activeTab.value = 'diary';
+  diaryTab.value = result.tab;
+  unlockedDiaryDate.value = result.dayKey;
+  closeCalendarSearch();
+  highlightDiarySearchTarget(result);
+  void nextTick(() => {
+    const elementId = result.kind === 'health'
+      ? `health-entry-${result.targetId}`
+      : result.kind === 'activity'
+        ? `activity-entry-${result.targetId}`
+        : `intake-entry-${result.targetId}`;
+    const target = document.getElementById(elementId);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    else scrollToPageTop();
+  });
+}
+
 function buildCalendar(monthDate: Date) {
   const first = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
   const mondayOffset = (first.getDay() + 6) % 7;
@@ -9644,6 +12107,7 @@ function buildCalendar(monthDate: Date) {
     const isFuture = date.getTime() > dayStartMs(todayKey.value);
     const intakes = dayIntakes(key);
     const activities = dayActivities(key);
+    const healthEntries = healthEntriesForDay(key);
     const weight = latestWeightForDay(state.weightLogs, key);
     const stats = !isFuture ? dayMacroSummary(key) : null;
     return {
@@ -9653,7 +12117,9 @@ function buildCalendar(monthDate: Date) {
       today: key === todayKey.value,
       selected: key === selectedDate.value,
       future: isFuture,
+      searchMatch: Boolean(calendarSearch.value.trim()) && calendarSearchDayKeys.value.has(key),
       hasEntries: !isFuture && (intakes.length > 0 || activities.length > 0),
+      hasHealthEntries: !isFuture && healthEntries.length > 0,
       bmi: !isFuture && weight ? bmi(weight.weight_kg, state.profile.height_cm) : 0,
       weightKg: !isFuture ? weight?.weight_kg ?? null : null,
     };
@@ -9664,6 +12130,11 @@ function moveCalendar(delta: number) {
   const next = new Date(calendarMonth.value);
   next.setMonth(next.getMonth() + delta);
   calendarMonth.value = next;
+}
+
+function goToToday() {
+  refreshTodayKey();
+  selectCalendarDate(todayKey.value);
 }
 
 function selectCalendarDate(key: string) {
@@ -9741,6 +12212,13 @@ function openQuickAddMenu(highlightedMealType: MealType | null = null) {
   quickAddOpen.value = true;
 }
 
+function openHealthDiaryTab() {
+  if (!healthDiaryEnabled.value) return showToast(t('healthDiaryDisabled'));
+  activeTab.value = 'diary';
+  diaryTab.value = 'health';
+  scrollToPageTop();
+}
+
 function isNotificationHighlightedQuickAdd(section: MealSection): boolean {
   return section.key !== 'activity' && notificationHighlightedMealType.value === section.key;
 }
@@ -9752,6 +12230,11 @@ async function chooseQuickAdd(section: MealSection) {
     return;
   }
   await openFoodAdd(section.key);
+}
+
+function chooseQuickAddHealthEntry() {
+  closeQuickAddMenu();
+  openNewHealthEntry();
 }
 
 function requestCloseSheet(confirmDirty: boolean | Event = true) {
@@ -10436,9 +12919,9 @@ async function bestCameraConstraints(): Promise<MediaStreamConstraints> {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const cameras = devices.filter((device) => device.kind === 'videoinput');
     const backCamera = [...cameras].reverse().find((device) => /back|rear|environment|wide|camera 0/i.test(device.label)) || cameras[cameras.length - 1];
-    if (backCamera?.deviceId) return { video: { ...baseVideo, deviceId: { ideal: backCamera.deviceId } } };
+    if (backCamera?.deviceId) return { video: { ...baseVideo, deviceId: { ideal: backCamera.deviceId } }, audio: false };
   } catch { /* fall back to environment camera */ }
-  return { video: baseVideo };
+  return { video: baseVideo, audio: false };
 }
 
 async function startCameraScanner() {
@@ -10452,7 +12935,8 @@ async function startCameraScanner() {
     video.srcObject = scannerStream;
     await video.play();
     scannerActive.value = true;
-    const detector = new Detector({ formats: ['qr_code', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
+    if (!scannerDetector) scannerDetector = new Detector({ formats: ['qr_code', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
+    const detector = scannerDetector;
     const tick = async () => {
       if (!scannerActive.value || !scanDialogOpen.value) return;
       try {
@@ -10537,11 +13021,12 @@ function backupCounts(snapshot: AppState): BackupProfileSummary['counts'] {
     intakes: snapshot.intakes.length,
     activityLogs: snapshot.activityLogs.length,
     weightLogs: snapshot.weightLogs.length,
+    healthEntries: snapshot.healthEntries?.length || 0,
   };
 }
 
 function backupProfileSubtitle(profile: BackupProfileSummary) {
-  return `${formatDate(profile.createdAt)} · ${profile.counts.intakes + profile.counts.activityLogs + profile.counts.weightLogs} ${t('entries')} · ${formatBytes(profile.byteLength)}`;
+  return `${formatDate(profile.createdAt)} · ${profile.counts.intakes + profile.counts.activityLogs + profile.counts.weightLogs + (profile.counts.healthEntries || 0)} ${t('entries')} · ${formatBytes(profile.byteLength)}`;
 }
 
 function openBackupDb(): Promise<IDBDatabase> {
@@ -10629,7 +13114,11 @@ async function pruneBackupProfiles() {
 }
 
 async function createBackupProfile(reason = t('manualBackupProfile'), forcedKind?: BackupProfileKind): Promise<BackupProfileSummary> {
-  const snapshot = normalizeImportedState(JSON.parse(JSON.stringify(state)) as Partial<AppState>);
+  await waitForIdle();
+  const serializedState = serializeStateForLocalPersistence();
+  await yieldToUi();
+  const snapshot = normalizeImportedState(JSON.parse(serializedState) as Partial<AppState>);
+  await yieldToUi();
   const serialized = JSON.stringify(snapshot);
   const createdAt = Date.now();
   const kind = forcedKind ?? backupProfileKindFromReason(reason);
@@ -10723,7 +13212,9 @@ function normalizeImportedState(parsed: Partial<AppState>): AppState {
     profile: {
       ...defaults.profile,
       ...profile,
+      id: profile.id || defaults.profile.id,
       plan_start_weight_kg: profile.plan_start_weight_kg || profile.current_weight_kg || defaults.profile.current_weight_kg,
+      usage_purposes: Array.isArray(profile.usage_purposes) ? profile.usage_purposes : defaults.profile.usage_purposes,
     },
     foods: Array.isArray(parsed.foods) ? parsed.foods : [],
     ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : [],
@@ -10733,6 +13224,7 @@ function normalizeImportedState(parsed: Partial<AppState>): AppState {
     intakes: Array.isArray(parsed.intakes) ? parsed.intakes : [],
     activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
     weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
+    healthEntries: Array.isArray((parsed as any).healthEntries) ? (parsed as any).healthEntries : [],
     catalogAliases: Array.isArray(parsed.catalogAliases) ? parsed.catalogAliases : [],
     githubSources: Array.isArray(parsed.githubSources) ? parsed.githubSources : [],
   };
@@ -10741,7 +13233,7 @@ function normalizeImportedState(parsed: Partial<AppState>): AppState {
 function applyImportedState(text: string) {
   const parsed = JSON.parse(text) as Partial<AppState>;
   if (!parsed || typeof parsed !== 'object') throw new Error(t('invalidBackupFile'));
-  const knownKeys = ['profile', 'pairing', 'settings', 'foods', 'ingredients', 'recipes', 'recipeItems', 'activities', 'intakes', 'activityLogs', 'weightLogs', 'catalogAliases', 'githubSources'];
+  const knownKeys = ['profile', 'pairing', 'settings', 'foods', 'ingredients', 'recipes', 'recipeItems', 'activities', 'intakes', 'activityLogs', 'weightLogs', 'healthEntries', 'catalogAliases', 'githubSources'];
   if (!knownKeys.some((key) => key in parsed)) throw new Error(t('invalidBackupFile'));
   const imported = normalizeImportedState(parsed);
   imported.pairing.channel = appChannel;
@@ -10753,17 +13245,156 @@ function applyImportedState(text: string) {
   onboardingProfile.gender = state.profile.gender;
   onboardingProfile.activity_level = state.profile.activity_level;
   onboardingProfile.weekly_goal_kg = state.profile.weekly_goal_kg;
+  onboardingProfile.usage_purposes = [...(state.profile.usage_purposes || [])];
   localStorage.setItem(mobileOnboardingKey, '1');
   onboardingOpen.value = false;
   onboardingStep.value = 0;
   settingsDialog.value = null;
   settingsOpen.value = false;
-  saveState(JSON.parse(JSON.stringify(state)) as AppState);
+  saveStateJson(serializeStateForLocalPersistence());
 }
 
-async function buildMobileBackupZip() {
+function defaultBackupIncludeOptions(): BackupIncludeOptions {
+  return { catalog: true, foodDiary: true, healthDiary: true, healthMedia: true };
+}
+
+function resetBackupIncludeOptions() {
+  const defaults = defaultBackupIncludeOptions();
+  backupIncludeOptions.catalog = defaults.catalog;
+  backupIncludeOptions.foodDiary = defaults.foodDiary;
+  backupIncludeOptions.healthDiary = defaults.healthDiary;
+  backupIncludeOptions.healthMedia = defaults.healthMedia;
+}
+
+function selectedBackupIncludeOptions(): BackupIncludeOptions {
+  return {
+    catalog: backupIncludeOptions.catalog === true,
+    foodDiary: backupIncludeOptions.foodDiary === true,
+    healthDiary: backupIncludeOptions.healthDiary === true,
+    healthMedia: backupIncludeOptions.healthMedia === true,
+  };
+}
+
+function backupIncludesAny(options: BackupIncludeOptions) {
+  return options.catalog || options.foodDiary || options.healthDiary;
+}
+
+function stateForBackupIncludeOptions(options: BackupIncludeOptions): AppState {
+  const snapshot = JSON.parse(JSON.stringify(stateSnapshotForLocalPersistence())) as AppState;
+  if (!options.catalog) {
+    snapshot.foods = [];
+    snapshot.ingredients = [];
+    snapshot.recipes = [];
+    snapshot.recipeItems = [];
+    snapshot.activities = [];
+    snapshot.catalogAliases = [];
+    snapshot.githubSources = [];
+  }
+  if (!options.foodDiary) {
+    snapshot.intakes = [];
+    snapshot.activityLogs = [];
+    snapshot.weightLogs = [];
+  }
+  if (!options.healthDiary) {
+    snapshot.healthEntries = [];
+  } else if (!options.healthMedia) {
+    snapshot.healthEntries = snapshot.healthEntries.map((entry) => ({
+      ...entry,
+      attachments: entry.attachments.map((attachment) => ({ ...attachment, data_url: '', preview_data_url: null, backup_path: null })),
+    }));
+  } else {
+    snapshot.healthEntries = snapshot.healthEntries.map((entry) => {
+      const sourceEntry = state.healthEntries.find((item) => item.id === entry.id);
+      return {
+        ...entry,
+        attachments: entry.attachments.map((attachment, index) => {
+          const sourceAttachment = sourceEntry?.attachments.find((item) => item.id === attachment.id);
+          return {
+            ...attachment,
+            data_url: '',
+            preview_data_url: null,
+            backup_path: sourceAttachment?.data_url ? healthMediaBackupPath(entry, attachment, index) : null,
+          };
+        }),
+      };
+    });
+  }
+  return snapshot;
+}
+
+async function addHealthMediaFilesToBackupZip(zip: JSZip, includeOptions: BackupIncludeOptions) {
+  if (!includeOptions.healthDiary || !includeOptions.healthMedia) return;
+  let added = 0;
+  const entries = (state.healthEntries || []).filter((entry) => !entry.deleted_at);
+  for (const entry of entries) {
+    for (const [index, attachment] of entry.attachments.entries()) {
+      const payload = dataUrlBase64Payload(attachment.data_url);
+      if (!payload) continue;
+      zip.file(healthMediaBackupPath(entry, attachment, index), payload.base64, {
+        base64: true,
+        binary: true,
+        createFolders: true,
+      });
+      added += 1;
+      if (added % 2 === 0) {
+        exportStatus.value = t('backupPackingMedia');
+        exportProgress.value = Math.min(36, 18 + added);
+        await yieldToUi();
+      }
+    }
+  }
+}
+
+function backupIncludeSummary(options: BackupIncludeOptions) {
+  return [
+    options.catalog ? t('backupIncludeCatalog') : null,
+    options.foodDiary ? t('backupIncludeFoodDiary') : null,
+    options.healthDiary ? t('backupIncludeHealthDiary') : null,
+    options.healthDiary && options.healthMedia ? t('backupIncludeHealthMedia') : null,
+  ].filter(Boolean).join(' · ');
+}
+
+function safeBackupPathSegment(value: string, fallback = 'file') {
+  const safe = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return safe || fallback;
+}
+
+function healthMediaBackupPath(entry: HealthEntry, attachment: HealthAttachment, index = 0) {
+  const extension = safeBackupPathSegment((attachment.name || '').split('.').pop() || (attachment.type === 'video' ? 'mp4' : 'jpg'), 'bin');
+  const base = safeBackupPathSegment(healthAttachmentDisplayName(attachment).replace(/\.[^.]+$/, ''), `attachment-${index + 1}`);
+  return `health-media/${safeBackupPathSegment(entry.id)}/${safeBackupPathSegment(attachment.id)}-${base}.${extension}`;
+}
+
+function dataUrlBase64Payload(dataUrl: string) {
+  const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.*)$/s);
+  return match ? { mime: match[1], base64: match[2] } : null;
+}
+
+function openBackupOptionsDialog() {
+  resetBackupIncludeOptions();
+  backupOptionsOpen.value = true;
+}
+
+async function confirmBackupOptionsExport() {
+  const includeOptions = selectedBackupIncludeOptions();
+  if (!backupIncludesAny(includeOptions)) return showToast(t('backupSelectAtLeastOne'));
+  backupOptionsOpen.value = false;
+  await exportAppDataWithOptions(mobileBackupFileName(), t('exportBackupProfile'), t('appDataExportCreated'), includeOptions);
+}
+
+async function buildMobileBackupZip(includeOptions = defaultBackupIncludeOptions()) {
+  await waitForIdle();
+  exportStatus.value = t(includeOptions.healthDiary && includeOptions.healthMedia ? 'backupPackingMedia' : 'backupPacking');
+  exportProgress.value = 12;
+  if (includeOptions.healthDiary && includeOptions.healthMedia) await hydrateHealthAttachmentMedia();
   const zip = new JSZip();
   const exportedAt = new Date().toISOString();
+  const exportedState = stateForBackupIncludeOptions(includeOptions);
   zip.file('manifest.json', JSON.stringify({
     app: 'nutrino',
     formatVersion: 1,
@@ -10771,10 +13402,20 @@ async function buildMobileBackupZip() {
     version: appVersion,
     channel: appChannel,
     exportedAt,
+    includedData: includeOptions,
   }, null, 2));
-  zip.file('mobile-app-data.json', JSON.stringify(state, null, 2));
-  zip.file('README.txt', `nutrino mobile app backup\nVersion: ${appVersion}\nExported at: ${exportedAt}\nThis ZIP was validated before export. If the exported file is 0 B, restore from Settings > Backup profiles.\n`);
-  const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+  await yieldToUi();
+  exportProgress.value = 26;
+  await addHealthMediaFilesToBackupZip(zip, includeOptions);
+  await yieldToUi();
+  zip.file('mobile-app-data.json', JSON.stringify(exportedState, null, 2));
+  zip.file('README.txt', `nutrino mobile app backup\nVersion: ${appVersion}\nExported at: ${exportedAt}\nIncluded data: ${backupIncludeSummary(includeOptions) || 'none'}\nThis ZIP was validated before export. If the exported file is 0 B, restore from Settings > Backup profiles.\n`);
+  await yieldToUi();
+  exportProgress.value = 38;
+  const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'STORE' }, (metadata) => {
+    if (metadata.percent) exportProgress.value = Math.min(76, 38 + Math.round(metadata.percent * 0.38));
+    if (metadata.percent && Math.round(metadata.percent) % 20 === 0) void yieldToUi();
+  });
   assertValidZipBytes(bytes);
   return bytes;
 }
@@ -10784,7 +13425,11 @@ function isMobileRuntime() {
 }
 
 function isAndroidRuntime() {
-  return /Android/i.test(navigator.userAgent);
+  if (/Android/i.test(navigator.userAgent)) return true;
+  // Some Tauri Android WebViews expose a reduced UA. Inside the mobile Tauri app,
+  // treat non-iOS mobile runtime as Android so exports use the SAF picker instead
+  // of the desktop fs.writeFile path.
+  return isTauriRuntime() && isMobileRuntime() && !isIosRuntime();
 }
 
 function isIosRuntime() {
@@ -10799,6 +13444,19 @@ function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
   return buffer;
+}
+
+async function bytesToNumberArrayChunked(bytes: Uint8Array, progressStart = 70, progressEnd = 88) {
+  const result = new Array<number>(bytes.length);
+  const chunkSize = 128 * 1024;
+  const span = Math.max(0, progressEnd - progressStart);
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const end = Math.min(bytes.length, offset + chunkSize);
+    for (let index = offset; index < end; index += 1) result[index] = bytes[index];
+    exportProgress.value = Math.round(progressStart + (end / Math.max(1, bytes.length)) * span);
+    await yieldToUi();
+  }
+  return result;
 }
 
 function fallbackDownloadAppData(bytes: Uint8Array, filename = mobileBackupFileName()) {
@@ -10860,9 +13518,28 @@ async function shareMobileBackupZipStrict(bytes: Uint8Array, filename = mobileBa
 
 async function exportBackupZipWithAndroidDocumentPicker(bytes: Uint8Array, filename = mobileBackupFileName()) {
   assertValidZipBytes(bytes);
-  const result = await invoke<string>('export_mobile_backup_via_android_picker', { filename, bytes: Array.from(bytes) });
+  exportStatus.value = t('backupOpeningPicker');
+  await nextTick();
+  const result = await invoke<string>('export_mobile_backup_via_android_picker', { filename, bytes: await bytesToNumberArrayChunked(bytes, 78, 92) });
   if (result === 'EXPORT_CANCELED') throw new DOMException(t('exportCanceled'), 'AbortError');
   return result;
+}
+
+async function exportTextWithAndroidDocumentPicker(bytes: Uint8Array, filename: string, mimeType: string) {
+  exportStatus.value = t('backupOpeningPicker');
+  exportProgress.value = Math.max(exportProgress.value, 68);
+  await nextTick();
+  const result = await invoke<string>('export_text_via_android_picker', { filename, mimeType, bytes: await bytesToNumberArrayChunked(bytes, 70, 94) });
+  if (result === 'EXPORT_CANCELED') throw new DOMException(t('exportCanceled'), 'AbortError');
+  return result;
+}
+
+async function exportMarkdownWithAndroidDocumentPicker(bytes: Uint8Array, filename: string) {
+  return exportTextWithAndroidDocumentPicker(bytes, filename, 'text/markdown');
+}
+
+async function exportJsonWithAndroidDocumentPicker(bytes: Uint8Array, filename: string) {
+  return exportTextWithAndroidDocumentPicker(bytes, filename, 'application/json');
 }
 
 async function importBackupZipWithAndroidDocumentPicker(): Promise<Uint8Array | null> {
@@ -10875,7 +13552,7 @@ async function importBackupZipWithAndroidDocumentPicker(): Promise<Uint8Array | 
 
 async function writeBackupZipToNativeAppFile(bytes: Uint8Array, filename = mobileBackupFileName()) {
   assertValidZipBytes(bytes);
-  const path = await invoke<string>('write_mobile_backup_file', { filename, bytes: Array.from(bytes) });
+  const path = await invoke<string>('write_mobile_backup_file', { filename, bytes: await bytesToNumberArrayChunked(bytes, 78, 92) });
   const savedBytes = normalizeBackupBytes(await invoke<number[]>('read_mobile_backup_file', { path }));
   assertValidZipBytes(savedBytes);
   if (savedBytes.length !== bytes.length) {
@@ -10985,20 +13662,54 @@ async function pickBackupBytesForImport(): Promise<Uint8Array | null> {
   return null;
 }
 
-async function exportAppDataWithOptions(filename = mobileBackupFileName(), backupReason = t('exportBackupProfile'), successMessage = t('appDataExportCreated')) {
+async function backupDataTextWithMedia(zip: JSZip, dataText: string) {
+  const parsed = JSON.parse(dataText) as Partial<AppState>;
+  const entries = Array.isArray((parsed as any).healthEntries) ? (parsed as any).healthEntries as HealthEntry[] : [];
+  let changed = false;
+  for (const entry of entries) {
+    if (!Array.isArray(entry.attachments)) continue;
+    for (const attachment of entry.attachments) {
+      if (attachment.data_url || !attachment.backup_path) continue;
+      const file = zip.file(attachment.backup_path);
+      if (!file) continue;
+      const base64 = await file.async('base64');
+      attachment.data_url = `data:${attachment.mime_type || (attachment.type === 'video' ? 'video/*' : 'image/*')};base64,${base64}`;
+      changed = true;
+      await yieldToUi();
+    }
+  }
+  return changed ? JSON.stringify(parsed) : dataText;
+}
+
+async function exportAppDataWithOptions(filename = mobileBackupFileName(), backupReason = t('exportBackupProfile'), successMessage = t('appDataExportCreated'), includeOptions = defaultBackupIncludeOptions()) {
+  if (exportBusy.value) return;
   refreshTodayKey();
+  exportBusy.value = true;
+  exportProgress.value = 4;
+  exportTitle.value = t('backupExportInProgress');
+  exportStatus.value = t('backupPreparing');
+  await nextTick();
   let localProfileSaved = false;
   try {
     await createBackupProfile(backupReason);
     localProfileSaved = true;
   } catch (error) {
     if (!window.confirm(`${t('backupProfileSaveFailed')}: ${String(error)}
-${t('continueExternalExport')}`)) return;
+${t('continueExternalExport')}`)) {
+      exportBusy.value = false;
+      exportProgress.value = 0;
+      exportStatus.value = '';
+      exportTitle.value = '';
+      return;
+    }
   }
 
   try {
-    const bytes = await buildMobileBackupZip();
+    const bytes = await buildMobileBackupZip(includeOptions);
     assertValidZipBytes(bytes);
+    exportStatus.value = t('backupOpeningPicker');
+    exportProgress.value = Math.max(exportProgress.value, 78);
+    await nextTick();
 
     if (isMobileRuntime()) {
       try {
@@ -11009,6 +13720,7 @@ ${t('continueExternalExport')}`)) return;
         } else {
           await shareMobileBackupZipStrict(bytes, filename);
         }
+        exportProgress.value = 100;
         showToast(`${successMessage} (${formatBytes(bytes.length)})`);
       } catch (shareError) {
         const shareErrorName = typeof shareError === 'object' && shareError && 'name' in shareError
@@ -11027,6 +13739,7 @@ ${t('continueExternalExport')}`)) return;
     try {
       const savedToSelectedLocation = await writeBackupZipToSelectedLocation(bytes, filename);
       if (!savedToSelectedLocation) return showToast(t('exportCanceled'));
+      exportProgress.value = 100;
       showToast(`${successMessage} (${formatBytes(bytes.length)})`);
       return;
     } catch (writeError) {
@@ -11035,16 +13748,23 @@ ${t('continueExternalExport')}`)) return;
       return;
     }
   } catch (error) {
-    showToast(`${t('exportFailed')}: ${String(error)}${localProfileSaved ? ` ${t('backupProfileStillAvailable')}` : ''}`);
+    showToast(`${t('exportFailed')}: ${friendlyExportError(error)}${localProfileSaved ? ` ${t('backupProfileStillAvailable')}` : ''}`);
+  } finally {
+    window.setTimeout(() => {
+      exportBusy.value = false;
+      exportProgress.value = 0;
+      exportStatus.value = '';
+      exportTitle.value = '';
+    }, 350);
   }
 }
 
 async function exportAppData() {
-  await exportAppDataWithOptions();
+  openBackupOptionsDialog();
 }
 
 async function exportDataForOtherChannel() {
-  await exportAppDataWithOptions(channelTransferBackupFileName(), t('channelTransferExportProfile'), t('channelTransferExportCreated'));
+  await exportAppDataWithOptions(channelTransferBackupFileName(), t('channelTransferExportProfile'), t('channelTransferExportCreated'), defaultBackupIncludeOptions());
 }
 
 async function importAppDataWithOptions(confirmMessage = t('confirmImportOverwrite'), beforeReason = t('beforeImportBackupProfile'), afterReason = t('importBackupProfile'), successMessage = t('appDataImported')) {
@@ -11054,8 +13774,9 @@ async function importAppDataWithOptions(confirmMessage = t('confirmImportOverwri
     assertValidZipBytes(bytes);
     const zip = await JSZip.loadAsync(bytes);
     const manifestText = await zip.file('manifest.json')?.async('string');
-    const dataText = await zip.file('mobile-app-data.json')?.async('string');
-    if (!dataText) throw new Error(t('invalidBackupFile'));
+    const rawDataText = await zip.file('mobile-app-data.json')?.async('string');
+    if (!rawDataText) throw new Error(t('invalidBackupFile'));
+    const dataText = await backupDataTextWithMedia(zip, rawDataText);
     if (manifestText) {
       const manifest = JSON.parse(manifestText) as { app?: string; formatVersion?: number; exportType?: string; channel?: string };
       if (manifest.app !== 'nutrino' || manifest.formatVersion !== 1 || manifest.exportType !== 'mobile-app') {
@@ -11065,6 +13786,13 @@ async function importAppDataWithOptions(confirmMessage = t('confirmImportOverwri
     if (!window.confirm(confirmMessage)) return showToast(t('importCanceled'));
     await createBackupProfile(beforeReason);
     applyImportedState(dataText);
+    for (const entry of state.healthEntries || []) {
+      try {
+        await saveHealthEntryMedia(entry);
+      } catch {
+        // Keep imported diary data even if a media item cannot be cached locally.
+      }
+    }
     await createBackupProfile(afterReason);
     showToast(successMessage);
   } catch (error) {
@@ -11245,6 +13973,9 @@ function setTab(tab: Tab) {
       </article>
 
       <article class="card dashboard-card" data-tour="dashboard">
+        <button class="home-weight-chip" type="button" :aria-label="t('editWeight')" :title="t('editWeight')" @click="openWeightReminderModal">
+          {{ currentDayWeightKg ? `${Number(currentDayWeightKg).toFixed(1)} kg` : '— kg' }}
+        </button>
         <div class="source-action"><button class="icon-button" :aria-label="t('sources')" v-html="lucideSvg('info')"></button></div>
         <div class="dashboard-row">
           <div class="side-stat">
@@ -11292,11 +14023,12 @@ function setTab(tab: Tab) {
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
           <span><b>{{ t(section.key) }}</b><small>{{ sectionHint(section) }}</small></span>
           <span class="section-summary-text">{{ sectionSummaryText(section) }}</span>
-          <span v-if="state.settings.show_micronutrients && section.key !== 'activity'" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
+          <span v-if="section.key === 'activity'" class="meal-micro-button" role="button" :aria-label="t('activityAnalysis')" :title="t('activityAnalysis')" @click.stop.prevent="openActivityAnalysis" v-html="lucideSvg('chartPie')"></span>
+          <span v-else-if="state.settings.show_micronutrients" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
           <span class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
-          <div v-for="activity in activitiesForSection()" :key="activity.id" class="entry-row" @pointerdown="startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="entryActionSheet = { kind: 'activity', id: activity.id }">
+          <div v-for="activity in activitiesForSection()" :id="`activity-entry-${activity.id}`" :key="activity.id" class="entry-row" :class="{ 'review-highlight': highlightedActivityLogId === activity.id }" @pointerdown="startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="entryActionSheet = { kind: 'activity', id: activity.id }">
             <div><b>{{ activity.activity_name }}</b><small>{{ activity.duration_min }} min · {{ activity.kcal }} kcal · {{ activity.source }}</small></div>
             <div class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="duplicateActivity(activity.id)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editActivityLog(activity)" v-html="lucideSvg('pencil')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeActivity(activity.id)" v-html="lucideSvg('trash2')"></button></div>
           </div>
@@ -11310,10 +14042,36 @@ function setTab(tab: Tab) {
           <p v-if="!entriesForSection(section).length" class="empty-line">{{ t('noEntries') }}</p>
         </div>
       </article>
+      <article v-if="healthDiaryEnabled" class="card meal-card home-health-card">
+        <button class="meal-header home-health-header" type="button" @click="openNewHealthEntry">
+          <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
+          <span><b>{{ t('healthDiary') }}</b><small>{{ t('healthHomeHint') }}</small></span>
+          <span class="section-summary-text">{{ healthHomeSummaryText() }}</span>
+          <span class="meal-micro-button" role="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click.stop.prevent="openHealthAnalysisModal" v-html="lucideSvg('flaskConical')"></span>
+          <span class="plus-button" role="button" :aria-label="t('addHealthEntry')" :title="t('addHealthEntry')" @click.stop.prevent="openNewHealthEntry">+</span>
+        </button>
+        <div class="entry-list">
+          <div v-for="entry in currentDayHealthEntries" :key="`home-health-entry-${entry.id}`" class="entry-row health-entry-row">
+            <div class="health-entry-copy">
+              <b>{{ entry.title }}</b>
+              <small>{{ healthEntrySubtitle(entry) }}</small>
+              <small v-if="entry.description" class="health-entry-extra">{{ entry.description }}</small>
+            </div>
+            <div class="health-entry-actions health-entry-side-actions">
+              <button v-if="healthMediaCountForEntry(entry)" class="entry-icon-button health-media-button" type="button" :aria-label="t('healthMedia')" :title="t('healthMedia')" @click.stop="openHealthMediaGrid(entry)"><span v-html="lucideSvg('camera')"></span><em>{{ healthMediaCountForEntry(entry) }}</em></button>
+              <button class="entry-icon-button health-detail-button" type="button" :aria-label="t('healthEntryDetails')" :title="t('healthEntryDetails')" @click.stop="openHealthEntryDetail(entry)" v-html="lucideSvg('info')"></button>
+              <button class="entry-icon-button" type="button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editHealthEntry(entry)" v-html="lucideSvg('pencil')"></button>
+              <button class="entry-icon-button danger" type="button" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeHealthEntry(entry.id)" v-html="lucideSvg('trash2')"></button>
+            </div>
+          </div>
+          <p v-if="!currentDayHealthEntries.length" class="empty-line">{{ t('noHealthEntries') }}</p>
+        </div>
+      </article>
+
     </section>
 
-    <section v-if="activeTab === 'diary'" class="page-stack">
-      <article class="card meal-note-review-card" :class="{ collapsed: !mealNoteReviewOpen }">
+    <section v-if="activeTab === 'diary'" class="page-stack diary-page">
+      <article v-if="mealNotesToReview.length" class="card meal-note-review-card" :class="{ collapsed: !mealNoteReviewOpen }">
         <button class="meal-note-review-head" type="button" :aria-expanded="mealNoteReviewOpen" @click="mealNoteReviewOpen = !mealNoteReviewOpen">
           <span class="meal-note-review-copy">
             <h2>{{ t('mealNotesToReview') }}</h2>
@@ -11343,11 +14101,44 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
+      <article v-if="healthDiaryEnabled && pendingHealthReviewEntries.length" class="card meal-note-review-card health-review-card" :class="{ collapsed: !healthReviewOpen }">
+        <button class="meal-note-review-head" type="button" :aria-expanded="healthReviewOpen" @click="healthReviewOpen = !healthReviewOpen">
+          <span class="meal-note-review-copy">
+            <h2>{{ t('healthEntriesToReview') }}</h2>
+            <small>{{ t('healthEntriesToReviewHint') }}</small>
+          </span>
+          <span class="meal-note-review-actions">
+            <span class="meal-note-review-count">{{ pendingHealthReviewEntries.length }}</span>
+            <span class="meal-note-review-chevron" :class="{ open: healthReviewOpen }" v-html="lucideSvg('chevronDown')"></span>
+          </span>
+        </button>
+        <div v-if="healthReviewOpen" class="meal-note-review-body">
+          <div v-if="pendingHealthReviewEntries.length" class="meal-note-review-list">
+            <div v-for="entry in pendingHealthReviewEntries" :key="`health-review-${entry.id}`" class="meal-note-review-row">
+              <div>
+                <b>{{ entry.title }}</b>
+                <small>{{ healthReviewSubtitle(entry) }}</small>
+                <small v-if="entry.description">{{ entry.description }}</small>
+              </div>
+              <div class="entry-actions">
+                <button class="text-button" @click="openHealthReviewDay(entry)">{{ t('openDay') }}</button>
+                <button class="text-button" @click="openHealthReviewEntry(entry)">{{ t('edit') }}</button>
+                <button class="text-button" @click="ignoreHealthReview(entry)">{{ t('ignore') }}</button>
+              </div>
+            </div>
+          </div>
+          <p v-else class="empty-line">{{ t('noHealthEntriesToReview') }}</p>
+        </div>
+      </article>
+
       <article class="card calendar-card">
         <div class="calendar-header">
           <button class="icon-button" @click="moveCalendar(-1)" v-html="lucideSvg('chevronLeft')"></button>
           <h2>{{ formatMonth(calendarMonth) }}</h2>
-          <button class="icon-button" @click="moveCalendar(1)" v-html="lucideSvg('chevronRight')"></button>
+          <span class="calendar-header-actions">
+            <button v-if="selectedDate !== todayKey" class="calendar-today-button" type="button" :aria-label="t('goToday')" :title="t('goToday')" @click="goToToday"><span v-html="lucideSvg('calendarDays')"></span>{{ t('goToday') }}</button>
+            <button class="icon-button" @click="moveCalendar(1)" v-html="lucideSvg('chevronRight')"></button>
+          </span>
         </div>
         <div class="weekday-grid"><span v-for="day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']" :key="day">{{ day }}</span></div>
         <div class="calendar-grid">
@@ -11355,15 +14146,23 @@ function setTab(tab: Tab) {
             v-for="cell in calendarCells"
             :key="cell.key"
             class="calendar-day"
-            :class="{ selected: cell.selected, today: cell.today, muted: !cell.currentMonth }"
+            :class="{ selected: cell.selected, today: cell.today, muted: !cell.currentMonth, 'search-match': cell.searchMatch }"
             @click="selectCalendarDate(cell.key)"
           >
             <span class="calendar-date-number">{{ cell.day }}</span>
             <em v-if="cell.weightKg || cell.bmi" class="calendar-day-weight"><span v-if="cell.weightKg">{{ Number(cell.weightKg).toFixed(1) }} kg</span><span v-if="cell.bmi">BMI {{ cell.bmi }}</span></em>
-            <i v-if="cell.hasEntries"></i>
+            <span v-if="cell.hasEntries || cell.hasHealthEntries" class="calendar-dot-row">
+              <i v-if="cell.hasEntries" class="calendar-entry-dot"></i>
+              <i v-if="cell.hasHealthEntries" class="calendar-health-dot"></i>
+            </span>
           </button>
         </div>
       </article>
+
+      <div v-if="healthDiaryEnabled" class="diary-tab-toggle segmented-pill-toggle">
+        <button type="button" :class="{ active: diaryTab === 'food' }" @click="diaryTab = 'food'"><span v-html="lucideSvg('utensils')"></span>{{ t('foodDiary') }}</button>
+        <button v-if="healthDiaryEnabled" type="button" :class="{ active: diaryTab === 'health' }" @click="diaryTab = 'health'"><span v-html="lucideSvg('heartPulse')"></span>{{ t('healthDiary') }}</button>
+      </div>
 
       <div class="diary-date-sticky-bar">
         <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('back')" :title="t('back')" @click="moveSelectedDate(-1)" v-html="lucideSvg('chevronLeft')"></button>
@@ -11372,12 +14171,14 @@ function setTab(tab: Tab) {
           <b>{{ selectedDiaryDateLabel }}</b>
         </div>
         <div class="diary-date-sticky-actions">
-          <button v-if="state.settings.show_micronutrients" class="icon-button analysis-open-button" type="button" :aria-label="t('dayMicronutrients')" :title="t('dayMicronutrients')" @click="openDayMicronutrients" v-html="lucideSvg('flaskConical')"></button>
-          <button class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="openAnalysis" v-html="lucideSvg('chartPie')"></button>
+          <button v-if="diaryTab === 'food' && state.settings.show_micronutrients" class="icon-button analysis-open-button" type="button" :aria-label="t('dayMicronutrients')" :title="t('dayMicronutrients')" @click="openDayMicronutrients" v-html="lucideSvg('flaskConical')"></button>
+          <button v-if="diaryTab === 'food'" class="icon-button analysis-open-button" type="button" :aria-label="t('openAnalysis')" :title="t('openAnalysis')" @click="openAnalysis" v-html="lucideSvg('chartPie')"></button>
+          <button v-if="diaryTab === 'health' && healthDiaryEnabled" class="icon-button analysis-open-button" type="button" :aria-label="t('healthAnalysis')" :title="t('healthAnalysis')" @click="openHealthAnalysisModal" v-html="lucideSvg('flaskConical')"></button>
           <button class="icon-button diary-date-nav-button" type="button" :aria-label="t('next')" :title="t('next')" @click="moveSelectedDate(1)" v-html="lucideSvg('chevronRight')"></button>
         </div>
       </div>
 
+      <template v-if="diaryTab === 'food'">
       <article class="card">
         <div class="diary-stats">
           <div :class="['kcal-stat', diaryKcalTone]"><span>{{ t('supplied') }}</span><b>{{ consumedKcal }} / {{ dailyGoal }} kcal</b><small v-if="calorieDeficitEnabled">{{ t('effectiveLimit') }} {{ effectiveDailyGoal }} kcal</small></div>
@@ -11433,11 +14234,12 @@ function setTab(tab: Tab) {
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
           <span><b>{{ t(section.key) }}</b><small>{{ section.key === 'activity' ? `${activitiesForSection().length} ${t('activities')}` : `${entriesForSection(section).length} ${t('entries')}` }}</small></span>
           <span class="section-summary-text">{{ sectionSummaryText(section) }}</span>
-          <span v-if="state.settings.show_micronutrients && section.key !== 'activity'" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
+          <span v-if="section.key === 'activity'" class="meal-micro-button" role="button" :aria-label="t('activityAnalysis')" :title="t('activityAnalysis')" @click.stop.prevent="openActivityAnalysis" v-html="lucideSvg('chartPie')"></span>
+          <span v-else-if="state.settings.show_micronutrients" class="meal-micro-button" role="button" :aria-label="t('mealMicronutrients')" :title="t('mealMicronutrients')" @click.stop.prevent="openMealMicronutrients(section)" v-html="lucideSvg('flaskConical')"></span>
           <span v-if="selectedDayUnlocked" class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
-          <div v-for="activity in activitiesForSection()" :key="activity.id" class="entry-row" @pointerdown="selectedDayUnlocked && startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="selectedDayUnlocked && (entryActionSheet = { kind: 'activity', id: activity.id })">
+          <div v-for="activity in activitiesForSection()" :id="`activity-entry-${activity.id}`" :key="activity.id" class="entry-row" :class="{ 'review-highlight': highlightedActivityLogId === activity.id }" @pointerdown="selectedDayUnlocked && startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="selectedDayUnlocked && (entryActionSheet = { kind: 'activity', id: activity.id })">
             <div><b>{{ activity.activity_name }}</b><small>{{ activity.duration_min }} min · {{ activity.kcal }} kcal</small></div>
             <div v-if="selectedDayUnlocked" class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="duplicateActivity(activity.id)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editActivityLog(activity)" v-html="lucideSvg('pencil')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeActivity(activity.id)" v-html="lucideSvg('trash2')"></button></div>
           </div>
@@ -11451,6 +14253,61 @@ function setTab(tab: Tab) {
           <p v-if="!entriesForSection(section).length" class="empty-line">{{ t('noEntries') }}</p>
         </div>
       </article>
+      </template>
+
+      <template v-else-if="healthDiaryEnabled">
+        <article v-if="!selectedDayUnlocked" class="card day-edit-card">
+          <div>
+            <b>{{ t('lockedNote') }}</b>
+            <small>{{ t('selectedDayHealthNote') }}</small>
+          </div>
+          <button class="outlined-button unlock-button" @click="unlockSelectedDay"><span v-html="lucideSvg('lockOpen')"></span>{{ t('unlockDay') }}</button>
+        </article>
+
+        <article class="card meal-card diary-health-card">
+          <button
+            class="meal-header diary-health-header"
+            type="button"
+            :class="{ locked: !selectedDayUnlocked }"
+            @click="selectedDayUnlocked && openNewHealthEntry()"
+          >
+            <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
+            <span><b>{{ t('healthDiary') }}</b><small>{{ currentDayHealthClinicalSummary.entries }} {{ t('entries') }} · {{ currentDayHealthClinicalSummary.uniqueEvents }} {{ t('healthEventsShort') }}</small></span>
+            <span class="section-summary-text">{{ healthHomeSummaryText() }}</span>
+            <span class="meal-micro-button" role="button" :aria-label="t('searchAria')" :title="t('searchAria')" @click.stop.prevent="healthSearchOpen = !healthSearchOpen" v-html="lucideSvg('search')"></span>
+            <span v-if="selectedDayUnlocked && reusableHealthEvents.length" class="meal-micro-button" role="button" :aria-label="t('markAgain')" :title="t('markAgain')" @click.stop.prevent="openHealthRecurrence()" v-html="lucideSvg('refreshCw')"></span>
+            <span v-if="selectedDayUnlocked" class="plus-button">+</span>
+          </button>
+
+          <div class="entry-list diary-health-entry-list">
+            <div v-if="healthSearchOpen || healthSearch" class="diary-health-search-inline">
+              <div class="health-search-input">
+                <span v-html="lucideSvg('search')"></span>
+                <input v-model="healthSearch" class="input" type="search" :placeholder="t('searchHealthDiary')" />
+                <button v-if="healthSearch" class="entry-icon-button health-search-clear" type="button" :aria-label="t('close')" @click="healthSearch = ''" v-html="lucideSvg('x')"></button>
+              </div>
+              <small>{{ formatDate(dayStartMs(selectedDate)) }} · {{ filteredHealthEntries.length }}/{{ currentDayHealthEntries.length }} {{ t('entries') }}</small>
+            </div>
+
+            <div v-for="entry in filteredHealthEntries" :id="`health-entry-${entry.id}`" :key="entry.id" class="entry-row health-entry-row" :class="{ 'review-highlight': highlightedHealthReviewEntryId === entry.id }">
+              <div class="diary-health-row-main no-icon">
+                <div class="health-entry-copy">
+                  <b>{{ entry.title }}</b>
+                  <small>{{ healthEntrySubtitle(entry) }}</small>
+                  <small v-if="entry.description" class="health-entry-extra">{{ entry.description }}</small>
+                </div>
+              </div>
+              <div class="health-entry-actions health-entry-side-actions">
+                <button v-if="healthMediaCountForEntry(entry)" class="entry-icon-button health-media-button" type="button" :aria-label="t('healthMedia')" :title="t('healthMedia')" @click.stop="openHealthMediaGrid(entry)"><span v-html="lucideSvg('camera')"></span><em>{{ healthMediaCountForEntry(entry) }}</em></button>
+                <button class="entry-icon-button health-detail-button" type="button" :aria-label="t('healthEntryDetails')" :title="t('healthEntryDetails')" @click.stop="openHealthEntryDetail(entry)" v-html="lucideSvg('info')"></button>
+                <button v-if="selectedDayUnlocked" class="entry-icon-button" type="button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editHealthEntry(entry)" v-html="lucideSvg('pencil')"></button>
+                <button v-if="selectedDayUnlocked" class="entry-icon-button danger" type="button" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeHealthEntry(entry.id)" v-html="lucideSvg('trash2')"></button>
+              </div>
+            </div>
+            <p v-if="!filteredHealthEntries.length" class="empty-line">{{ healthSearch ? t('noHealthSearchResults') : t('noHealthEntries') }}</p>
+          </div>
+        </article>
+      </template>
     </section>
 
     <section v-if="activeTab === 'recipes'" class="page-stack">
@@ -11517,6 +14374,18 @@ function setTab(tab: Tab) {
       </article>
 
       <article class="card profile-list">
+        <div class="profile-purpose-panel">
+          <div class="profile-purpose-head">
+            <b>{{ t('appPurpose') }}</b>
+            <small>{{ profilePurposeSummary() }}</small>
+          </div>
+          <div class="profile-purpose-chip-list">
+            <button v-for="purpose in profilePurposeOptions" :key="purpose.key" type="button" class="profile-purpose-chip" :class="{ selected: profilePurposeSelected(purpose.key) }" @click="toggleProfilePurpose(purpose.key)">
+              <span v-html="lucideSvg(purpose.icon)"></span>
+              <b>{{ t(purpose.labelKey) }}</b>
+            </button>
+          </div>
+        </div>
         <label class="profile-tile">
           <span class="profile-tile-icon" v-html="lucideSvg('activity')"></span>
           <span><b>{{ t('activityLevel') }}</b><small>{{ t('activityLevelHint') }}</small></span>
@@ -11558,54 +14427,70 @@ function setTab(tab: Tab) {
         </label>
       </article>
 
-      <article class="card pairing-card source-settings-card source-connection-card">
-        <label class="source-connection-toggle"><span class="settings-row-icon" v-html="settingsIcon('desktop')"></span><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
-        <details v-if="state.settings.desktop_api_enabled" class="source-details">
-          <summary><span>{{ t('apiSettings') }}</span><span class="source-details-chevron" v-html="lucideSvg('chevronDown')"></span></summary>
-          <p class="helper" v-if="devMode">{{ t('devApiHint') }}</p>
-          <p class="channel-chip">{{ t('appChannel') }}: {{ appChannel }}</p>
-          <label class="field-label">{{ t('apiUrl') }}</label>
-          <input v-model="state.pairing.baseUrl" class="input" placeholder="http://192.168.1.202:8090/api/v1" />
-          <label class="field-label">{{ t('pairingPassword') }}</label>
-          <input v-model="state.pairing.password" class="input" type="password" autocomplete="current-password" />
-          <div class="button-row">
-            <button class="outlined-button" @click="testConnection">{{ t('test') }}</button>
-            <button class="filled-button" :disabled="syncBusy" @click="syncNow()">{{ t('syncNow') }}</button>
-            <button class="outlined-button" :disabled="syncBusy" @click="pushNow()">{{ t('pushNow') }}</button>
+      <section class="profile-source-section">
+        <article class="source-hub-card" :class="{ disabled: state.settings.desktop_api_enabled === false }">
+          <header class="source-hub-head">
+            <span class="source-hub-icon desktop" v-html="settingsIcon('desktop')"></span>
+            <span class="source-hub-title"><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span>
+            <label class="switch-control" :aria-label="t('desktopApiConnection')"><input v-model="state.settings.desktop_api_enabled" type="checkbox" /><span></span></label>
+          </header>
+          <div v-if="state.settings.desktop_api_enabled" class="source-hub-body">
+            <div class="source-status-strip">
+              <span class="source-status-pill" :class="serverOnline ? 'online' : 'offline'"><i></i>{{ serverOnline ? t('online') : t('offline') }}</span>
+              <span class="source-status-pill neutral">{{ t('appChannel') }} · {{ appChannel }}</span>
+              <span v-if="state.pairing.lastSyncAt" class="source-status-pill neutral">{{ formatDateTime(state.pairing.lastSyncAt) }}</span>
+            </div>
+            <p v-if="devMode" class="source-note">{{ t('devApiHint') }}</p>
+            <div class="source-form-grid">
+              <label class="source-form-field"><span>{{ t('apiUrl') }}</span><input v-model="state.pairing.baseUrl" class="input" placeholder="http://192.168.1.202:8090/api/v1" /></label>
+              <label class="source-form-field"><span>{{ t('pairingPassword') }}</span><input v-model="state.pairing.password" class="input" type="password" autocomplete="current-password" /></label>
+            </div>
+            <div class="source-action-grid">
+              <button class="outlined-button" type="button" @click="testConnection"><span v-html="lucideSvg('server')"></span>{{ t('test') }}</button>
+              <button class="filled-button" type="button" :disabled="syncBusy" @click="syncNow()"><span v-html="lucideSvg('download')"></span>{{ t('syncNow') }}</button>
+              <button class="outlined-button" type="button" :disabled="syncBusy" @click="pushNow()"><span v-html="lucideSvg('upload')"></span>{{ t('pushNow') }}</button>
+            </div>
+            <p class="source-note subtle">{{ t('localOnlyDiaryHint') }}</p>
+            <p v-if="state.pairing.lastSyncError" class="error-text source-error">{{ state.pairing.lastSyncError }}</p>
           </div>
-          <p class="helper">{{ t('localOnlyDiaryHint') }}</p>
-          <p v-if="state.pairing.lastSyncError" class="error-text">{{ state.pairing.lastSyncError }}</p>
-        </details>
-      </article>
+          <p v-else class="source-disabled-note">{{ t('desktopApiDisabled') }}</p>
+        </article>
 
-      <article class="card github-sync-card source-settings-card source-connection-card">
-        <label class="source-connection-toggle"><span class="settings-row-icon" v-html="settingsIcon('github')"></span><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
-        <details v-if="state.settings.github_csv_enabled" class="source-details">
-          <summary><span>{{ t('githubCsvSources') }}</span><span class="source-details-chevron" v-html="lucideSvg('chevronDown')"></span></summary>
-          <p class="helper">{{ t('githubCsvSourcesBody') }}</p>
-          <div class="github-source-form">
-            <input v-model="githubDraft.owner" class="input" :placeholder="t('githubOwnerPlaceholder')" autocomplete="off" autocapitalize="none" />
-            <input v-model="githubDraft.repo" class="input" :placeholder="t('githubRepoPlaceholder')" autocomplete="off" autocapitalize="none" />
-            <input v-model="githubDraft.branch" class="input" :placeholder="t('githubBranchPlaceholder')" autocomplete="off" autocapitalize="none" />
-            <input v-model="githubDraft.path" class="input" :placeholder="t('githubPathPlaceholder')" autocomplete="off" autocapitalize="none" />
-            <input v-model="githubDraft.token" class="input" type="password" :placeholder="t('githubTokenPlaceholder')" autocomplete="off" />
+        <article class="source-hub-card" :class="{ disabled: state.settings.github_csv_enabled === false }">
+          <header class="source-hub-head">
+            <span class="source-hub-icon github" v-html="settingsIcon('github')"></span>
+            <span class="source-hub-title"><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span>
+            <label class="switch-control" :aria-label="t('githubCsvConnection')"><input v-model="state.settings.github_csv_enabled" type="checkbox" /><span></span></label>
+          </header>
+          <div v-if="state.settings.github_csv_enabled" class="source-hub-body">
+            <p class="source-note">{{ t('githubCsvSourcesBody') }}</p>
+            <div class="source-form-grid github-source-grid">
+              <input v-model="githubDraft.owner" class="input" :placeholder="t('githubOwnerPlaceholder')" autocomplete="off" autocapitalize="none" />
+              <input v-model="githubDraft.repo" class="input" :placeholder="t('githubRepoPlaceholder')" autocomplete="off" autocapitalize="none" />
+              <input v-model="githubDraft.branch" class="input" :placeholder="t('githubBranchPlaceholder')" autocomplete="off" autocapitalize="none" />
+              <input v-model="githubDraft.path" class="input" :placeholder="t('githubPathPlaceholder')" autocomplete="off" autocapitalize="none" />
+              <input v-model="githubDraft.token" class="input github-token-input" type="password" :placeholder="t('githubTokenPlaceholder')" autocomplete="off" />
+            </div>
+            <div class="source-action-grid two">
+              <button class="outlined-button" type="button" @click="addGitHubSource"><span v-html="lucideSvg('plus')"></span>{{ t('addRepo') }}</button>
+              <button class="filled-button" type="button" :disabled="githubSyncBusy" @click="syncGitHubNow(true)"><span v-html="lucideSvg('refreshCw')"></span>{{ t('syncGithubNow') }}</button>
+            </div>
+            <div v-if="(state.githubSources || []).length" class="github-source-list source-list-modern">
+              <article v-for="source in (state.githubSources || [])" :key="source.id" class="github-source-row source-row-modern">
+                <label class="source-row-main"><input v-model="source.enabled" type="checkbox" /><span><b>{{ source.owner }}/{{ source.repo }}</b><small>{{ source.branch || 'main' }}{{ source.path ? ` · ${source.path}` : '' }}</small></span></label>
+                <span class="source-status-pill" :class="source.enabled ? 'online' : 'offline'"><i></i>{{ source.enabled ? t('active') : t('inactive') }}</span>
+                <small class="source-row-status">{{ source.lastStatus || t('notSyncedYet') }}</small>
+                <button class="text-button danger-text" type="button" @click="removeGitHubSource(source.id)">{{ t('remove') }}</button>
+              </article>
+            </div>
           </div>
-          <div class="button-row">
-            <button class="outlined-button" @click="addGitHubSource">{{ t('addRepo') }}</button>
-            <button class="filled-button" :disabled="githubSyncBusy" @click="syncGitHubNow(true)">{{ t('syncGithubNow') }}</button>
-          </div>
-          <div v-if="(state.githubSources || []).length" class="github-source-list">
-            <article v-for="source in (state.githubSources || [])" :key="source.id" class="github-source-row">
-              <label><input v-model="source.enabled" type="checkbox" /> <b>{{ source.owner }}/{{ source.repo }}</b></label>
-              <small>{{ source.branch || 'main' }}{{ source.path ? ` · ${source.path}` : '' }} · {{ source.lastStatus || t('notSyncedYet') }}</small>
-              <button class="text-button danger-text" @click="removeGitHubSource(source.id)">{{ t('remove') }}</button>
-            </article>
-          </div>
-        </details>
-      </article>
+          <p v-else class="source-disabled-note">{{ t('githubCsvDisabled') }}</p>
+        </article>
+      </section>
     </section>
 
     <button v-if="activeTab === 'home' && !addMode && !settingsOpen" class="home-quick-fab" data-tour="quick-add" :aria-label="t('addNewItem')" @click="openQuickAddMenu()">+</button>
+    <button v-if="activeTab === 'diary' && !addMode && !settingsOpen" class="home-quick-fab diary-search-fab" type="button" :aria-label="t('calendarSearch')" :title="t('calendarSearch')" @click="openCalendarSearch" v-html="lucideSvg('search')"></button>
 
     <Teleport to="body">
       <div v-if="quickAddOpen" class="quick-add-backdrop app-overlay" @click.self="closeQuickAddMenu">
@@ -11614,6 +14499,10 @@ function setTab(tab: Tab) {
           <button v-for="section in sections" :key="`quick-${section.key}`" class="quick-add-option" :class="{ 'notification-highlight': isNotificationHighlightedQuickAdd(section) }" @click="chooseQuickAdd(section)">
             <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
             <span><b>{{ t(section.key) }}</b><small>{{ sectionHint(section) }}</small></span>
+          </button>
+          <button v-if="healthDiaryEnabled" class="quick-add-option quick-add-health-option" @click="chooseQuickAddHealthEntry">
+            <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
+            <span><b>{{ t('addHealthEntry') }}</b><small>{{ t('healthEntrySheetHint') }}</small></span>
           </button>
         </article>
       </div>
@@ -11766,10 +14655,6 @@ function setTab(tab: Tab) {
             </div>
             <div class="selected-item-actions selected-activity-actions">
               <button class="entry-icon-button" type="button" :title="t('changeSelection')" :aria-label="t('changeSelection')" @click="clearSelectedActivityForChange" v-html="lucideSvg('refreshCw')"></button>
-              <button class="entry-icon-button" type="button" :title="t('duplicate')" :aria-label="t('duplicate')" @click="duplicateActivityCatalogItem(selectedActivity)" v-html="lucideSvg('copy')"></button>
-              <button class="entry-icon-button" type="button" :disabled="catalogSourceCheckBusyId === selectedActivity.id" :title="t('checkSource')" :aria-label="t('checkSource')" @click="requestCatalogSourceCheck(selectedActivity)" v-html="lucideSvg('refreshCw')"></button>
-              <button class="entry-icon-button" type="button" :title="catalogItemIsLocked(selectedActivity) ? t('unlock') : t('lock')" :aria-label="catalogItemIsLocked(selectedActivity) ? t('unlock') : t('lock')" @click="toggleCatalogItemLock(selectedActivity)" v-html="lucideSvg(catalogItemIsLocked(selectedActivity) ? 'lock' : 'lockOpen')"></button>
-              <button class="entry-icon-button" type="button" :title="selectedActivity.inactive ? t('activate') : t('markInactive')" :aria-label="selectedActivity.inactive ? t('activate') : t('markInactive')" @click="toggleCatalogItemInactive(selectedActivity)" v-html="lucideSvg(selectedActivity.inactive ? 'eye' : 'eyeOff')"></button>
               <button class="entry-icon-button" type="button" :title="t('edit')" :aria-label="t('edit')" @click="editActivityCatalogItem(selectedActivity)" v-html="lucideSvg('pencil')"></button>
             </div>
           </article>
@@ -12014,6 +14899,62 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="activityAnalysisOpen" class="dialog-backdrop app-overlay" @click.self="activityAnalysisOpen = false">
+        <article class="settings-dialog activity-analysis-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ t('activityAnalysis') }}</h2>
+            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="activityAnalysisOpen = false" v-html="lucideSvg('x')"></button>
+          </div>
+          <p class="helper big">{{ t('activityAnalysisHint') }}</p>
+          <div class="trend-mode-toggle activity-analysis-range-toggle" role="tablist" :aria-label="t('activityAnalysisRange')">
+            <button type="button" :class="{ active: activityAnalysisRange === '7' }" @click="activityAnalysisRange = '7'">7 {{ t('days') }}</button>
+            <button type="button" :class="{ active: activityAnalysisRange === '14' }" @click="activityAnalysisRange = '14'">14 {{ t('days') }}</button>
+            <button type="button" :class="{ active: activityAnalysisRange === '30' }" @click="activityAnalysisRange = '30'">30 {{ t('days') }}</button>
+          </div>
+          <div class="activity-analysis-summary">
+            <div><span>{{ t('activeDays') }}</span><b>{{ activityAnalysisActiveDays }}</b></div>
+            <div><span>{{ t('minutes') }}</span><b>{{ activityAnalysisTotalMinutes }}</b></div>
+            <div><span>{{ t('burned') }}</span><b>{{ activityAnalysisTotalKcal }} kcal</b></div>
+          </div>
+          <section v-if="activityAnalysisTypeRows.length" class="activity-type-summary-card">
+            <h3>{{ t('activityTypeBreakdown') }}</h3>
+            <div class="activity-type-list">
+              <div v-for="typeRow in activityAnalysisTypeRows" :key="`activity-type-${typeRow.type}`" class="activity-type-row">
+                <span class="activity-type-dot" :style="{ background: typeRow.color }"></span>
+                <span>{{ typeRow.label }}</span>
+                <b>{{ typeRow.minutes }} {{ t('minutes') }}</b>
+                <small>{{ typeRow.percent }}%</small>
+              </div>
+            </div>
+          </section>
+          <div class="activity-day-pie-list">
+            <article v-for="row in activityAnalysisRows" :key="`activity-day-${row.key}`" class="activity-day-pie-card" :class="{ selected: row.selected, empty: !row.totalMinutes }">
+              <div class="activity-day-pie-chart" :style="{ background: activityPieBackground(row.segments) }">
+                <span>{{ row.totalMinutes }}</span>
+                <small>{{ t('minutesShort') }}</small>
+              </div>
+              <div class="activity-day-pie-copy">
+                <div class="activity-day-pie-head">
+                  <b>{{ row.label }}</b>
+                  <small>{{ row.entries.length }} {{ t('activities') }} · {{ row.totalKcal }} kcal</small>
+                </div>
+                <div v-if="row.segments.length" class="activity-segment-list">
+                  <div v-for="segment in row.segments" :key="`activity-segment-${row.key}-${segment.type}`" class="activity-segment-row">
+                    <span class="activity-type-dot" :style="{ background: segment.color }"></span>
+                    <span>{{ segment.label }}</span>
+                    <b>{{ segment.minutes }} {{ t('minutes') }}</b>
+                    <small>{{ segment.percent }}%</small>
+                  </div>
+                </div>
+                <p v-else class="empty-line compact-empty-line">{{ t('noActivity') }}</p>
+              </div>
+            </article>
+          </div>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <div v-if="nutrientInsightsDialog && state.settings.show_micronutrients" class="dialog-backdrop" @click.self="closeNutrientInsights">
         <article class="settings-dialog meal-micronutrients-dialog nutrient-insights-dialog">
           <div class="dialog-title-row">
@@ -12092,10 +15033,12 @@ function setTab(tab: Tab) {
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('macros')"></span><b>{{ t('showMacros') }}</b><input v-model="state.settings.show_meal_macros" type="checkbox" /></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('showMicros') }}</b><input v-model="state.settings.show_micronutrients" type="checkbox" /></label>
         <button v-if="state.settings.show_micronutrients" class="settings-row micronutrient-settings-row" @click="settingsDialog = 'micronutrients'"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('micronutrientLimits') }}</b><small>{{ t('micronutrientLimitsHint') }}</small></button>
+        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('health')"></span><b>{{ t('healthDiaryTracking') }}</b><input v-model="state.settings.health_diary_enabled" type="checkbox" /><small>{{ t('healthDiaryTrackingHint') }}</small></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogProtect')"></span><b>{{ t('protectExternalCatalogItems') }}</b><input v-model="state.settings.protect_external_catalog_items" type="checkbox" /><small>{{ t('protectExternalCatalogItemsHint') }}</small></label>
         <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogInactive')"></span><b>{{ t('includeInactiveCatalogItems') }}</b><input v-model="state.settings.include_inactive_catalog_items" type="checkbox" /><small>{{ t('includeInactiveCatalogItemsHint') }}</small></label>
         <div class="settings-divider"></div>
         <button class="settings-row" @click="exportAppData"><span class="settings-row-icon" v-html="settingsIcon('export')"></span><b>{{ t('exportAppData') }}</b><small>{{ t('exportAppDataBody') }}</small></button>
+        <button class="settings-row" @click="openAiExportDialog"><span class="settings-row-icon" v-html="settingsIcon('aiExport')"></span><b>{{ t('aiExportAllData') }}</b><small>{{ t('aiExportAllDataBody') }}</small></button>
         <button class="settings-row" @click="importAppData"><span class="settings-row-icon" v-html="settingsIcon('import')"></span><b>{{ t('importAppData') }}</b><small>{{ t('importAppDataBody') }}</small></button>
         <button class="settings-row" @click="openBackupProfiles"><span class="settings-row-icon" v-html="settingsIcon('backup')"></span><b>{{ t('backupProfiles') }}</b><small>{{ backupProfiles.length }} · {{ t('backupProfilesBody') }}</small></button>
         <button class="settings-row" @click="settingsDialog = 'advanced'"><span class="settings-row-icon" v-html="settingsIcon('advanced')"></span><b>{{ t('advanced') }}</b><small>{{ t('channelDataTransfer') }}</small></button>
@@ -12153,6 +15096,19 @@ function setTab(tab: Tab) {
           </template>
           <template v-else-if="settingsDialog === 'units'"><h2>{{ t('units') }}</h2><button class="dialog-option" @click="state.settings.units = 'metric'; settingsDialog = null">{{ t('metric') }}</button><button class="dialog-option" @click="state.settings.units = 'imperial'; settingsDialog = null">{{ t('imperial') }}</button></template>
           <template v-else-if="settingsDialog === 'language'"><h2>{{ t('language') }}</h2><input v-model="languageSearch" class="input" type="search" :placeholder="t('languageSearch')" /><button v-for="language in filteredLanguageOptions" :key="language.code" class="dialog-option language-dialog-option" @click="setLanguage(language.code); settingsDialog = null"><span>{{ language.englishName }}</span><small>{{ language.nativeName }} · {{ language.code }}</small></button></template>
+          <template v-else-if="settingsDialog === 'aiExport'">
+            <div class="dialog-title-row"><h2>{{ t('aiExportAllData') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="settingsDialog = null" v-html="lucideSvg('x')"></button></div>
+            <p class="helper big">{{ t('aiExportMarkdownHint') }}</p>
+            <div class="form-grid-two ai-export-range-grid">
+              <label class="field-label">{{ t('aiExportStartDate') }}<input v-model="aiExportStartDate" class="input" type="date" /></label>
+              <label class="field-label">{{ t('aiExportEndDate') }}<input v-model="aiExportEndDate" class="input" type="date" /></label>
+            </div>
+            <div class="dialog-actions">
+              <button class="text-button" type="button" @click="resetAiExportRange">{{ t('last90Days') }}</button>
+              <button class="text-button" type="button" @click="settingsDialog = null">{{ t('cancel') }}</button>
+              <button class="filled-button" type="button" :disabled="exportBusy" @click="exportAllDataAiMarkdown">{{ t('aiExportAllData') }}</button>
+            </div>
+          </template>
           <template v-else-if="settingsDialog === 'calculations'">
             <div class="dialog-title-row"><h2>{{ t('calculations') }}</h2><button class="text-button" @click="resetCalculations">{{ t('reset') }}</button></div>
             <label class="field-label">{{ t('tdeeEquation') }}</label><select v-model="state.settings.tdee_equation" class="input"><option value="iom_2005">{{ t('iomEquation') }}</option></select>
@@ -12328,6 +15284,51 @@ function setTab(tab: Tab) {
       </div>
     </Teleport>
 
+    <Teleport to="body">
+      <div v-if="exportBusy" class="dialog-backdrop app-overlay export-progress-backdrop">
+        <article class="settings-dialog export-progress-dialog">
+          <span class="export-spinner" aria-hidden="true"></span>
+          <div>
+            <h2>{{ exportTitle || t('backupExportInProgress') }}</h2>
+            <p class="helper big">{{ exportStatus || t('backupPreparing') }}</p>
+          </div>
+          <div class="export-progress-track"><span :style="{ width: `${Math.max(6, Math.min(100, exportProgress))}%` }"></span></div>
+          <small>{{ Math.round(exportProgress) }}%</small>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="backupOptionsOpen" class="dialog-backdrop app-overlay" @click.self="backupOptionsOpen = false">
+        <article class="settings-dialog backup-options-dialog">
+          <div class="dialog-title-row"><h2>{{ t('backupOptions') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="backupOptionsOpen = false" v-html="lucideSvg('x')"></button></div>
+          <p class="helper big">{{ t('backupOptionsBody') }}</p>
+          <div class="backup-options-list">
+            <label class="source-choice-card source-choice-card-simple backup-option-card">
+              <span><b>{{ t('backupIncludeCatalog') }}</b><small>{{ t('backupIncludeCatalogHint') }}</small></span>
+              <input v-model="backupIncludeOptions.catalog" type="checkbox" />
+            </label>
+            <label class="source-choice-card source-choice-card-simple backup-option-card">
+              <span><b>{{ t('backupIncludeFoodDiary') }}</b><small>{{ t('backupIncludeFoodDiaryHint') }}</small></span>
+              <input v-model="backupIncludeOptions.foodDiary" type="checkbox" />
+            </label>
+            <label class="source-choice-card source-choice-card-simple backup-option-card">
+              <span><b>{{ t('backupIncludeHealthDiary') }}</b><small>{{ t('backupIncludeHealthDiaryHint') }}</small></span>
+              <input v-model="backupIncludeOptions.healthDiary" type="checkbox" />
+            </label>
+            <label v-if="backupIncludeOptions.healthDiary" class="source-choice-card source-choice-card-simple backup-option-card">
+              <span><b>{{ t('backupIncludeHealthMedia') }}</b><small>{{ t('backupIncludeHealthMediaHint') }}</small></span>
+              <input v-model="backupIncludeOptions.healthMedia" type="checkbox" />
+            </label>
+          </div>
+          <div class="dialog-actions">
+            <button class="text-button" type="button" @click="backupOptionsOpen = false">{{ t('cancel') }}</button>
+            <button class="filled-button" type="button" @click="confirmBackupOptionsExport">{{ t('exportAppData') }}</button>
+          </div>
+        </article>
+      </div>
+    </Teleport>
+
 
     <Teleport to="body">
       <section v-if="onboardingOpen" class="onboarding-screen app-overlay">
@@ -12336,8 +15337,16 @@ function setTab(tab: Tab) {
           <div class="onboarding-logo" v-html="nutrinoLogoSvg"></div>
           <div><p class="eyebrow">nutrino</p><h2>{{ t('onboardingTitle') }}</h2></div>
         </div>
-        <p class="helper big" v-if="onboardingStep === 0">{{ t('onboardingIntro') }}</p>
-        <div v-if="onboardingStep === 0" class="onboarding-form">
+        <p class="helper big" v-if="onboardingStep === 0">{{ t('onboardingPurposeIntro') }}</p>
+        <div v-if="onboardingStep === 0" class="purpose-choice-grid onboarding-purpose-grid">
+          <button v-for="purpose in profilePurposeOptions" :key="`onboarding-purpose-${purpose.key}`" type="button" class="purpose-choice-card" :class="{ selected: onboardingPurposeSelected(purpose.key) }" @click="toggleOnboardingPurpose(purpose.key)">
+            <span v-html="lucideSvg(purpose.icon)"></span>
+            <b>{{ t(purpose.labelKey) }}</b>
+            <small>{{ t(purpose.hintKey) }}</small>
+          </button>
+        </div>
+        <p class="helper big" v-if="onboardingStep === 1">{{ t('onboardingIntro') }}</p>
+        <div v-if="onboardingStep === 1" class="onboarding-form">
           <label><span>{{ t('height') }}</span><input v-model.number="onboardingProfile.height_cm" class="input" type="number" inputmode="decimal" /></label>
           <label><span>{{ t('weight') }}</span><input v-model.number="onboardingProfile.current_weight_kg" class="input" type="number" inputmode="decimal" /></label>
           <label><span>{{ t('birthday') }}</span><input v-model="onboardingProfile.birthday" class="input" type="date" /></label>
@@ -12345,7 +15354,7 @@ function setTab(tab: Tab) {
           <label><span>{{ t('activityLevel') }}</span><select v-model="onboardingProfile.activity_level" class="input"><option value="sedentary">{{ t('sedentary') }}</option><option value="low_active">{{ t('lowActive') }}</option><option value="active">{{ t('active') }}</option><option value="very_active">{{ t('veryActive') }}</option></select></label>
           <label><span>{{ t('weeklyGoal') }}: {{ onboardingProfile.weekly_goal_kg }} {{ t('perWeek') }}</span><input v-model.number="onboardingProfile.weekly_goal_kg" class="tile-range" type="range" min="-1" max="1" step="0.25" /></label>
         </div>
-        <div v-else-if="onboardingStep === 1" class="onboarding-permissions">
+        <div v-if="onboardingStep === 2" class="onboarding-permissions">
           <h3>{{ t('syncPreferences') }}</h3>
           <p class="helper big">{{ t('syncPreferencesBody') }}</p>
           <div class="source-choice-list">
@@ -12353,7 +15362,7 @@ function setTab(tab: Tab) {
             <label class="source-choice-card source-choice-card-simple"><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
           </div>
         </div>
-        <div v-else class="onboarding-permissions">
+        <div v-if="onboardingStep === 3" class="onboarding-permissions">
           <h3>{{ t('onboardingPermissions') }}</h3>
           <p class="helper big">{{ t('onboardingPermissionsBody') }}</p>
           <div class="permission-list compact">
@@ -12368,9 +15377,335 @@ function setTab(tab: Tab) {
           </div>
           <p class="helper big">{{ t('onboardingTourBody') }}</p>
         </div>
-        <div class="dialog-actions onboarding-actions compact-onboarding-actions"><button v-if="onboardingStep === 0" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 0 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 2" class="text-button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="openOnboardingSyncStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 1" class="filled-button" @click="openOnboardingPermissionsStep">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('onboardingTourStart') }}</button></div>
+        <div class="dialog-actions onboarding-actions compact-onboarding-actions"><button v-if="onboardingStep === 1" class="text-button" @click="importAppData">{{ t('restoreBackup') }}</button><button v-if="onboardingStep === 1 && backupProfiles.length" class="text-button" @click="openBackupProfiles">{{ t('restoreBackupProfile') }}</button><button v-if="onboardingStep > 0" class="text-button" @click="onboardingStep--">{{ t('back') }}</button><button v-if="onboardingStep === 3" class="text-button" @click="requestOnboardingPermissions">{{ t('requestAllPermissions') }}</button><button v-if="onboardingStep === 0" class="filled-button" @click="openOnboardingProfileStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 1" class="filled-button" @click="openOnboardingSyncStep">{{ t('next') }}</button><button v-else-if="onboardingStep === 2" class="filled-button" @click="openOnboardingPermissionsStep">{{ t('next') }}</button><button v-else class="filled-button" @click="finishOnboarding">{{ t('onboardingTourStart') }}</button></div>
       </article>
       </section>
+    </Teleport>
+
+
+    <Teleport to="body">
+      <div v-if="healthAnalysisModalOpen && healthDiaryEnabled" class="dialog-backdrop app-overlay" @click.self="healthAnalysisModalOpen = false">
+        <article class="settings-dialog health-analysis-modal">
+          <div class="dialog-title-row"><h2>{{ t('healthAnalysis') }}</h2><span class="dialog-title-actions"><button class="text-button health-inline-icon-button" type="button" @click="exportHealthAiSummary"><span v-html="lucideSvg('fileText')"></span>{{ t('healthAiExport') }}</button><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" @click="healthAnalysisModalOpen = false" v-html="lucideSvg('x')"></button></span></div>
+          <section class="health-clinical-card">
+            <span class="health-summary-icon" v-html="lucideSvg('flaskConical')"></span>
+            <div><b>{{ t('healthClinicalContext') }}</b><small>{{ t('healthClinicalContextHint') }}</small></div>
+          </section>
+          <div class="health-summary-grid">
+            <div><span>{{ t('entries') }}</span><b>{{ healthAnalysisEntries.length }}</b></div>
+            <div><span>{{ t('healthEventsShort') }}</span><b>{{ healthEventFrequencyRows.length }}</b></div>
+            <div><span>{{ t('recurringEvents') }}</span><b>{{ healthRecurrenceChartRows.length }}</b></div>
+            <div><span>{{ t('healthOngoing') }}</span><b>{{ healthAnalysisEntries.filter((entry) => entry.ongoing && !healthEntryResolvedAt(entry)).length }}</b></div>
+            <div><span>{{ t('healthAverageDuration') }}</span><b>{{ healthRangeAverageDurationDays || '—' }}</b></div>
+            <div><span>{{ t('attachments') }}</span><b>{{ healthAnalysisEntries.reduce((sum, entry) => sum + entry.attachments.length, 0) }}</b></div>
+          </div>
+          <section v-if="healthAnalysisEntries.length" class="health-chart-board daily-health-analysis-board">
+            <article class="health-chart-card health-day-events-card">
+              <div class="health-frequency-head"><h3>{{ t('healthDayPatternAnalysis') }}</h3><small>{{ selectedDiaryDateLabel }}</small></div>
+              <div class="health-day-event-grid">
+                <button v-for="row in currentDayHealthAnalysisRows" :key="`health-day-event-${row.eventId}`" type="button" class="health-day-event-card" @click="openHealthDayEventDetail(row.eventId)">
+                  <i :style="{ background: row.color }"></i>
+                  <span><b>{{ row.title }}</b><small>{{ row.todayCount }}x · {{ row.status }} · {{ healthIntervalText(row) }}</small></span>
+                  <strong v-if="healthDayEventMediaCount(row.eventId)" class="health-day-event-media"><span v-html="lucideSvg('camera')"></span>{{ healthDayEventMediaCount(row.eventId) }}</strong>
+                  <em v-html="lucideSvg('info')"></em>
+                </button>
+              </div>
+            </article>
+            <article class="health-chart-card">
+              <div class="health-frequency-head"><h3>{{ t('healthTimingPattern') }}</h3><small>{{ t('time') }}</small></div>
+              <div class="health-time-grid">
+                <div v-for="row in healthTimeOfDayRows" :key="`health-time-${row.key}`" class="health-time-card" :class="{ empty: !row.count }">
+                  <span :style="{ color: row.color }" v-html="lucideSvg(row.icon)"></span>
+                  <b>{{ row.count }}</b>
+                  <small>{{ row.label }}</small>
+                  <i><em :style="{ width: `${row.percent}%`, background: row.color }"></em></i>
+                </div>
+              </div>
+            </article>
+
+            <article class="health-chart-card">
+              <div class="health-frequency-head"><h3>{{ t('healthWeekdayPattern') }}</h3><small>{{ t('healthEventsShort') }}</small></div>
+              <div class="health-weekday-chart">
+                <div v-for="row in healthWeekdayRows" :key="`health-weekday-${row.key}`" class="health-weekday-bar">
+                  <span><i :style="{ height: `${row.percent}%`, background: row.color }"></i></span>
+                  <b>{{ row.count }}</b>
+                  <small>{{ row.label }}</small>
+                </div>
+              </div>
+            </article>
+
+            <article class="health-chart-card">
+              <div class="health-frequency-head"><h3>{{ t('healthDurationDistribution') }}</h3><small>{{ t('healthAverageDuration') }} {{ healthRangeAverageDurationDays || '—' }} {{ t('days') }}</small></div>
+              <div class="health-duration-list">
+                <div v-for="row in healthDurationRows" :key="`health-duration-${row.key}`" class="health-duration-row" :class="{ empty: !row.count }">
+                  <span>{{ row.label }}</span>
+                  <div><i :style="{ width: `${row.percent}%`, background: row.color }"></i></div>
+                  <b>{{ row.count }}</b>
+                </div>
+              </div>
+            </article>
+          </section>
+          <p v-if="!healthAnalysisEntries.length" class="empty-line">{{ t('healthNoAnalysisData') }}</p>
+          <p class="helper big">{{ t('healthClinicalDisclaimer') }}</p>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="healthDetailEntry" class="dialog-backdrop app-overlay" @click.self="closeHealthEntryDetail">
+        <article class="settings-dialog health-entry-detail-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ healthDetailEntry.title }}</h2>
+            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" @click="closeHealthEntryDetail" v-html="lucideSvg('x')"></button>
+          </div>
+          <section class="health-entry-detail-hero">
+            <span v-html="lucideSvg(healthCategoryIcon(healthDetailEntry.category))"></span>
+            <div>
+              <b>{{ healthCategoryLabel(healthDetailEntry.category) }} · {{ healthDetailStats?.status || t('none') }}</b>
+              <small>{{ formatDateTime(healthDetailEntry.occurred_at) }} · {{ healthDurationText(healthDetailEntry) }}</small>
+            </div>
+          </section>
+          <div class="health-detail-summary-grid">
+            <div><span>{{ t('healthOccurrences') }}</span><b>{{ healthDetailStats?.count || 0 }}</b></div>
+            <div><span>{{ t('healthFirstSeen') }}</span><b>{{ healthDetailStats?.firstAt ? formatDate(healthDetailStats.firstAt) : '—' }}</b></div>
+            <div><span>{{ t('healthLastSeen') }}</span><b>{{ healthDetailStats?.lastAt ? formatDate(healthDetailStats.lastAt) : '—' }}</b></div>
+            <div><span>{{ t('healthAverageInterval') }}</span><b>{{ healthDetailStats?.averageIntervalDays || '—' }}</b></div>
+            <div><span>{{ t('healthAverageDuration') }}</span><b>{{ healthDetailStats?.averageDurationDays || '—' }}</b></div>
+            <div><span>{{ t('healthOngoing') }}</span><b>{{ healthDetailStats?.ongoingCount || 0 }}</b></div>
+          </div>
+          <section v-if="healthDetailEntry.description || healthDetailEntry.notes" class="health-entry-detail-text">
+            <p v-if="healthDetailEntry.description">{{ healthDetailEntry.description }}</p>
+            <small v-if="healthDetailEntry.notes">{{ healthDetailEntry.notes }}</small>
+          </section>
+          <div v-if="healthMediaCountForEntry(healthDetailEntry)" class="health-detail-action-row">
+            <button class="outlined-button health-inline-icon-button" type="button" @click="openHealthMediaGrid(healthDetailEntry)"><span v-html="lucideSvg('camera')"></span>{{ t('healthMedia') }} · {{ healthMediaCountForEntry(healthDetailEntry) }}</button>
+          </div>
+          <div v-if="selectedDayUnlocked" class="health-detail-action-row compact">
+            <button class="outlined-button health-inline-icon-button" type="button" @click="openHealthRecurrence(healthDetailEntry); closeHealthEntryDetail()"><span v-html="lucideSvg('refreshCw')"></span>{{ t('markAgain') }}</button>
+            <button class="outlined-button health-inline-icon-button" type="button" @click="editHealthEntry(healthDetailEntry); closeHealthEntryDetail()"><span v-html="lucideSvg('pencil')"></span>{{ t('edit') }}</button>
+            <button class="outlined-button health-inline-icon-button danger" type="button" @click="removeHealthEntry(healthDetailEntry.id); closeHealthEntryDetail()"><span v-html="lucideSvg('trash2')"></span>{{ t('delete') }}</button>
+          </div>
+          <section class="health-detail-chart-grid">
+            <article class="health-chart-card health-date-map-card">
+              <div class="health-frequency-head"><h3>{{ t('healthEventDates') }}</h3><small>{{ healthDetailDateRows.length }} {{ t('days') }} · {{ healthDetailStats?.count || 0 }}x</small></div>
+              <div class="health-date-chip-list">
+                <span v-for="row in healthDetailDateRows" :key="`detail-date-${row.key}`" class="health-date-chip" :class="{ selected: healthDetailEntry && row.key === dateKey(new Date(healthDetailEntry.occurred_at)) }">
+                  <b>{{ row.label }}</b><small v-if="row.count > 1">{{ row.count }}x</small>
+                </span>
+              </div>
+              <div class="health-date-heatmap" :aria-label="t('healthPatternHeatmap')">
+                <span v-for="cell in healthDetailHeatmapCells" :key="`detail-heat-${cell.key}`" class="health-heatmap-cell" :class="[`tone-${cell.tone}`, { selected: cell.selected }]" :title="`${cell.label}: ${cell.count}`"></span>
+              </div>
+            </article>
+            <article class="health-chart-card">
+              <div class="health-frequency-head"><h3>{{ t('healthSelectedEventTrend') }}</h3><small>{{ t('allTime') }}</small></div>
+              <div class="health-trend-bars compact"><div v-for="row in healthDetailTrendRows" :key="`detail-trend-${row.key}`" class="health-trend-bar"><span><i :style="{ height: `${Math.max(4, row.percent)}%` }"></i></span><b>{{ row.count }}</b><small>{{ row.label }}</small></div></div>
+            </article>
+            <article class="health-chart-card">
+              <div class="health-frequency-head"><h3>{{ t('healthTimingPattern') }}</h3><small>{{ t('time') }}</small></div>
+              <div class="health-compact-bar-list">
+                <div v-for="row in healthDetailTimeRows" :key="`detail-time-${row.key}`" class="health-duration-row" :class="{ empty: !row.count }">
+                  <span>{{ row.label }}</span>
+                  <div><i :style="{ width: `${row.percent}%`, background: row.color }"></i></div>
+                  <b>{{ row.count }}</b>
+                </div>
+              </div>
+            </article>
+            <article class="health-chart-card">
+              <div class="health-frequency-head"><h3>{{ t('healthWeekdayPattern') }}</h3><small>{{ t('healthEventsShort') }}</small></div>
+              <div class="health-weekday-chart compact">
+                <div v-for="row in healthDetailWeekdayRows" :key="`detail-weekday-${row.key}`" class="health-weekday-bar">
+                  <span><i :style="{ height: `${row.percent}%`, background: row.color }"></i></span>
+                  <b>{{ row.count }}</b>
+                  <small>{{ row.label }}</small>
+                </div>
+              </div>
+            </article>
+          </section>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="healthEditorOpen" class="sheet-backdrop app-overlay" @click.self="closeHealthEditor">
+        <article class="bottom-sheet health-entry-sheet">
+          <div class="sheet-handle"></div>
+          <div class="health-sheet-title">
+            <span v-html="lucideSvg(healthEditorMode === 'new' ? 'heartPulse' : healthEditorMode === 'recurrence' ? 'refreshCw' : 'copy')"></span>
+            <div>
+              <h2>{{ healthEditorMode === 'edit' ? t('editHealthEntry') : healthEditorMode === 'duplicate' ? t('duplicateHealthEntry') : healthEditorMode === 'recurrence' ? t('markAgain') : t('addHealthEntry') }}</h2>
+              <small>{{ t('healthEntrySheetHint') }}</small>
+            </div>
+          </div>
+
+          <div v-if="healthEditorMode === 'new' || healthEditorMode === 'recurrence'" class="unit-toggle two segmented-pill-toggle health-mode-toggle">
+            <button type="button" :class="{ active: healthEditorMode === 'new' }" @click="healthEditorMode = 'new'; healthRecurrenceSourceId = null">{{ t('newHealthEvent') }}</button>
+            <button type="button" :class="{ active: healthEditorMode === 'recurrence' }" @click="openHealthRecurrence()">{{ t('previousHealthEvent') }}</button>
+          </div>
+
+          <section v-if="healthEditorMode === 'recurrence'" class="health-reuse-picker">
+            <div class="health-search-input">
+              <span v-html="lucideSvg('search')"></span>
+              <input v-model="healthRecurrenceSearch" class="input" type="search" :placeholder="t('searchPreviousHealthEvents')" />
+            </div>
+            <div v-if="reusableHealthEventOptions.length" class="health-reuse-list">
+              <button v-for="event in reusableHealthEventOptions" :key="event.event_id" type="button" :class="{ selected: healthRecurrenceSourceId === event.event_id }" @click="selectHealthRecurrenceEvent(event)">
+                <span v-html="lucideSvg(healthCategoryIcon(healthEventEntry(event).category))"></span>
+                <span><b>{{ healthEventEntry(event).title }}</b><small>{{ healthRecurrenceCount(event) }}x · {{ t('lastUsed') }} {{ formatDateTime(event.occurred_at) }}</small></span>
+              </button>
+            </div>
+            <p v-else class="empty-line">{{ t('healthNoPreviousEvents') }}</p>
+          </section>
+
+          <div class="health-quick-time segmented-pill-toggle">
+            <button type="button" :class="{ active: healthQuickTime === 'now' }" @click="applyHealthQuickTime('now')">{{ t('now') }}</button>
+            <button type="button" :class="{ active: healthQuickTime === 'minus10' }" @click="applyHealthQuickTime('minus10')">{{ t('tenMinutesAgo') }}</button>
+            <button type="button" :class="{ active: healthQuickTime === 'minus60' }" @click="applyHealthQuickTime('minus60')">{{ t('oneHourAgo') }}</button>
+            <button type="button" :class="{ active: healthQuickTime === 'custom' }" @click="applyHealthQuickTime('custom')">{{ t('customDateTime') }}</button>
+          </div>
+
+          <div class="health-date-grid">
+            <label><span>{{ t('date') }}</span><input v-model="healthForm.date" class="input" type="date" @focus="healthQuickTime = 'custom'" /></label>
+            <label><span>{{ t('time') }}</span><input v-model="healthForm.time" class="input" type="time" @focus="healthQuickTime = 'custom'" /></label>
+          </div>
+
+          <input v-model="healthForm.title" class="input" type="text" :placeholder="t('healthTitle')" />
+          <textarea v-model="healthForm.description" class="input note-textarea" rows="3" :placeholder="t('healthDescription')"></textarea>
+          <label class="field-label">{{ t('healthCategory') }}
+            <select v-model="healthForm.category" class="input">
+              <option v-for="category in healthCategoryOptions" :key="category.key" :value="category.key">{{ t(category.labelKey) }}</option>
+            </select>
+          </label>
+          <textarea v-model="healthForm.notes" class="input note-textarea" rows="3" :placeholder="t('healthNotes')"></textarea>
+
+          <section class="health-resolution-card">
+            <label class="source-choice-card source-choice-card-simple health-resolution-toggle">
+              <span><b>{{ t('healthStillOngoing') }}</b><small>{{ t('healthStillOngoingHint') }}</small></span>
+              <input v-model="healthForm.ongoing" type="checkbox" />
+            </label>
+            <div v-if="!healthForm.ongoing" class="health-date-grid">
+              <label><span>{{ t('healthResolvedAt') }}</span><input v-model="healthForm.resolvedDate" class="input" type="date" /></label>
+              <label><span>{{ t('time') }}</span><input v-model="healthForm.resolvedTime" class="input" type="time" /></label>
+            </div>
+          </section>
+
+          <div class="health-attachment-actions">
+            <label class="outlined-button health-file-button"><span v-html="lucideSvg('camera')"></span>{{ t('addPhoto') }}<input type="file" accept="image/*,.heic,.heif,image/heic,image/heif" multiple @change="addHealthAttachments($event, 'photo')" /></label>
+            <label class="outlined-button health-file-button"><span v-html="lucideSvg('video')"></span>{{ t('addVideo') }}<input type="file" accept="video/*" multiple @change="addHealthAttachments($event, 'video')" /></label>
+          </div>
+          <p class="helper compact-helper">{{ t('healthAttachmentStorageHint') }}</p>
+
+          <div v-if="healthForm.attachments.length" class="health-attachment-list">
+            <article v-for="attachment in healthForm.attachments" :key="attachment.id" class="health-attachment-row">
+              <button class="health-attachment-preview-button" type="button" :aria-label="t('healthAttachmentPreview')" :title="t('healthAttachmentPreview')" @click="openHealthAttachmentPreview(attachment)">
+                <img v-if="attachment.type === 'photo' && healthAttachmentPreviewSource(attachment)" :src="healthAttachmentPreviewSource(attachment)" alt="" />
+                <span v-else v-html="lucideSvg(attachment.type === 'video' ? 'video' : 'camera')"></span>
+              </button>
+              <div><input v-model="attachment.display_name" class="attachment-name-input" type="text" :aria-label="t('healthAttachmentName')" :placeholder="attachment.name" /><small>{{ attachmentTypeLabel(attachment.type) }} · {{ formatBytes(attachment.size) }}</small></div>
+              <button class="entry-icon-button danger" type="button" :aria-label="t('delete')" :title="t('delete')" @click="removeHealthAttachment(attachment.id)" v-html="lucideSvg('trash2')"></button>
+            </article>
+          </div>
+
+          <div class="dialog-actions">
+            <button class="text-button" type="button" @click="closeHealthEditor">{{ t('cancel') }}</button>
+            <button class="filled-button" type="button" @click="saveHealthEntry">{{ healthEditorMode === 'edit' ? t('update') : t('save') }}</button>
+          </div>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="healthMediaEntry" class="dialog-backdrop app-overlay health-media-backdrop" @click.self="closeHealthMediaGrid">
+        <article class="settings-dialog health-media-dialog">
+          <div class="dialog-title-row">
+            <div class="dialog-title-copy">
+              <h2>{{ t('healthMedia') }} · {{ healthMediaEntry.title }}</h2>
+              <small>{{ t('healthMediaEventGallery') }} · {{ healthMediaGalleryItems.length }} {{ t('attachments') }}<span v-if="healthMediaSameDayCount"> · {{ healthMediaSameDayCount }} {{ t('healthMediaSameDay') }}</span></small>
+            </div>
+            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" @click="closeHealthMediaGrid" v-html="lucideSvg('x')"></button>
+          </div>
+          <div class="health-media-toolbar segmented-pill-toggle">
+            <button type="button" :class="{ active: healthMediaSortDirection === 'desc' }" @click="healthMediaSortDirection = 'desc'">{{ t('newestFirst') }}</button>
+            <button type="button" :class="{ active: healthMediaSortDirection === 'asc' }" @click="healthMediaSortDirection = 'asc'">{{ t('oldestFirst') }}</button>
+          </div>
+          <div class="health-media-grid">
+            <button v-for="item in healthMediaGalleryItems" :key="item.key" class="health-media-tile" :class="{ 'same-day-media': item.sameOccurrenceDay }" type="button" @click="openHealthAttachmentPreview(item.attachment)">
+              <img v-if="item.attachment.type === 'photo' && healthAttachmentPreviewSource(item.attachment)" :src="healthAttachmentPreviewSource(item.attachment)" :alt="healthAttachmentDisplayName(item.attachment)" />
+              <span v-else-if="item.attachment.type === 'photo'" class="health-media-fallback" v-html="lucideSvg('camera')"></span>
+              <video v-else-if="item.attachment.data_url" :src="item.attachment.data_url" muted playsinline preload="metadata"></video>
+              <span v-else class="health-media-fallback" v-html="lucideSvg('video')"></span>
+              <span v-if="item.attachment.type === 'video'" class="health-media-play" v-html="lucideSvg('play')"></span>
+              <span class="health-media-date-badge">{{ formatDate(item.uploadedAt) }}</span>
+              <span v-if="item.sameOccurrenceDay" class="health-media-current-badge">{{ t('healthMediaSameDay') }}</span>
+              <small><b>{{ healthAttachmentDisplayName(item.attachment) }}</b><em>{{ t('healthMediaUploadedAt') }} {{ formatDateTime(item.uploadedAt) }}</em><em>{{ t('date') }} {{ healthMediaSameDayLabel(item) }}</em></small>
+            </button>
+          </div>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="healthPreviewAttachment" class="health-media-viewer-backdrop app-overlay">
+        <article class="health-media-viewer">
+          <button class="health-media-viewer-back" type="button" :aria-label="t('back')" @click="closeHealthAttachmentPreview" v-html="lucideSvg('chevronLeft')"></button>
+          <div
+            class="health-media-viewer-stage"
+            :class="{ zoomable: healthPreviewIsZoomablePhoto }"
+            @pointerdown="handleHealthImagePointerDown"
+            @pointermove="handleHealthImagePointerMove"
+            @pointerup="handleHealthImagePointerUp"
+            @pointercancel="handleHealthImagePointerCancel"
+            @wheel.prevent="handleHealthImageWheel"
+            @dblclick.prevent="handleHealthImageDoubleClick"
+          >
+            <img v-if="healthPreviewAttachment.type === 'photo' && healthAttachmentPreviewSource(healthPreviewAttachment)" class="health-preview-media health-preview-image" :style="healthImageZoomStyle" :src="healthAttachmentPreviewSource(healthPreviewAttachment)" :alt="healthAttachmentDisplayName(healthPreviewAttachment)" draggable="false" @dragstart.prevent />
+            <video v-else-if="healthPreviewAttachment.type === 'video'" class="health-preview-media" :src="healthPreviewAttachment.data_url" controls autoplay playsinline></video>
+            <div v-else class="health-preview-unavailable"><span v-html="lucideSvg('camera')"></span><b>{{ t('healthAttachmentPreviewUnavailable') }}</b></div>
+          </div>
+          <div v-if="healthPreviewIsZoomablePhoto" class="health-media-zoom-controls">
+            <button type="button" aria-label="Zoom out" :disabled="healthImageZoom.scale <= 1.01" @click="zoomHealthImage(-0.5)">−</button>
+            <button type="button" aria-label="Reset zoom" :disabled="healthImageZoom.scale <= 1.01" @click="resetHealthImageZoom" v-html="lucideSvg('rotateCcw')"></button>
+            <button type="button" aria-label="Zoom in" :disabled="healthImageZoom.scale >= 4.99" @click="zoomHealthImage(0.5)" v-html="lucideSvg('plus')"></button>
+          </div>
+          <p class="health-media-viewer-caption">{{ healthAttachmentDisplayName(healthPreviewAttachment) }} · {{ attachmentTypeLabel(healthPreviewAttachment.type) }} · {{ formatBytes(healthPreviewAttachment.size) }}</p>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="calendarSearchOpen" class="dialog-backdrop app-overlay" @click.self="closeCalendarSearch">
+        <article class="settings-dialog diary-search-dialog">
+          <div class="dialog-title-row">
+            <div class="dialog-title-copy">
+              <h2>{{ t('calendarSearch') }}</h2>
+              <small>{{ t('calendarSearchHint') }}</small>
+            </div>
+            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" @click="closeCalendarSearch" v-html="lucideSvg('x')"></button>
+          </div>
+          <label class="diary-search-field" :aria-label="t('calendarSearch')">
+            <span v-html="lucideSvg('search')"></span>
+            <input id="calendar-search-modal-input" v-model="calendarSearch" type="search" :placeholder="t('calendarSearchHint')" @keydown.enter.prevent="hideKeyboard" />
+            <button v-if="calendarSearch" type="button" :aria-label="t('clearCache')" @click="calendarSearch = ''" v-html="lucideSvg('x')"></button>
+          </label>
+          <div class="diary-search-filter-row">
+            <button v-for="option in calendarSearchKindOptions()" :key="`calendar-kind-${option.kind}`" type="button" class="diary-search-filter-chip" :class="{ active: calendarSearchKinds[option.kind] }" @click="toggleCalendarSearchKind(option.kind)">
+              <span v-html="lucideSvg(option.icon)"></span>{{ option.label }}
+            </button>
+          </div>
+          <div class="diary-search-sort-row segmented-pill-toggle">
+            <button type="button" :class="{ active: calendarSearchSortDirection === 'desc' }" @click="setCalendarSearchSort('desc')"><span v-html="lucideSvg('chevronDown')"></span>{{ t('newestFirst') }}</button>
+            <button type="button" :class="{ active: calendarSearchSortDirection === 'asc' }" @click="setCalendarSearchSort('asc')"><span v-html="lucideSvg('chevronUp')"></span>{{ t('oldestFirst') }}</button>
+          </div>
+          <div v-if="calendarSearchResults.length" class="diary-search-result-list">
+            <button v-for="result in calendarSearchResults" :key="result.id" type="button" class="diary-search-result-row" @click="jumpToCalendarSearchResult(result)">
+              <span class="diary-search-result-icon" v-html="lucideSvg(result.icon)"></span>
+              <span><b>{{ result.title }}</b><small>{{ result.subtitle }}</small></span>
+              <em>{{ calendarSearchKindLabel(result.kind) }}</em>
+            </button>
+          </div>
+          <p v-else class="empty-line">{{ t('calendarSearchNoResults') }}</p>
+        </article>
+      </div>
     </Teleport>
 
     <Teleport to="body">
