@@ -119,7 +119,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 }
 
 .page-stack { width: min(100%, 560px); margin: 0 auto; display: grid; gap: 14px; }
-.home-page { padding-bottom: calc(82px + env(safe-area-inset-bottom)); }
+.home-page { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
 .card { border-radius: 16px; background: var(--surface-container); color: var(--on-surface); box-shadow: 0 1px 3px var(--shadow); border: 1px solid color-mix(in srgb, var(--outline-variant) 65%, transparent); overflow: hidden; }
 .card > h2, .card > p, .card > .helper { margin-left: 16px; margin-right: 16px; }
 h2 { margin: 16px 0 6px; font-size: 1.2rem; letter-spacing: -.02em; }
@@ -6901,7 +6901,7 @@ select:focus {
 .health-media-toolbar.segmented-pill-toggle { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; border-radius: 999px !important; padding: 4px; overflow: hidden; }
 .health-media-toolbar.segmented-pill-toggle button { border-radius: 999px; }
 .health-media-toolbar.segmented-pill-toggle button.active { border-radius: 999px; overflow: hidden; }
-.diary-page { padding-bottom: calc(82px + env(safe-area-inset-bottom)); }
+.diary-page { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
 .keyboard-open .diary-page { padding-bottom: 16px; }
 
 /* v0.13.8 diary search modal and source connection redesign */
