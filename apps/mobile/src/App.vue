@@ -51,7 +51,8 @@ type HealthMediaSortDirection = 'desc' | 'asc';
 type ActivityAnalysisRangeKey = '7' | '14' | '30';
 type BackupIncludeOptions = { catalog: boolean; foodDiary: boolean; healthDiary: boolean; healthMedia: boolean };
 type CalendarSearchKind = 'food' | 'ingredient' | 'recipe' | 'activity' | 'health';
-type CalendarSearchDayResult = { key: string; latestAt: number; count: number; kinds: Set<CalendarSearchKind>; matches: string[] };
+type CalendarSearchSortDirection = 'desc' | 'asc';
+type CalendarSearchResult = { id: string; kind: CalendarSearchKind; title: string; subtitle: string; at: number; dayKey: string; targetId: string; tab: 'food' | 'health'; icon: IconName };
 
 type OptionalNutrientDefinition = {
   key: string;
@@ -196,6 +197,7 @@ const scannerActive = ref(false);
 type PendingCatalogQrSequence = { id: string; total: number; parts: Record<number, string> };
 const pendingCatalogQrSequence = ref<PendingCatalogQrSequence | null>(null);
 let scannerStream: MediaStream | null = null;
+let scannerDetector: any | null = null;
 let lastScannerRawValue = '';
 let lastScannerRawAt = 0;
 const activeTab = ref<Tab>('home');
@@ -207,6 +209,9 @@ const healthAnalysisModalOpen = ref(false);
 const todayKey = ref(dateKey());
 const calendarMonth = ref(new Date(dayStartMs(selectedDate.value)));
 const calendarSearch = ref('');
+const calendarSearchOpen = ref(false);
+const calendarSearchSortDirection = ref<CalendarSearchSortDirection>('desc');
+const calendarSearchKinds = reactive<Record<CalendarSearchKind, boolean>>({ food: true, ingredient: true, recipe: true, activity: true, health: true });
 const addMode = ref<AddMode>(null);
 const quickAddOpen = ref(false);
 const addMealType = ref<MealType>('breakfast');
@@ -333,6 +338,7 @@ const editingDayWeight = ref(false);
 const editingIntakeId = ref<string | null>(null);
 const editingActivityLogId = ref<string | null>(null);
 const highlightedReviewIntakeId = ref<string | null>(null);
+const highlightedActivityLogId = ref<string | null>(null);
 const mealNoteReviewOpen = ref(false);
 const healthReviewOpen = ref(false);
 const highlightedHealthReviewEntryId = ref<string | null>(null);
@@ -375,6 +381,7 @@ const backupOptionsOpen = ref(false);
 const exportBusy = ref(false);
 const exportProgress = ref(0);
 const exportStatus = ref('');
+const exportTitle = ref('');
 const aiExportStartDate = ref(defaultAiExportStartDate());
 const aiExportEndDate = ref(dateKey());
 const backupIncludeOptions = reactive<BackupIncludeOptions>({
@@ -1816,10 +1823,9 @@ const healthPreviewIsZoomablePhoto = computed(() => Boolean(
 const healthImageZoomStyle = computed(() => ({
   transform: `translate3d(${Math.round(healthImageZoom.x)}px, ${Math.round(healthImageZoom.y)}px, 0) scale(${healthImageZoom.scale})`,
 }));
-const calendarSearchActive = computed(() => Boolean(calendarSearch.value.trim()));
+const calendarSearchActive = computed(() => calendarSearchOpen.value && (Boolean(calendarSearch.value.trim()) || calendarSearchResults.value.length > 0));
 const calendarSearchResults = computed(() => buildCalendarSearchResults(calendarSearch.value));
-const calendarSearchDayKeys = computed(() => new Set(calendarSearchResults.value.map((row) => row.key)));
-const calendarSearchLatestResult = computed(() => calendarSearchResults.value[0] || null);
+const calendarSearchDayKeys = computed(() => new Set(calendarSearchResults.value.map((result) => result.dayKey)));
 const calendarCells = computed(() => buildCalendar(calendarMonth.value));
 type LanguageOption = { code: AppLanguage; englishName: string; nativeName: string; locale: string; aliases: string[] };
 const languageOptions: LanguageOption[] = [
@@ -10162,6 +10168,24 @@ function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; start
   return `${lines.join('\n')}\n`;
 }
 
+function friendlyExportError(error: unknown) {
+  const message = String(error || '');
+  if (message.includes('EXPORT_CANCELED') || (typeof error === 'object' && error && 'name' in error && String((error as { name?: unknown }).name) === 'AbortError')) {
+    return t('exportCanceled');
+  }
+  if (message.includes('fs.write_file not allowed') || message.includes('not allowed') || message.includes('Permissions associated with this command')) {
+    return activeLanguage.value === 'hu'
+      ? 'Az app nem kapott jogosultságot erre a mentési útvonalra. Válassz fájlt a rendszer mentési ablakában, vagy próbáld újra az exportot.'
+      : 'The app does not have permission to write to that location. Choose a file in the system save dialog, or try the export again.';
+  }
+  if (message.includes('Android save picker failed')) {
+    return activeLanguage.value === 'hu'
+      ? 'A rendszer mentési ablak nem nyílt meg. Próbáld újra, vagy válassz másik tárhely alkalmazást.'
+      : 'The system save picker could not be opened. Try again or choose another storage app.';
+  }
+  return message.replace(/^Error:\s*/i, '');
+}
+
 async function saveMarkdownExport(content: string, filename: string, title: string, successMessage: string) {
   const bytes = new TextEncoder().encode(content);
   if (isTauriRuntime() && isAndroidRuntime()) {
@@ -10210,6 +10234,7 @@ async function exportAllDataAiMarkdown() {
   if (!range) return;
   exportBusy.value = true;
   exportProgress.value = 4;
+  exportTitle.value = t('aiExportAllData');
   exportStatus.value = t('aiExportPreparing');
   await nextTick();
   try {
@@ -10228,12 +10253,13 @@ async function exportAllDataAiMarkdown() {
     );
     exportProgress.value = 100;
   } catch (error) {
-    showToast(`${t('exportFailed')}: ${String(error)}`);
+    showToast(`${t('exportFailed')}: ${friendlyExportError(error)}`);
   } finally {
     window.setTimeout(() => {
       exportBusy.value = false;
       exportProgress.value = 0;
       exportStatus.value = '';
+      exportTitle.value = '';
     }, 350);
   }
 }
@@ -10311,6 +10337,11 @@ async function exportHealthAiSummary() {
   const bytes = new TextEncoder().encode(content);
   if (isTauriRuntime()) {
     try {
+      if (isAndroidRuntime()) {
+        await exportJsonWithAndroidDocumentPicker(bytes, filename);
+        showToast(t('healthAiExportCreated'));
+        return;
+      }
       const path = await save({
         defaultPath: filename,
         filters: [{ name: 'nutrino health diary AI summary', extensions: ['json'] }],
@@ -10324,7 +10355,7 @@ async function exportHealthAiSummary() {
       showToast(t('healthAiExportCreated'));
       return;
     } catch (error) {
-      showToast(`${t('exportFailed')}: ${String(error)}`);
+      showToast(`${t('exportFailed')}: ${friendlyExportError(error)}`);
       return;
     }
   }
@@ -11115,7 +11146,7 @@ async function requestCameraPermission() {
     return;
   }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     stream.getTracks().forEach((track) => track.stop());
     localStorage.setItem(mobileCameraPermissionGrantedKey, '1');
     cameraPermission.value = 'granted';
@@ -11890,31 +11921,40 @@ function calendarSearchKindLabel(kind: CalendarSearchKind) {
   return t('food');
 }
 
+function calendarSearchKindIcon(kind: CalendarSearchKind): IconName {
+  if (kind === 'health') return 'heartPulse';
+  if (kind === 'activity') return 'activity';
+  if (kind === 'recipe') return 'chefHat';
+  if (kind === 'ingredient') return 'wheat';
+  return 'utensils';
+}
+
 function calendarSearchIntakeKind(entry: Intake, food?: Food): CalendarSearchKind {
   if (entry.item_type === 'recipe' || entry.food_id.startsWith('recipe:') || food?.id?.startsWith('recipe:')) return 'recipe';
   if (entry.item_type === 'ingredient' || entry.food_id.startsWith('ingredient:') || food?.catalog_kind === 'ingredient') return 'ingredient';
   return 'food';
 }
 
-function pushCalendarSearchResult(map: Map<string, CalendarSearchDayResult>, key: string, at: number, kind: CalendarSearchKind, label: string) {
-  const row = map.get(key) || { key, latestAt: 0, count: 0, kinds: new Set<CalendarSearchKind>(), matches: [] };
-  row.latestAt = Math.max(row.latestAt, at);
-  row.count += 1;
-  row.kinds.add(kind);
-  const cleanLabel = markdownInline(label);
-  if (cleanLabel && !row.matches.includes(cleanLabel)) row.matches.push(cleanLabel);
-  map.set(key, row);
+function calendarSearchKindEnabled(kind: CalendarSearchKind) {
+  if (kind === 'health' && !healthDiaryEnabled.value) return false;
+  return calendarSearchKinds[kind] !== false;
 }
 
-function buildCalendarSearchResults(query: string): CalendarSearchDayResult[] {
+function calendarSearchMatches(query: string, ...values: unknown[]) {
   const q = query.trim();
-  if (!q) return [];
-  const results = new Map<string, CalendarSearchDayResult>();
+  if (!q) return true;
+  return matchesSearchQuery(q, ...values);
+}
+
+function buildCalendarSearchResults(query: string): CalendarSearchResult[] {
+  const q = query.trim();
+  const results: CalendarSearchResult[] = [];
 
   for (const entry of state.intakes) {
     const food = foodFromIntake(entry);
     const kind = calendarSearchIntakeKind(entry, food);
-    if (!matchesSearchQuery(
+    if (!calendarSearchKindEnabled(kind)) continue;
+    if (!calendarSearchMatches(
       q,
       itemTitle(food),
       entry.note_title,
@@ -11926,12 +11966,24 @@ function buildCalendarSearchResults(query: string): CalendarSearchDayResult[] {
       entry.meal_type,
       dateKey(new Date(entry.consumed_at)),
     )) continue;
-    pushCalendarSearchResult(results, dateKey(new Date(entry.consumed_at)), entry.consumed_at, kind, `${calendarSearchKindLabel(kind)} · ${entry.note_title || itemTitle(food)}`);
+    const title = markdownInline(entry.note_title || itemTitle(food) || t(kind));
+    results.push({
+      id: `intake-${entry.id}`,
+      kind,
+      title,
+      subtitle: `${formatDateTime(entry.consumed_at)} · ${calendarSearchKindLabel(kind)} · ${t(entry.meal_type)}`,
+      at: entry.consumed_at,
+      dayKey: dateKey(new Date(entry.consumed_at)),
+      targetId: entry.id,
+      tab: 'food',
+      icon: calendarSearchKindIcon(kind),
+    });
   }
 
   for (const entry of state.activityLogs) {
+    if (!calendarSearchKindEnabled('activity')) continue;
     const definition = activityDefinitionForLog(entry);
-    if (!matchesSearchQuery(
+    if (!calendarSearchMatches(
       q,
       entry.activity_name,
       definition?.name,
@@ -11940,41 +11992,107 @@ function buildCalendarSearchResults(query: string): CalendarSearchDayResult[] {
       entry.source,
       dateKey(new Date(entry.performed_at)),
     )) continue;
-    pushCalendarSearchResult(results, dateKey(new Date(entry.performed_at)), entry.performed_at, 'activity', `${t('activity')} · ${entry.activity_name}`);
+    results.push({
+      id: `activity-${entry.id}`,
+      kind: 'activity',
+      title: markdownInline(entry.activity_name || t('activity')),
+      subtitle: `${formatDateTime(entry.performed_at)} · ${Math.round(entry.duration_min || 0)} ${t('minutesShort')} · ${Math.round(entry.kcal || 0)} kcal`,
+      at: entry.performed_at,
+      dayKey: dateKey(new Date(entry.performed_at)),
+      targetId: entry.id,
+      tab: 'food',
+      icon: calendarSearchKindIcon('activity'),
+    });
   }
 
-  for (const entry of state.healthEntries || []) {
-    if (entry.deleted_at) continue;
-    if (!matchesSearchQuery(
-      q,
-      entry.title,
-      entry.description,
-      entry.notes,
-      healthCategoryLabel(entry.category),
-      entry.event_id,
-      dateKey(new Date(entry.occurred_at)),
-    )) continue;
-    pushCalendarSearchResult(results, dateKey(new Date(entry.occurred_at)), entry.occurred_at, 'health', `${t('healthDiary')} · ${entry.title}`);
+  if (healthDiaryEnabled.value && calendarSearchKindEnabled('health')) {
+    for (const entry of state.healthEntries || []) {
+      if (entry.deleted_at) continue;
+      if (!calendarSearchMatches(
+        q,
+        entry.title,
+        entry.description,
+        entry.notes,
+        healthCategoryLabel(entry.category),
+        entry.event_id,
+        dateKey(new Date(entry.occurred_at)),
+      )) continue;
+      results.push({
+        id: `health-${entry.id}`,
+        kind: 'health',
+        title: markdownInline(entry.title || t('healthDiary')),
+        subtitle: `${formatDateTime(entry.occurred_at)} · ${healthCategoryLabel(entry.category)} · ${healthDurationText(entry)}`,
+        at: entry.occurred_at,
+        dayKey: dateKey(new Date(entry.occurred_at)),
+        targetId: entry.id,
+        tab: 'health',
+        icon: calendarSearchKindIcon('health'),
+      });
+    }
   }
 
-  return [...results.values()]
-    .map((row) => ({ ...row, matches: row.matches.slice(0, 4) }))
-    .sort((a, b) => b.latestAt - a.latestAt || b.count - a.count)
-    .slice(0, 80);
+  const direction = calendarSearchSortDirection.value === 'asc' ? 1 : -1;
+  return results
+    .sort((a, b) => direction * (a.at - b.at) || a.title.localeCompare(b.title, currentLocale(), { sensitivity: 'base' }))
+    .slice(0, 160);
 }
 
-function calendarSearchResultSubtitle(row: CalendarSearchDayResult) {
-  return `${row.count} ${t('entries')} · ${[...row.kinds].map(calendarSearchKindLabel).join(' · ')}`;
+function calendarSearchKindOptions() {
+  return (['food', 'ingredient', 'recipe', 'activity', 'health'] as CalendarSearchKind[])
+    .filter((kind) => kind !== 'health' || healthDiaryEnabled.value)
+    .map((kind) => ({ kind, label: calendarSearchKindLabel(kind), icon: calendarSearchKindIcon(kind) }));
 }
 
-function jumpToCalendarSearchResult(row: CalendarSearchDayResult) {
-  selectCalendarDate(row.key);
+function openCalendarSearch() {
+  calendarSearchOpen.value = true;
+  void nextTick(() => document.getElementById('calendar-search-modal-input')?.focus());
+}
+
+function closeCalendarSearch() {
+  calendarSearchOpen.value = false;
   hideKeyboard();
 }
 
-function goToToday() {
-  refreshTodayKey();
-  selectCalendarDate(todayKey.value);
+function setCalendarSearchSort(direction: CalendarSearchSortDirection) {
+  calendarSearchSortDirection.value = direction;
+}
+
+function toggleCalendarSearchKind(kind: CalendarSearchKind) {
+  const next = !calendarSearchKinds[kind];
+  const enabledCount = Object.entries(calendarSearchKinds).filter(([key, enabled]) => enabled && (key !== 'health' || healthDiaryEnabled.value)).length;
+  if (!next && enabledCount <= 1) return;
+  calendarSearchKinds[kind] = next;
+}
+
+function highlightDiarySearchTarget(result: CalendarSearchResult) {
+  highlightedReviewIntakeId.value = result.kind === 'food' || result.kind === 'ingredient' || result.kind === 'recipe' ? result.targetId : null;
+  highlightedActivityLogId.value = result.kind === 'activity' ? result.targetId : null;
+  highlightedHealthReviewEntryId.value = result.kind === 'health' ? result.targetId : null;
+  if (highlightedReviewTimer) window.clearTimeout(highlightedReviewTimer);
+  highlightedReviewTimer = window.setTimeout(() => {
+    highlightedReviewIntakeId.value = null;
+    highlightedActivityLogId.value = null;
+    highlightedHealthReviewEntryId.value = null;
+  }, 6500);
+}
+
+function jumpToCalendarSearchResult(result: CalendarSearchResult) {
+  selectCalendarDate(result.dayKey);
+  activeTab.value = 'diary';
+  diaryTab.value = result.tab;
+  unlockedDiaryDate.value = result.dayKey;
+  closeCalendarSearch();
+  highlightDiarySearchTarget(result);
+  void nextTick(() => {
+    const elementId = result.kind === 'health'
+      ? `health-entry-${result.targetId}`
+      : result.kind === 'activity'
+        ? `activity-entry-${result.targetId}`
+        : `intake-entry-${result.targetId}`;
+    const target = document.getElementById(elementId);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    else scrollToPageTop();
+  });
 }
 
 function buildCalendar(monthDate: Date) {
@@ -11999,7 +12117,7 @@ function buildCalendar(monthDate: Date) {
       today: key === todayKey.value,
       selected: key === selectedDate.value,
       future: isFuture,
-      searchMatch: calendarSearchActive.value && calendarSearchDayKeys.value.has(key),
+      searchMatch: Boolean(calendarSearch.value.trim()) && calendarSearchDayKeys.value.has(key),
       hasEntries: !isFuture && (intakes.length > 0 || activities.length > 0),
       hasHealthEntries: !isFuture && healthEntries.length > 0,
       bmi: !isFuture && weight ? bmi(weight.weight_kg, state.profile.height_cm) : 0,
@@ -12012,6 +12130,11 @@ function moveCalendar(delta: number) {
   const next = new Date(calendarMonth.value);
   next.setMonth(next.getMonth() + delta);
   calendarMonth.value = next;
+}
+
+function goToToday() {
+  refreshTodayKey();
+  selectCalendarDate(todayKey.value);
 }
 
 function selectCalendarDate(key: string) {
@@ -12796,9 +12919,9 @@ async function bestCameraConstraints(): Promise<MediaStreamConstraints> {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const cameras = devices.filter((device) => device.kind === 'videoinput');
     const backCamera = [...cameras].reverse().find((device) => /back|rear|environment|wide|camera 0/i.test(device.label)) || cameras[cameras.length - 1];
-    if (backCamera?.deviceId) return { video: { ...baseVideo, deviceId: { ideal: backCamera.deviceId } } };
+    if (backCamera?.deviceId) return { video: { ...baseVideo, deviceId: { ideal: backCamera.deviceId } }, audio: false };
   } catch { /* fall back to environment camera */ }
-  return { video: baseVideo };
+  return { video: baseVideo, audio: false };
 }
 
 async function startCameraScanner() {
@@ -12812,7 +12935,8 @@ async function startCameraScanner() {
     video.srcObject = scannerStream;
     await video.play();
     scannerActive.value = true;
-    const detector = new Detector({ formats: ['qr_code', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
+    if (!scannerDetector) scannerDetector = new Detector({ formats: ['qr_code', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
+    const detector = scannerDetector;
     const tick = async () => {
       if (!scannerActive.value || !scanDialogOpen.value) return;
       try {
@@ -13301,7 +13425,11 @@ function isMobileRuntime() {
 }
 
 function isAndroidRuntime() {
-  return /Android/i.test(navigator.userAgent);
+  if (/Android/i.test(navigator.userAgent)) return true;
+  // Some Tauri Android WebViews expose a reduced UA. Inside the mobile Tauri app,
+  // treat non-iOS mobile runtime as Android so exports use the SAF picker instead
+  // of the desktop fs.writeFile path.
+  return isTauriRuntime() && isMobileRuntime() && !isIosRuntime();
 }
 
 function isIosRuntime() {
@@ -13397,13 +13525,21 @@ async function exportBackupZipWithAndroidDocumentPicker(bytes: Uint8Array, filen
   return result;
 }
 
-async function exportMarkdownWithAndroidDocumentPicker(bytes: Uint8Array, filename: string) {
+async function exportTextWithAndroidDocumentPicker(bytes: Uint8Array, filename: string, mimeType: string) {
   exportStatus.value = t('backupOpeningPicker');
   exportProgress.value = Math.max(exportProgress.value, 68);
   await nextTick();
-  const result = await invoke<string>('export_markdown_via_android_picker', { filename, bytes: await bytesToNumberArrayChunked(bytes, 70, 94) });
+  const result = await invoke<string>('export_text_via_android_picker', { filename, mimeType, bytes: await bytesToNumberArrayChunked(bytes, 70, 94) });
   if (result === 'EXPORT_CANCELED') throw new DOMException(t('exportCanceled'), 'AbortError');
   return result;
+}
+
+async function exportMarkdownWithAndroidDocumentPicker(bytes: Uint8Array, filename: string) {
+  return exportTextWithAndroidDocumentPicker(bytes, filename, 'text/markdown');
+}
+
+async function exportJsonWithAndroidDocumentPicker(bytes: Uint8Array, filename: string) {
+  return exportTextWithAndroidDocumentPicker(bytes, filename, 'application/json');
 }
 
 async function importBackupZipWithAndroidDocumentPicker(): Promise<Uint8Array | null> {
@@ -13550,6 +13686,7 @@ async function exportAppDataWithOptions(filename = mobileBackupFileName(), backu
   refreshTodayKey();
   exportBusy.value = true;
   exportProgress.value = 4;
+  exportTitle.value = t('backupExportInProgress');
   exportStatus.value = t('backupPreparing');
   await nextTick();
   let localProfileSaved = false;
@@ -13558,7 +13695,13 @@ async function exportAppDataWithOptions(filename = mobileBackupFileName(), backu
     localProfileSaved = true;
   } catch (error) {
     if (!window.confirm(`${t('backupProfileSaveFailed')}: ${String(error)}
-${t('continueExternalExport')}`)) return;
+${t('continueExternalExport')}`)) {
+      exportBusy.value = false;
+      exportProgress.value = 0;
+      exportStatus.value = '';
+      exportTitle.value = '';
+      return;
+    }
   }
 
   try {
@@ -13605,12 +13748,13 @@ ${t('continueExternalExport')}`)) return;
       return;
     }
   } catch (error) {
-    showToast(`${t('exportFailed')}: ${String(error)}${localProfileSaved ? ` ${t('backupProfileStillAvailable')}` : ''}`);
+    showToast(`${t('exportFailed')}: ${friendlyExportError(error)}${localProfileSaved ? ` ${t('backupProfileStillAvailable')}` : ''}`);
   } finally {
     window.setTimeout(() => {
       exportBusy.value = false;
       exportProgress.value = 0;
       exportStatus.value = '';
+      exportTitle.value = '';
     }, 350);
   }
 }
@@ -13881,7 +14025,7 @@ function setTab(tab: Tab) {
           <span class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
-          <div v-for="activity in activitiesForSection()" :key="activity.id" class="entry-row" @pointerdown="startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="entryActionSheet = { kind: 'activity', id: activity.id }">
+          <div v-for="activity in activitiesForSection()" :id="`activity-entry-${activity.id}`" :key="activity.id" class="entry-row" :class="{ 'review-highlight': highlightedActivityLogId === activity.id }" @pointerdown="startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="entryActionSheet = { kind: 'activity', id: activity.id }">
             <div><b>{{ activity.activity_name }}</b><small>{{ activity.duration_min }} min · {{ activity.kcal }} kcal · {{ activity.source }}</small></div>
             <div class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="duplicateActivity(activity.id)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editActivityLog(activity)" v-html="lucideSvg('pencil')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeActivity(activity.id)" v-html="lucideSvg('trash2')"></button></div>
           </div>
@@ -13923,7 +14067,7 @@ function setTab(tab: Tab) {
 
     </section>
 
-    <section v-if="activeTab === 'diary'" class="page-stack">
+    <section v-if="activeTab === 'diary'" class="page-stack diary-page">
       <article class="card meal-note-review-card" :class="{ collapsed: !mealNoteReviewOpen }">
         <button class="meal-note-review-head" type="button" :aria-expanded="mealNoteReviewOpen" @click="mealNoteReviewOpen = !mealNoteReviewOpen">
           <span class="meal-note-review-copy">
@@ -13992,31 +14136,6 @@ function setTab(tab: Tab) {
             <button v-if="selectedDate !== todayKey" class="calendar-today-button" type="button" :aria-label="t('goToday')" :title="t('goToday')" @click="goToToday"><span v-html="lucideSvg('calendarDays')"></span>{{ t('goToday') }}</button>
             <button class="icon-button" @click="moveCalendar(1)" v-html="lucideSvg('chevronRight')"></button>
           </span>
-        </div>
-        <div class="calendar-search-panel">
-          <label class="calendar-search-box" :aria-label="t('calendarSearch')">
-            <span v-html="lucideSvg('search')"></span>
-            <input v-model="calendarSearch" type="search" :placeholder="t('calendarSearchHint')" @keydown.enter.prevent="hideKeyboard" />
-            <button v-if="calendarSearch" type="button" :aria-label="t('clearCache')" @click="calendarSearch = ''" v-html="lucideSvg('x')"></button>
-          </label>
-          <div v-if="calendarSearchActive" class="calendar-search-results-panel">
-            <template v-if="calendarSearchResults.length">
-              <button v-if="calendarSearchLatestResult" type="button" class="calendar-search-jump" @click="jumpToCalendarSearchResult(calendarSearchLatestResult)">
-                <b>{{ calendarSearchResults.length }} {{ t('calendarSearchDays') }}</b>
-                <small>{{ t('jumpLatestOccurrence') }} · {{ formatDate(calendarSearchLatestResult.latestAt) }}</small>
-              </button>
-              <div class="calendar-search-result-list">
-                <button v-for="row in calendarSearchResults.slice(0, 5)" :key="row.key" type="button" class="calendar-search-result" @click="jumpToCalendarSearchResult(row)">
-                  <span>
-                    <b>{{ formatDate(row.latestAt) }}</b>
-                    <small>{{ calendarSearchResultSubtitle(row) }}</small>
-                  </span>
-                  <em>{{ row.matches.join(' · ') }}</em>
-                </button>
-              </div>
-            </template>
-            <p v-else class="empty-line">{{ t('calendarSearchNoResults') }}</p>
-          </div>
         </div>
         <div class="weekday-grid"><span v-for="day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']" :key="day">{{ day }}</span></div>
         <div class="calendar-grid">
@@ -14117,7 +14236,7 @@ function setTab(tab: Tab) {
           <span v-if="selectedDayUnlocked" class="plus-button">+</span>
         </button>
         <div v-if="section.key === 'activity'" class="entry-list">
-          <div v-for="activity in activitiesForSection()" :key="activity.id" class="entry-row" @pointerdown="selectedDayUnlocked && startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="selectedDayUnlocked && (entryActionSheet = { kind: 'activity', id: activity.id })">
+          <div v-for="activity in activitiesForSection()" :id="`activity-entry-${activity.id}`" :key="activity.id" class="entry-row" :class="{ 'review-highlight': highlightedActivityLogId === activity.id }" @pointerdown="selectedDayUnlocked && startEntryLongPress('activity', activity.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="selectedDayUnlocked && (entryActionSheet = { kind: 'activity', id: activity.id })">
             <div><b>{{ activity.activity_name }}</b><small>{{ activity.duration_min }} min · {{ activity.kcal }} kcal</small></div>
             <div v-if="selectedDayUnlocked" class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="duplicateActivity(activity.id)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button" :aria-label="t('edit')" :title="t('edit')" @click.stop="editActivityLog(activity)" v-html="lucideSvg('pencil')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeActivity(activity.id)" v-html="lucideSvg('trash2')"></button></div>
           </div>
@@ -14305,54 +14424,70 @@ function setTab(tab: Tab) {
         </label>
       </article>
 
-      <article class="card pairing-card source-settings-card source-connection-card">
-        <label class="source-connection-toggle"><span class="settings-row-icon" v-html="settingsIcon('desktop')"></span><span><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span><input v-model="state.settings.desktop_api_enabled" type="checkbox" /></label>
-        <details v-if="state.settings.desktop_api_enabled" class="source-details">
-          <summary><span>{{ t('apiSettings') }}</span><span class="source-details-chevron" v-html="lucideSvg('chevronDown')"></span></summary>
-          <p class="helper" v-if="devMode">{{ t('devApiHint') }}</p>
-          <p class="channel-chip">{{ t('appChannel') }}: {{ appChannel }}</p>
-          <label class="field-label">{{ t('apiUrl') }}</label>
-          <input v-model="state.pairing.baseUrl" class="input" placeholder="http://192.168.1.202:8090/api/v1" />
-          <label class="field-label">{{ t('pairingPassword') }}</label>
-          <input v-model="state.pairing.password" class="input" type="password" autocomplete="current-password" />
-          <div class="button-row">
-            <button class="outlined-button" @click="testConnection">{{ t('test') }}</button>
-            <button class="filled-button" :disabled="syncBusy" @click="syncNow()">{{ t('syncNow') }}</button>
-            <button class="outlined-button" :disabled="syncBusy" @click="pushNow()">{{ t('pushNow') }}</button>
+      <section class="profile-source-section">
+        <article class="source-hub-card" :class="{ disabled: state.settings.desktop_api_enabled === false }">
+          <header class="source-hub-head">
+            <span class="source-hub-icon desktop" v-html="settingsIcon('desktop')"></span>
+            <span class="source-hub-title"><b>{{ t('desktopApiConnection') }}</b><small>{{ t('desktopApiConnectionBody') }}</small></span>
+            <label class="switch-control" :aria-label="t('desktopApiConnection')"><input v-model="state.settings.desktop_api_enabled" type="checkbox" /><span></span></label>
+          </header>
+          <div v-if="state.settings.desktop_api_enabled" class="source-hub-body">
+            <div class="source-status-strip">
+              <span class="source-status-pill" :class="serverOnline ? 'online' : 'offline'"><i></i>{{ serverOnline ? t('online') : t('offline') }}</span>
+              <span class="source-status-pill neutral">{{ t('appChannel') }} · {{ appChannel }}</span>
+              <span v-if="state.pairing.lastSyncAt" class="source-status-pill neutral">{{ formatDateTime(state.pairing.lastSyncAt) }}</span>
+            </div>
+            <p v-if="devMode" class="source-note">{{ t('devApiHint') }}</p>
+            <div class="source-form-grid">
+              <label class="source-form-field"><span>{{ t('apiUrl') }}</span><input v-model="state.pairing.baseUrl" class="input" placeholder="http://192.168.1.202:8090/api/v1" /></label>
+              <label class="source-form-field"><span>{{ t('pairingPassword') }}</span><input v-model="state.pairing.password" class="input" type="password" autocomplete="current-password" /></label>
+            </div>
+            <div class="source-action-grid">
+              <button class="outlined-button" type="button" @click="testConnection"><span v-html="lucideSvg('server')"></span>{{ t('test') }}</button>
+              <button class="filled-button" type="button" :disabled="syncBusy" @click="syncNow()"><span v-html="lucideSvg('download')"></span>{{ t('syncNow') }}</button>
+              <button class="outlined-button" type="button" :disabled="syncBusy" @click="pushNow()"><span v-html="lucideSvg('upload')"></span>{{ t('pushNow') }}</button>
+            </div>
+            <p class="source-note subtle">{{ t('localOnlyDiaryHint') }}</p>
+            <p v-if="state.pairing.lastSyncError" class="error-text source-error">{{ state.pairing.lastSyncError }}</p>
           </div>
-          <p class="helper">{{ t('localOnlyDiaryHint') }}</p>
-          <p v-if="state.pairing.lastSyncError" class="error-text">{{ state.pairing.lastSyncError }}</p>
-        </details>
-      </article>
+          <p v-else class="source-disabled-note">{{ t('desktopApiDisabled') }}</p>
+        </article>
 
-      <article class="card github-sync-card source-settings-card source-connection-card">
-        <label class="source-connection-toggle"><span class="settings-row-icon" v-html="settingsIcon('github')"></span><span><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span><input v-model="state.settings.github_csv_enabled" type="checkbox" /></label>
-        <details v-if="state.settings.github_csv_enabled" class="source-details">
-          <summary><span>{{ t('githubCsvSources') }}</span><span class="source-details-chevron" v-html="lucideSvg('chevronDown')"></span></summary>
-          <p class="helper">{{ t('githubCsvSourcesBody') }}</p>
-          <div class="github-source-form">
-            <input v-model="githubDraft.owner" class="input" :placeholder="t('githubOwnerPlaceholder')" autocomplete="off" autocapitalize="none" />
-            <input v-model="githubDraft.repo" class="input" :placeholder="t('githubRepoPlaceholder')" autocomplete="off" autocapitalize="none" />
-            <input v-model="githubDraft.branch" class="input" :placeholder="t('githubBranchPlaceholder')" autocomplete="off" autocapitalize="none" />
-            <input v-model="githubDraft.path" class="input" :placeholder="t('githubPathPlaceholder')" autocomplete="off" autocapitalize="none" />
-            <input v-model="githubDraft.token" class="input" type="password" :placeholder="t('githubTokenPlaceholder')" autocomplete="off" />
+        <article class="source-hub-card" :class="{ disabled: state.settings.github_csv_enabled === false }">
+          <header class="source-hub-head">
+            <span class="source-hub-icon github" v-html="settingsIcon('github')"></span>
+            <span class="source-hub-title"><b>{{ t('githubCsvConnection') }}</b><small>{{ t('githubCsvConnectionBody') }}</small></span>
+            <label class="switch-control" :aria-label="t('githubCsvConnection')"><input v-model="state.settings.github_csv_enabled" type="checkbox" /><span></span></label>
+          </header>
+          <div v-if="state.settings.github_csv_enabled" class="source-hub-body">
+            <p class="source-note">{{ t('githubCsvSourcesBody') }}</p>
+            <div class="source-form-grid github-source-grid">
+              <input v-model="githubDraft.owner" class="input" :placeholder="t('githubOwnerPlaceholder')" autocomplete="off" autocapitalize="none" />
+              <input v-model="githubDraft.repo" class="input" :placeholder="t('githubRepoPlaceholder')" autocomplete="off" autocapitalize="none" />
+              <input v-model="githubDraft.branch" class="input" :placeholder="t('githubBranchPlaceholder')" autocomplete="off" autocapitalize="none" />
+              <input v-model="githubDraft.path" class="input" :placeholder="t('githubPathPlaceholder')" autocomplete="off" autocapitalize="none" />
+              <input v-model="githubDraft.token" class="input github-token-input" type="password" :placeholder="t('githubTokenPlaceholder')" autocomplete="off" />
+            </div>
+            <div class="source-action-grid two">
+              <button class="outlined-button" type="button" @click="addGitHubSource"><span v-html="lucideSvg('plus')"></span>{{ t('addRepo') }}</button>
+              <button class="filled-button" type="button" :disabled="githubSyncBusy" @click="syncGitHubNow(true)"><span v-html="lucideSvg('refreshCw')"></span>{{ t('syncGithubNow') }}</button>
+            </div>
+            <div v-if="(state.githubSources || []).length" class="github-source-list source-list-modern">
+              <article v-for="source in (state.githubSources || [])" :key="source.id" class="github-source-row source-row-modern">
+                <label class="source-row-main"><input v-model="source.enabled" type="checkbox" /><span><b>{{ source.owner }}/{{ source.repo }}</b><small>{{ source.branch || 'main' }}{{ source.path ? ` · ${source.path}` : '' }}</small></span></label>
+                <span class="source-status-pill" :class="source.enabled ? 'online' : 'offline'"><i></i>{{ source.enabled ? t('active') : t('inactive') }}</span>
+                <small class="source-row-status">{{ source.lastStatus || t('notSyncedYet') }}</small>
+                <button class="text-button danger-text" type="button" @click="removeGitHubSource(source.id)">{{ t('remove') }}</button>
+              </article>
+            </div>
           </div>
-          <div class="button-row">
-            <button class="outlined-button" @click="addGitHubSource">{{ t('addRepo') }}</button>
-            <button class="filled-button" :disabled="githubSyncBusy" @click="syncGitHubNow(true)">{{ t('syncGithubNow') }}</button>
-          </div>
-          <div v-if="(state.githubSources || []).length" class="github-source-list">
-            <article v-for="source in (state.githubSources || [])" :key="source.id" class="github-source-row">
-              <label><input v-model="source.enabled" type="checkbox" /> <b>{{ source.owner }}/{{ source.repo }}</b></label>
-              <small>{{ source.branch || 'main' }}{{ source.path ? ` · ${source.path}` : '' }} · {{ source.lastStatus || t('notSyncedYet') }}</small>
-              <button class="text-button danger-text" @click="removeGitHubSource(source.id)">{{ t('remove') }}</button>
-            </article>
-          </div>
-        </details>
-      </article>
+          <p v-else class="source-disabled-note">{{ t('githubCsvDisabled') }}</p>
+        </article>
+      </section>
     </section>
 
     <button v-if="activeTab === 'home' && !addMode && !settingsOpen" class="home-quick-fab" data-tour="quick-add" :aria-label="t('addNewItem')" @click="openQuickAddMenu()">+</button>
+    <button v-if="activeTab === 'diary' && !addMode && !settingsOpen" class="home-quick-fab diary-search-fab" type="button" :aria-label="t('calendarSearch')" :title="t('calendarSearch')" @click="openCalendarSearch" v-html="lucideSvg('search')"></button>
 
     <Teleport to="body">
       <div v-if="quickAddOpen" class="quick-add-backdrop app-overlay" @click.self="closeQuickAddMenu">
@@ -14968,7 +15103,7 @@ function setTab(tab: Tab) {
             <div class="dialog-actions">
               <button class="text-button" type="button" @click="resetAiExportRange">{{ t('last90Days') }}</button>
               <button class="text-button" type="button" @click="settingsDialog = null">{{ t('cancel') }}</button>
-              <button class="filled-button" type="button" @click="exportAllDataAiMarkdown">{{ t('aiExportAllData') }}</button>
+              <button class="filled-button" type="button" :disabled="exportBusy" @click="exportAllDataAiMarkdown">{{ t('aiExportAllData') }}</button>
             </div>
           </template>
           <template v-else-if="settingsDialog === 'calculations'">
@@ -15151,7 +15286,7 @@ function setTab(tab: Tab) {
         <article class="settings-dialog export-progress-dialog">
           <span class="export-spinner" aria-hidden="true"></span>
           <div>
-            <h2>{{ t('backupExportInProgress') }}</h2>
+            <h2>{{ exportTitle || t('backupExportInProgress') }}</h2>
             <p class="helper big">{{ exportStatus || t('backupPreparing') }}</p>
           </div>
           <div class="export-progress-track"><span :style="{ width: `${Math.max(6, Math.min(100, exportProgress))}%` }"></span></div>
@@ -15530,6 +15665,42 @@ function setTab(tab: Tab) {
             <button type="button" aria-label="Zoom in" :disabled="healthImageZoom.scale >= 4.99" @click="zoomHealthImage(0.5)" v-html="lucideSvg('plus')"></button>
           </div>
           <p class="health-media-viewer-caption">{{ healthAttachmentDisplayName(healthPreviewAttachment) }} · {{ attachmentTypeLabel(healthPreviewAttachment.type) }} · {{ formatBytes(healthPreviewAttachment.size) }}</p>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="calendarSearchOpen" class="dialog-backdrop app-overlay" @click.self="closeCalendarSearch">
+        <article class="settings-dialog diary-search-dialog">
+          <div class="dialog-title-row">
+            <div class="dialog-title-copy">
+              <h2>{{ t('calendarSearch') }}</h2>
+              <small>{{ t('calendarSearchHint') }}</small>
+            </div>
+            <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" @click="closeCalendarSearch" v-html="lucideSvg('x')"></button>
+          </div>
+          <label class="diary-search-field" :aria-label="t('calendarSearch')">
+            <span v-html="lucideSvg('search')"></span>
+            <input id="calendar-search-modal-input" v-model="calendarSearch" type="search" :placeholder="t('calendarSearchHint')" @keydown.enter.prevent="hideKeyboard" />
+            <button v-if="calendarSearch" type="button" :aria-label="t('clearCache')" @click="calendarSearch = ''" v-html="lucideSvg('x')"></button>
+          </label>
+          <div class="diary-search-filter-row">
+            <button v-for="option in calendarSearchKindOptions()" :key="`calendar-kind-${option.kind}`" type="button" class="diary-search-filter-chip" :class="{ active: calendarSearchKinds[option.kind] }" @click="toggleCalendarSearchKind(option.kind)">
+              <span v-html="lucideSvg(option.icon)"></span>{{ option.label }}
+            </button>
+          </div>
+          <div class="diary-search-sort-row segmented-pill-toggle">
+            <button type="button" :class="{ active: calendarSearchSortDirection === 'desc' }" @click="setCalendarSearchSort('desc')"><span v-html="lucideSvg('chevronDown')"></span>{{ t('newestFirst') }}</button>
+            <button type="button" :class="{ active: calendarSearchSortDirection === 'asc' }" @click="setCalendarSearchSort('asc')"><span v-html="lucideSvg('chevronUp')"></span>{{ t('oldestFirst') }}</button>
+          </div>
+          <div v-if="calendarSearchResults.length" class="diary-search-result-list">
+            <button v-for="result in calendarSearchResults" :key="result.id" type="button" class="diary-search-result-row" @click="jumpToCalendarSearchResult(result)">
+              <span class="diary-search-result-icon" v-html="lucideSvg(result.icon)"></span>
+              <span><b>{{ result.title }}</b><small>{{ result.subtitle }}</small></span>
+              <em>{{ calendarSearchKindLabel(result.kind) }}</em>
+            </button>
+          </div>
+          <p v-else class="empty-line">{{ t('calendarSearchNoResults') }}</p>
         </article>
       </div>
     </Teleport>
