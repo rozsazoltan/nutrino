@@ -53,6 +53,29 @@ type BackupIncludeOptions = { catalog: boolean; foodDiary: boolean; healthDiary:
 type CalendarSearchKind = 'food' | 'ingredient' | 'recipe' | 'activity' | 'health';
 type CalendarSearchSortDirection = 'desc' | 'asc';
 type CalendarSearchResult = { id: string; kind: CalendarSearchKind; title: string; subtitle: string; at: number; dayKey: string; targetId: string; tab: 'food' | 'health'; icon: IconName };
+type SettingsDialogKey = 'permissions' | 'updates' | 'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'aiExport' | 'privacy' | 'about' | 'licenses' | 'advanced';
+type SettingsRowType = 'button' | 'toggle' | 'link';
+type SettingsRowConfig = {
+  key: string;
+  type: SettingsRowType;
+  icon: string;
+  titleKey: string;
+  subtitle?: () => string;
+  visible?: () => boolean;
+  action?: () => void;
+  href?: () => string;
+  checked?: () => boolean;
+  setChecked?: (checked: boolean) => void;
+  danger?: boolean;
+  className?: string;
+  attention?: () => boolean;
+};
+type SettingsModuleConfig = {
+  key: string;
+  titleKey: string;
+  visible?: () => boolean;
+  rows: SettingsRowConfig[];
+};
 
 type OptionalNutrientDefinition = {
   key: string;
@@ -294,7 +317,7 @@ let todayRolloverTimer: number | undefined;
 const offlineToastShown = ref(false);
 const toast = ref('');
 const settingsOpen = ref(false);
-const settingsDialog = ref<'permissions' | 'updates' | 'units' | 'calculations' | 'tracking' | 'micronutrients' | 'language' | 'aiExport' | 'privacy' | 'about' | 'licenses' | 'advanced' | null>(null);
+const settingsDialog = ref<SettingsDialogKey | null>(null);
 const updateBusy = ref(false);
 const updateDialogOpen = ref(false);
 const updateInstallInfoOpen = ref(false);
@@ -483,6 +506,117 @@ const settingsIconMap: Record<string, IconName> = {
 
 function settingsIcon(name: string) {
   return lucideSvg(settingsIconMap[name] ?? 'info');
+}
+
+function settingsButton(key: string, icon: string, titleKey: string, action: () => void, subtitle?: () => string, options: Partial<SettingsRowConfig> = {}): SettingsRowConfig {
+  return { key, type: 'button', icon, titleKey, action, subtitle, ...options };
+}
+
+function settingsToggle(key: string, icon: string, titleKey: string, checked: () => boolean, setChecked: (checked: boolean) => void, subtitle?: () => string, options: Partial<SettingsRowConfig> = {}): SettingsRowConfig {
+  return { key, type: 'toggle', icon, titleKey, checked, setChecked, subtitle, ...options };
+}
+
+function settingsLink(key: string, icon: string, titleKey: string, href: () => string, subtitle?: () => string, options: Partial<SettingsRowConfig> = {}): SettingsRowConfig {
+  return { key, type: 'link', icon, titleKey, href, subtitle, className: 'settings-link-row', ...options };
+}
+
+const settingsModules = computed<SettingsModuleConfig[]>(() => [
+  {
+    key: 'app',
+    titleKey: 'settingsModuleApp',
+    rows: [
+      settingsButton('language', 'language', 'language', () => { settingsDialog.value = 'language'; }, () => selectedLanguageLabel()),
+      settingsButton('permissions', 'permissions', 'appPermissions', openPermissionsSettings, () => appPermissionSummary()),
+      settingsButton('updates', 'updates', 'appUpdates', () => { updateInstallInfoOpen.value = false; settingsDialog.value = 'updates'; }, () => updateCheckResult.value?.release ? `${t('updateAvailable')} · ${updateCheckResult.value.release.version}` : t('appUpdatesBody'), { className: 'update-settings-entry', attention: () => updateAvailable.value }),
+    ],
+  },
+  {
+    key: 'nutrition',
+    titleKey: 'settingsModuleNutrition',
+    rows: [
+      settingsButton('units', 'units', 'units', () => { settingsDialog.value = 'units'; }, () => state.settings.units === 'metric' ? t('metric') : t('imperial')),
+      settingsButton('calculations', 'calculations', 'calculations', () => { settingsDialog.value = 'calculations'; }, () => t('iomEquationMacro')),
+      settingsButton('tracking', 'tracking', 'trackingReminders', () => { settingsDialog.value = 'tracking'; }, () => calorieDeficitEnabled.value ? `${state.settings.target_deficit_kcal} kcal · ${activeLanguage.value === 'hu' ? t('targetDeficit').toLocaleLowerCase('hu') : t('targetDeficit')}` : t('deficitOffHint')),
+      settingsToggle('show-activity', 'activity', 'showActivity', () => state.settings.show_activity_tracking === true, (checked) => { state.settings.show_activity_tracking = checked; }),
+      settingsToggle('show-macros', 'macros', 'showMacros', () => state.settings.show_meal_macros === true, (checked) => { state.settings.show_meal_macros = checked; }),
+      settingsToggle('show-micros', 'micros', 'showMicros', () => state.settings.show_micronutrients === true, (checked) => { state.settings.show_micronutrients = checked; }),
+      settingsButton('micronutrients', 'micros', 'micronutrientLimits', () => { settingsDialog.value = 'micronutrients'; }, () => t('micronutrientLimitsHint'), { visible: () => state.settings.show_micronutrients === true, className: 'micronutrient-settings-row' }),
+    ],
+  },
+  {
+    key: 'diary',
+    titleKey: 'settingsModuleDiary',
+    rows: [
+      settingsToggle('health-diary', 'health', 'healthDiaryTracking', () => state.settings.health_diary_enabled === true, (checked) => { state.settings.health_diary_enabled = checked; }, () => t('healthDiaryTrackingHint')),
+    ],
+  },
+  {
+    key: 'catalog',
+    titleKey: 'settingsModuleCatalog',
+    rows: [
+      settingsToggle('protect-external-catalog-items', 'catalogProtect', 'protectExternalCatalogItems', () => state.settings.protect_external_catalog_items === true, (checked) => { state.settings.protect_external_catalog_items = checked; }, () => t('protectExternalCatalogItemsHint')),
+      settingsToggle('include-inactive-catalog-items', 'catalogInactive', 'includeInactiveCatalogItems', () => state.settings.include_inactive_catalog_items === true, (checked) => { state.settings.include_inactive_catalog_items = checked; }, () => t('includeInactiveCatalogItemsHint')),
+    ],
+  },
+  {
+    key: 'data',
+    titleKey: 'settingsModuleData',
+    rows: [
+      settingsButton('export-app-data', 'export', 'exportAppData', exportAppData, () => t('exportAppDataBody')),
+      settingsButton('ai-export', 'aiExport', 'aiExportAllData', openAiExportDialog, () => t('aiExportAllDataBody')),
+      settingsButton('import-app-data', 'import', 'importAppData', importAppData, () => t('importAppDataBody')),
+      settingsButton('backup-profiles', 'backup', 'backupProfiles', openBackupProfiles, () => `${backupProfiles.value.length} · ${t('backupProfilesBody')}`),
+      settingsButton('advanced', 'advanced', 'advanced', () => { settingsDialog.value = 'advanced'; }, () => t('channelDataTransfer')),
+      settingsButton('clear-cache', 'refresh', 'clearCache', clearCachedItems, () => `${state.ingredients.length + state.foods.length + state.recipes.length + state.activities.length} item(s)`),
+      settingsButton('factory-reset', 'reset', 'factoryReset', factoryResetMobile, () => t('factoryResetBody'), { danger: true }),
+    ],
+  },
+  {
+    key: 'community',
+    titleKey: 'settingsModuleCommunity',
+    rows: [
+      settingsLink('report-issue', 'issue', 'reportIssue', () => issueUrl, () => t('reportIssueBody')),
+      settingsLink('open-repository', 'repo', 'openRepository', () => repositoryUrl, () => t('openRepositoryBody')),
+      settingsLink('star-project', 'star', 'starProject', () => starUrl, () => t('starProjectBody')),
+      settingsButton('privacy', 'privacy', 'privacy', () => { settingsDialog.value = 'privacy'; }),
+      settingsButton('licenses', 'licenses', 'licenses', () => { settingsDialog.value = 'licenses'; }),
+      settingsButton('about', 'about', 'about', () => { settingsDialog.value = 'about'; }),
+    ],
+  },
+  {
+    key: 'developer',
+    titleKey: 'settingsModuleDeveloper',
+    visible: () => devMode,
+    rows: [
+      settingsButton('dev-first-launch-mode', 'reset', 'devFirstLaunchMode', startDevFirstLaunchMode, () => t('devFirstLaunchModeBody'), { className: 'dev-only-settings-row' }),
+    ],
+  },
+]);
+
+const visibleSettingsModules = computed(() => settingsModules.value
+  .filter((module) => module.visible?.() ?? true)
+  .map((module) => ({ ...module, rows: module.rows.filter((row) => row.visible?.() ?? true) }))
+  .filter((module) => module.rows.length > 0));
+
+function settingsRowSubtitle(row: SettingsRowConfig): string {
+  return row.subtitle?.() ?? '';
+}
+
+function settingsRowHref(row: SettingsRowConfig): string {
+  return row.href?.() ?? '#';
+}
+
+function settingsRowClass(row: SettingsRowConfig) {
+  return [row.className, { 'danger-row': row.danger === true, attention: row.attention?.() === true }];
+}
+
+function runSettingsRowAction(row: SettingsRowConfig) {
+  row.action?.();
+}
+
+function updateSettingsToggle(row: SettingsRowConfig, event: Event) {
+  const input = event.currentTarget as HTMLInputElement | null;
+  row.setChecked?.(input?.checked === true);
 }
 
 function selectNumberInput(event: FocusEvent) {
@@ -7456,6 +7590,35 @@ for (const language of Object.keys(translations)) {
     ...translations.en,
     ...(translations[language] || {}),
     ...normalizeTranslationValues(mobileUpdateAndSourceTranslations[language] || {}),
+  };
+}
+
+const settingsModuleTranslations: Record<string, Partial<Record<string, string>>> = {
+  en: {
+    settingsModuleApp: 'App',
+    settingsModuleNutrition: 'Nutrition',
+    settingsModuleDiary: 'Diary',
+    settingsModuleCatalog: 'Catalog',
+    settingsModuleData: 'Data and backups',
+    settingsModuleCommunity: 'Community and legal',
+    settingsModuleDeveloper: 'Developer',
+  },
+  hu: {
+    settingsModuleApp: 'App',
+    settingsModuleNutrition: 'Táplálkozás',
+    settingsModuleDiary: 'Napló',
+    settingsModuleCatalog: 'Katalógus',
+    settingsModuleData: 'Adatok és mentések',
+    settingsModuleCommunity: 'Közösség és jogi',
+    settingsModuleDeveloper: 'Fejlesztői',
+  },
+};
+translations.en = { ...translations.en, ...normalizeTranslationValues(settingsModuleTranslations.en || {}) };
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...normalizeTranslationValues(settingsModuleTranslations[language] || {}),
   };
 }
 // end generated completeMobileLanguageTranslations
@@ -15022,40 +15185,27 @@ function setTab(tab: Tab) {
       <section v-if="settingsOpen" class="settings-screen app-overlay">
       <header class="settings-header"><button class="back-button" @click="closeSettings" v-html="lucideSvg('chevronLeft')"></button><h2>{{ t('settings') }}</h2></header>
       <div class="settings-list">
-        <button class="settings-row" @click="settingsDialog = 'language'"><span class="settings-row-icon" v-html="settingsIcon('language')"></span><b>{{ t('language') }}</b><small>{{ selectedLanguageLabel() }}</small></button>
-        <button class="settings-row" @click="openPermissionsSettings"><span class="settings-row-icon" v-html="settingsIcon('permissions')"></span><b>{{ t('appPermissions') }}</b><small>{{ appPermissionSummary() }}</small></button>
-        <button class="settings-row update-settings-entry" :class="{ attention: updateAvailable }" @click="updateInstallInfoOpen = false; settingsDialog = 'updates'"><span class="settings-row-icon" v-html="settingsIcon('updates')"></span><b>{{ t('appUpdates') }}</b><small>{{ updateCheckResult?.release ? `${t('updateAvailable')} · ${updateCheckResult.release.version}` : t('appUpdatesBody') }}</small></button>
-        <div class="settings-divider"></div>
-        <button class="settings-row" @click="settingsDialog = 'units'"><span class="settings-row-icon" v-html="settingsIcon('units')"></span><b>{{ t('units') }}</b><small>{{ state.settings.units === 'metric' ? t('metric') : t('imperial') }}</small></button>
-        <button class="settings-row" @click="settingsDialog = 'calculations'"><span class="settings-row-icon" v-html="settingsIcon('calculations')"></span><b>{{ t('calculations') }}</b><small>{{ t('iomEquationMacro') }}</small></button>
-        <button class="settings-row" @click="settingsDialog = 'tracking'"><span class="settings-row-icon" v-html="settingsIcon('tracking')"></span><b>{{ t('trackingReminders') }}</b><small>{{ calorieDeficitEnabled ? `${state.settings.target_deficit_kcal} kcal · ${activeLanguage === 'hu' ? t('targetDeficit').toLocaleLowerCase('hu') : t('targetDeficit')}` : t('deficitOffHint') }}</small></button>
-        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('activity')"></span><b>{{ t('showActivity') }}</b><input v-model="state.settings.show_activity_tracking" type="checkbox" /></label>
-        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('macros')"></span><b>{{ t('showMacros') }}</b><input v-model="state.settings.show_meal_macros" type="checkbox" /></label>
-        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('showMicros') }}</b><input v-model="state.settings.show_micronutrients" type="checkbox" /></label>
-        <button v-if="state.settings.show_micronutrients" class="settings-row micronutrient-settings-row" @click="settingsDialog = 'micronutrients'"><span class="settings-row-icon" v-html="settingsIcon('micros')"></span><b>{{ t('micronutrientLimits') }}</b><small>{{ t('micronutrientLimitsHint') }}</small></button>
-        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('health')"></span><b>{{ t('healthDiaryTracking') }}</b><input v-model="state.settings.health_diary_enabled" type="checkbox" /><small>{{ t('healthDiaryTrackingHint') }}</small></label>
-        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogProtect')"></span><b>{{ t('protectExternalCatalogItems') }}</b><input v-model="state.settings.protect_external_catalog_items" type="checkbox" /><small>{{ t('protectExternalCatalogItemsHint') }}</small></label>
-        <label class="settings-row switch-row"><span class="settings-row-icon" v-html="settingsIcon('catalogInactive')"></span><b>{{ t('includeInactiveCatalogItems') }}</b><input v-model="state.settings.include_inactive_catalog_items" type="checkbox" /><small>{{ t('includeInactiveCatalogItemsHint') }}</small></label>
-        <div class="settings-divider"></div>
-        <button class="settings-row" @click="exportAppData"><span class="settings-row-icon" v-html="settingsIcon('export')"></span><b>{{ t('exportAppData') }}</b><small>{{ t('exportAppDataBody') }}</small></button>
-        <button class="settings-row" @click="openAiExportDialog"><span class="settings-row-icon" v-html="settingsIcon('aiExport')"></span><b>{{ t('aiExportAllData') }}</b><small>{{ t('aiExportAllDataBody') }}</small></button>
-        <button class="settings-row" @click="importAppData"><span class="settings-row-icon" v-html="settingsIcon('import')"></span><b>{{ t('importAppData') }}</b><small>{{ t('importAppDataBody') }}</small></button>
-        <button class="settings-row" @click="openBackupProfiles"><span class="settings-row-icon" v-html="settingsIcon('backup')"></span><b>{{ t('backupProfiles') }}</b><small>{{ backupProfiles.length }} · {{ t('backupProfilesBody') }}</small></button>
-        <button class="settings-row" @click="settingsDialog = 'advanced'"><span class="settings-row-icon" v-html="settingsIcon('advanced')"></span><b>{{ t('advanced') }}</b><small>{{ t('channelDataTransfer') }}</small></button>
-        <button class="settings-row" @click="clearCachedItems"><span class="settings-row-icon" v-html="settingsIcon('refresh')"></span><b>{{ t('clearCache') }}</b><small>{{ state.ingredients.length + state.foods.length + state.recipes.length + state.activities.length }} item(s)</small></button>
-        <button class="settings-row danger-row" @click="factoryResetMobile"><span class="settings-row-icon" v-html="settingsIcon('reset')"></span><b>{{ t('factoryReset') }}</b><small>{{ t('factoryResetBody') }}</small></button>
-        <div class="settings-divider"></div>
-        <a class="settings-row settings-link-row" :href="issueUrl" target="_blank" rel="noreferrer"><span class="settings-row-icon" v-html="settingsIcon('issue')"></span><b>{{ t('reportIssue') }}</b><small>{{ t('reportIssueBody') }}</small></a>
-        <a class="settings-row settings-link-row" :href="repositoryUrl" target="_blank" rel="noreferrer"><span class="settings-row-icon" v-html="settingsIcon('repo')"></span><b>{{ t('openRepository') }}</b><small>{{ t('openRepositoryBody') }}</small></a>
-        <a class="settings-row settings-link-row" :href="starUrl" target="_blank" rel="noreferrer"><span class="settings-row-icon" v-html="settingsIcon('star')"></span><b>{{ t('starProject') }}</b><small>{{ t('starProjectBody') }}</small></a>
-        <button class="settings-row" @click="settingsDialog = 'privacy'"><span class="settings-row-icon" v-html="settingsIcon('privacy')"></span><b>{{ t('privacy') }}</b></button>
-        <button class="settings-row" @click="settingsDialog = 'licenses'"><span class="settings-row-icon" v-html="settingsIcon('licenses')"></span><b>{{ t('licenses') }}</b></button>
-        <button class="settings-row" @click="settingsDialog = 'about'"><span class="settings-row-icon" v-html="settingsIcon('about')"></span><b>{{ t('about') }}</b></button>
-        <template v-if="devMode">
-          <div class="settings-divider"></div>
-          <div class="settings-section-label">{{ t('developerSettings') }}</div>
-          <button class="settings-row dev-only-settings-row" @click="startDevFirstLaunchMode"><span class="settings-row-icon" v-html="settingsIcon('reset')"></span><b>{{ t('devFirstLaunchMode') }}</b><small>{{ t('devFirstLaunchModeBody') }}</small></button>
-        </template>
+        <section v-for="module in visibleSettingsModules" :key="module.key" class="settings-module-section">
+          <div class="settings-section-label">{{ t(module.titleKey) }}</div>
+          <template v-for="row in module.rows" :key="row.key">
+            <label v-if="row.type === 'toggle'" class="settings-row switch-row" :class="settingsRowClass(row)">
+              <span class="settings-row-icon" v-html="settingsIcon(row.icon)"></span>
+              <b>{{ t(row.titleKey) }}</b>
+              <input type="checkbox" :checked="row.checked?.()" @change="updateSettingsToggle(row, $event)" />
+              <small v-if="settingsRowSubtitle(row)">{{ settingsRowSubtitle(row) }}</small>
+            </label>
+            <a v-else-if="row.type === 'link'" class="settings-row" :class="settingsRowClass(row)" :href="settingsRowHref(row)" target="_blank" rel="noreferrer">
+              <span class="settings-row-icon" v-html="settingsIcon(row.icon)"></span>
+              <b>{{ t(row.titleKey) }}</b>
+              <small v-if="settingsRowSubtitle(row)">{{ settingsRowSubtitle(row) }}</small>
+            </a>
+            <button v-else class="settings-row" :class="settingsRowClass(row)" type="button" @click="runSettingsRowAction(row)">
+              <span class="settings-row-icon" v-html="settingsIcon(row.icon)"></span>
+              <b>{{ t(row.titleKey) }}</b>
+              <small v-if="settingsRowSubtitle(row)">{{ settingsRowSubtitle(row) }}</small>
+            </button>
+          </template>
+        </section>
         <footer class="settings-brand"><div class="brand-logo" v-html="nutrinoLogoSvg"></div><strong>nutrino</strong><small>{{ t('version') }} {{ appVersion }}</small></footer>
       </div>
 
