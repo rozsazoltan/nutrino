@@ -50,6 +50,7 @@ type HealthAnalysisRangeKey = '30' | '180' | '360' | 'all' | 'custom';
 type HealthMediaSortDirection = 'desc' | 'asc';
 type ActivityAnalysisRangeKey = '7' | '14' | '30';
 type BackupIncludeOptions = { catalog: boolean; foodDiary: boolean; healthDiary: boolean; healthMedia: boolean };
+type AiExportIncludeOptions = { food: boolean; health: boolean };
 type CalendarSearchKind = 'food' | 'ingredient' | 'recipe' | 'activity' | 'health';
 type CalendarSearchSortDirection = 'desc' | 'asc';
 type CalendarSearchResult = { id: string; kind: CalendarSearchKind; title: string; subtitle: string; at: number; dayKey: string; targetId: string; tab: 'food' | 'health'; icon: IconName };
@@ -365,7 +366,10 @@ const notificationHighlightedMealType = ref<MealType | null>(null);
 const desktopHandoffRequests = ref<MobileHandoffRequest[]>([]);
 const activeDesktopHandoffRequest = ref<MobileHandoffRequest | null>(null);
 const desktopBackupExportScopeRequest = ref<MobileHandoffRequest | null>(null);
+const desktopAiExportScopeRequest = ref<MobileHandoffRequest | null>(null);
 const backupOptionsMode = ref<'local' | 'desktop-handoff'>('local');
+const aiExportMode = ref<'local' | 'desktop-handoff'>('local');
+const aiExportOptionsOpen = ref(false);
 const desktopHandoffNotificationsOpen = ref(false);
 const desktopHandoffBusy = ref(false);
 const pendingDesktopHandoffNotificationCount = computed(() => desktopHandoffRequests.value.length);
@@ -424,6 +428,10 @@ const exportStatus = ref('');
 const exportTitle = ref('');
 const aiExportStartDate = ref(defaultAiExportStartDate());
 const aiExportEndDate = ref(dateKey());
+const aiExportIncludeOptions = reactive<AiExportIncludeOptions>({
+  food: true,
+  health: true,
+});
 const backupIncludeOptions = reactive<BackupIncludeOptions>({
   catalog: true,
   foodDiary: true,
@@ -7411,11 +7419,19 @@ for (const language of Object.keys(translations)) {
 const aiExportAndMediaTranslations: Record<string, Partial<Record<string, string>>> = {
   en: {
     aiExportAllData: 'Export for AI',
-    aiExportAllDataBody: 'Save a compact Markdown file with food, activity, health and weight data.',
-    aiExportMarkdownHint: 'Choose a date range. The export is Markdown optimized for AI tools and includes nutrition details, recipe components, activity logs, health entries and media counts, but not photo or video files.',
+    aiExportAllDataBody: 'Save a compact Markdown file for AI tools with selectable food and health data.',
+    aiExportMarkdownHint: 'Choose what to include and the date range. The export is Markdown optimized for AI tools. Photo and video files are never embedded.',
     aiExportStartDate: 'From date',
     aiExportEndDate: 'To date',
     aiExportMarkdownCreated: 'AI Markdown export created.',
+    aiExportIncludeFood: 'Food diary',
+    aiExportIncludeFoodHint: 'Meals, nutrition details, recipe components, activity logs and weight logs.',
+    aiExportIncludeHealth: 'Health diary',
+    aiExportIncludeHealthHint: 'Health entries, notes and media counts without embedding photo or video files.',
+    aiExportSelectAtLeastOne: 'Select at least one AI export content group.',
+    desktopAiExportScopeTitle: 'AI export contents',
+    desktopAiExportScopeBody: 'Choose which data this desktop may receive and the date range for the AI Markdown export.',
+    desktopAiExportSendSelected: 'Send selected AI export',
     last90Days: 'Last 90 days',
     invalidDateRange: 'Invalid date range.',
     healthMediaEventGallery: 'All media for this recurring event',
@@ -7433,11 +7449,19 @@ const aiExportAndMediaTranslations: Record<string, Partial<Record<string, string
   },
   hu: {
     aiExportAllData: 'Export AI-nak',
-    aiExportAllDataBody: 'Kompakt Markdown mentése étkezés, aktivitás, egészség és súly adatokkal.',
-    aiExportMarkdownHint: 'Válassz dátumtartományt. Az export AI-eszközökhöz optimalizált Markdown: tápanyagok, receptösszetevők, aktivitások, egészségbejegyzések és média darabszámok benne vannak, fotó/videó fájlok nélkül.',
+    aiExportAllDataBody: 'Kompakt Markdown mentése AI-eszközökhöz választható étkezési és egészségügyi adatokkal.',
+    aiExportMarkdownHint: 'Válaszd ki, mi kerüljön bele és mettől meddig. Az export AI-eszközökhöz optimalizált Markdown. Fotó- és videófájlokat sosem ágyaz be.',
     aiExportStartDate: 'Dátumtól',
     aiExportEndDate: 'Dátumig',
     aiExportMarkdownCreated: 'AI Markdown export elkészült.',
+    aiExportIncludeFood: 'Kaja napló',
+    aiExportIncludeFoodHint: 'Étkezések, tápanyagok, receptösszetevők, aktivitásnapló és súlynapló.',
+    aiExportIncludeHealth: 'Egészségügyi napló',
+    aiExportIncludeHealthHint: 'Egészségbejegyzések, jegyzetek és média darabszámok fotó/videó fájlok beágyazása nélkül.',
+    aiExportSelectAtLeastOne: 'Legalább egy AI export tartalmi csoportot válassz ki.',
+    desktopAiExportScopeTitle: 'AI export tartalma',
+    desktopAiExportScopeBody: 'Válaszd ki, milyen adatokat kaphat meg ez a desktop, és melyik dátumtartományból készüljön az AI Markdown export.',
+    desktopAiExportSendSelected: 'Kiválasztott AI export küldése',
     last90Days: 'Utolsó 90 nap',
     invalidDateRange: 'Érvénytelen dátumtartomány.',
     healthMediaEventGallery: 'Az ismétlődő esemény összes médiája',
@@ -10206,8 +10230,69 @@ function resetAiExportRange() {
 }
 
 function openAiExportDialog() {
+  aiExportMode.value = 'local';
+  desktopAiExportScopeRequest.value = null;
   resetAiExportRange();
-  settingsDialog.value = 'aiExport';
+  resetAiExportIncludeOptions();
+  aiExportOptionsOpen.value = true;
+}
+
+function openDesktopAiExportScopeDialog(request: MobileHandoffRequest) {
+  aiExportMode.value = 'desktop-handoff';
+  desktopAiExportScopeRequest.value = request;
+  activeDesktopHandoffRequest.value = request;
+  refreshTodayKey();
+  const startKey = typeof request.payload.startKey === 'string' ? request.payload.startKey : dateKeyOffset(todayKey.value, -89);
+  const endKey = typeof request.payload.endKey === 'string' ? request.payload.endKey : todayKey.value;
+  aiExportStartDate.value = startKey;
+  aiExportEndDate.value = endKey;
+  resetAiExportIncludeOptions();
+  desktopHandoffNotificationsOpen.value = false;
+  aiExportOptionsOpen.value = true;
+}
+
+function closeAiExportOptionsDialog() {
+  aiExportOptionsOpen.value = false;
+  aiExportMode.value = 'local';
+  desktopAiExportScopeRequest.value = null;
+}
+
+function defaultAiExportIncludeOptions(): AiExportIncludeOptions {
+  return { food: true, health: true };
+}
+
+function resetAiExportIncludeOptions(defaults = defaultAiExportIncludeOptions()) {
+  aiExportIncludeOptions.food = defaults.food;
+  aiExportIncludeOptions.health = defaults.health;
+}
+
+function selectedAiExportIncludeOptions(): AiExportIncludeOptions {
+  return {
+    food: aiExportIncludeOptions.food === true,
+    health: aiExportIncludeOptions.health === true,
+  };
+}
+
+function aiExportIncludesAny(options: AiExportIncludeOptions) {
+  return options.food || options.health;
+}
+
+async function confirmAiExportOptionsExport() {
+  const range = aiExportRange();
+  if (!range) return;
+  const includeOptions = selectedAiExportIncludeOptions();
+  if (!aiExportIncludesAny(includeOptions)) return showToast(t('aiExportSelectAtLeastOne'));
+  if (aiExportMode.value === 'desktop-handoff') {
+    const request = desktopAiExportScopeRequest.value;
+    if (!request) return closeAiExportOptionsDialog();
+    aiExportOptionsOpen.value = false;
+    await sendDesktopAiExportRequest(request, range, includeOptions);
+    aiExportMode.value = 'local';
+    desktopAiExportScopeRequest.value = null;
+    return;
+  }
+  closeAiExportOptionsDialog();
+  await exportAllDataAiMarkdown(range, includeOptions);
 }
 
 function aiExportRange() {
@@ -10349,11 +10434,13 @@ function aiDayNutritionSummary(intakes: Intake[]) {
   return `kcal=${macro.kcal} macros={carbs_g:${macro.carbs},fat_g:${macro.fat},protein_g:${macro.protein}} micros={${micronutrients.length ? micronutrients.join('; ') : 'none'}}`;
 }
 
-function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; startMs: number; endMs: number }) {
-  const intakes = state.intakes.filter((entry) => isWithinAiExportRange(entry.consumed_at, range)).sort((a, b) => a.consumed_at - b.consumed_at);
-  const activities = state.activityLogs.filter((entry) => isWithinAiExportRange(entry.performed_at, range)).sort((a, b) => a.performed_at - b.performed_at);
-  const healthEntries = (state.healthEntries || []).filter((entry) => !entry.deleted_at && isWithinAiExportRange(entry.occurred_at, range)).sort((a, b) => a.occurred_at - b.occurred_at);
-  const weights = state.weightLogs.filter((entry) => isWithinAiExportRange(entry.measured_at, range)).sort((a, b) => a.measured_at - b.measured_at);
+function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; startMs: number; endMs: number }, includeOptions = defaultAiExportIncludeOptions()) {
+  const includeFood = includeOptions.food === true;
+  const includeHealth = includeOptions.health === true;
+  const intakes = includeFood ? state.intakes.filter((entry) => isWithinAiExportRange(entry.consumed_at, range)).sort((a, b) => a.consumed_at - b.consumed_at) : [];
+  const activities = includeFood ? state.activityLogs.filter((entry) => isWithinAiExportRange(entry.performed_at, range)).sort((a, b) => a.performed_at - b.performed_at) : [];
+  const healthEntries = includeHealth ? (state.healthEntries || []).filter((entry) => !entry.deleted_at && isWithinAiExportRange(entry.occurred_at, range)).sort((a, b) => a.occurred_at - b.occurred_at) : [];
+  const weights = includeFood ? state.weightLogs.filter((entry) => isWithinAiExportRange(entry.measured_at, range)).sort((a, b) => a.measured_at - b.measured_at) : [];
   const dayKeys = [...new Set([
     ...intakes.map((entry) => dateKey(new Date(entry.consumed_at))),
     ...activities.map((entry) => dateKey(new Date(entry.performed_at))),
@@ -10370,6 +10457,8 @@ function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; start
     `- exported_at=${new Date().toISOString()}`,
     `- range_start=${range.startKey}`,
     `- range_end=${range.endKey}`,
+    `- include_food=${includeFood ? 'true' : 'false'}`,
+    `- include_health=${includeHealth ? 'true' : 'false'}`,
     `- format=compact_markdown_for_llm`,
     `- note=media_files_are_not_embedded_only_photo_video_counts_are_included`,
     '',
@@ -10389,16 +10478,17 @@ function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; start
     `- health_entries=${healthEntries.length}`,
     `- health_unique_events=${healthEventCounts.size}`,
     `- weight_logs=${weights.length}`,
-    '',
-    '## Health event index',
   ];
 
-  for (const [eventId, count] of [...healthEventCounts.entries()].sort((a, b) => b[1] - a[1])) {
-    const eventEntries = healthEntries.filter((entry) => entry.event_id === eventId);
-    const first = eventEntries[0];
-    const last = eventEntries.at(-1) || first;
-    const media = first ? aiHealthMediaCounts(first) : { photoCount: 0, videoCount: 0 };
-    lines.push(`- event_id=${eventId} title="${markdownInline(first?.title || '')}" category=${first?.category || 'unknown'} count=${count} first=${first ? new Date(first.occurred_at).toISOString() : ''} last=${last ? new Date(last.occurred_at).toISOString() : ''} media_total={photos:${media.photoCount},videos:${media.videoCount}}`);
+  if (includeHealth) {
+    lines.push('', '## Health event index');
+    for (const [eventId, count] of [...healthEventCounts.entries()].sort((a, b) => b[1] - a[1])) {
+      const eventEntries = healthEntries.filter((entry) => entry.event_id === eventId);
+      const first = eventEntries[0];
+      const last = eventEntries.at(-1) || first;
+      const media = first ? aiHealthMediaCounts(first) : { photoCount: 0, videoCount: 0 };
+      lines.push(`- event_id=${eventId} title="${markdownInline(first?.title || '')}" category=${first?.category || 'unknown'} count=${count} first=${first ? new Date(first.occurred_at).toISOString() : ''} last=${last ? new Date(last.occurred_at).toISOString() : ''} media_total={photos:${media.photoCount},videos:${media.videoCount}}`);
+    }
   }
 
   lines.push('', '## Daily timeline');
@@ -10428,11 +10518,13 @@ function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; start
     }
   }
 
-  lines.push('', '## Raw health notes');
-  for (const entry of healthEntries.filter((entry) => entry.description || entry.notes)) {
-    lines.push(`### ${dateKey(new Date(entry.occurred_at))} · ${markdownInline(entry.title)}`);
-    if (entry.description) lines.push(markdownBlock(entry.description));
-    if (entry.notes) lines.push(`notes: ${markdownBlock(entry.notes)}`);
+  if (includeHealth) {
+    lines.push('', '## Raw health notes');
+    for (const entry of healthEntries.filter((entry) => entry.description || entry.notes)) {
+      lines.push(`### ${dateKey(new Date(entry.occurred_at))} · ${markdownInline(entry.title)}`);
+      if (entry.description) lines.push(markdownBlock(entry.description));
+      if (entry.notes) lines.push(`notes: ${markdownBlock(entry.notes)}`);
+    }
   }
 
   return `${lines.join('\n')}\n`;
@@ -10498,10 +10590,11 @@ async function saveMarkdownExport(content: string, filename: string, title: stri
   showToast(successMessage);
 }
 
-async function exportAllDataAiMarkdown() {
+async function exportAllDataAiMarkdown(rangeInput?: { startKey: string; endKey: string; startMs: number; endMs: number }, includeOptions = selectedAiExportIncludeOptions()) {
   if (exportBusy.value) return;
-  const range = aiExportRange();
+  const range = rangeInput || aiExportRange();
   if (!range) return;
+  if (!aiExportIncludesAny(includeOptions)) return showToast(t('aiExportSelectAtLeastOne'));
   exportBusy.value = true;
   exportProgress.value = 4;
   exportTitle.value = t('aiExportAllData');
@@ -10512,7 +10605,7 @@ async function exportAllDataAiMarkdown() {
     exportProgress.value = 18;
     exportStatus.value = t('aiExportPreparing');
     await yieldToUi();
-    const content = buildAllDataAiMarkdown(range);
+    const content = buildAllDataAiMarkdown(range, includeOptions);
     exportProgress.value = 62;
     await yieldToUi();
     await saveMarkdownExport(
@@ -14491,27 +14584,22 @@ async function sendDesktopBackupExportRequest(request: MobileHandoffRequest, inc
   }
 }
 
-async function approveDesktopExportRequest(request = activeDesktopHandoffRequest.value) {
+async function sendDesktopAiExportRequest(request: MobileHandoffRequest, range: { startKey: string; endKey: string; startMs: number; endMs: number }, includeOptions = defaultAiExportIncludeOptions()) {
   if (!request || desktopHandoffBusy.value) return;
-  if (request.kind === 'backup_export') {
-    openDesktopBackupExportScopeDialog(request);
-    return;
-  }
+  if (!aiExportIncludesAny(includeOptions)) return showToast(t('aiExportSelectAtLeastOne'));
   desktopHandoffBusy.value = true;
   exportBusy.value = true;
   exportTitle.value = t('aiExportAllData');
-  exportStatus.value = t('backupPreparing');
+  exportStatus.value = t('aiExportPreparing');
   exportProgress.value = 8;
   try {
-    refreshTodayKey();
-    const startKey = typeof request.payload.startKey === 'string' ? request.payload.startKey : dateKeyOffset(todayKey.value, -89);
-    const endKey = typeof request.payload.endKey === 'string' ? request.payload.endKey : todayKey.value;
-    const range = { startKey, endKey, startMs: dayStartMs(startKey), endMs: dayEndMs(endKey) };
-    const markdown = buildAllDataAiMarkdown(range);
+    await waitForIdle();
+    exportProgress.value = 18;
+    const markdown = buildAllDataAiMarkdown(range, includeOptions);
     await uploadDesktopHandoffResultFile(
       request,
       new TextEncoder().encode(markdown),
-      `nutrino-mobile-ai-export-${startKey}-${endKey}.md`,
+      `nutrino-mobile-ai-export-${range.startKey}-${range.endKey}.md`,
       'text/markdown',
       t('desktopHandoffExportSent'),
     );
@@ -14529,6 +14617,17 @@ async function approveDesktopExportRequest(request = activeDesktopHandoffRequest
     exportStatus.value = '';
     exportTitle.value = '';
     desktopHandoffBusy.value = false;
+  }
+}
+
+async function approveDesktopExportRequest(request = activeDesktopHandoffRequest.value) {
+  if (!request || desktopHandoffBusy.value) return;
+  if (request.kind === 'backup_export') {
+    openDesktopBackupExportScopeDialog(request);
+    return;
+  }
+  if (request.kind === 'ai_export') {
+    openDesktopAiExportScopeDialog(request);
   }
 }
 
@@ -16171,6 +16270,34 @@ function setTab(tab: Tab) {
           </div>
           <div class="export-progress-track"><span :style="{ width: `${Math.max(6, Math.min(100, exportProgress))}%` }"></span></div>
           <small>{{ Math.round(exportProgress) }}%</small>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="aiExportOptionsOpen" class="dialog-backdrop app-overlay" @click.self="closeAiExportOptionsDialog">
+        <article class="settings-dialog backup-options-dialog ai-export-options-dialog">
+          <div class="dialog-title-row"><h2>{{ t(aiExportMode === 'desktop-handoff' ? 'desktopAiExportScopeTitle' : 'aiExportAllData') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="closeAiExportOptionsDialog" v-html="lucideSvg('x')"></button></div>
+          <p class="helper big">{{ t(aiExportMode === 'desktop-handoff' ? 'desktopAiExportScopeBody' : 'aiExportMarkdownHint') }}</p>
+          <div class="backup-options-list ai-export-options-list">
+            <label class="source-choice-card source-choice-card-simple backup-option-card">
+              <span><b>{{ t('aiExportIncludeFood') }}</b><small>{{ t('aiExportIncludeFoodHint') }}</small></span>
+              <input v-model="aiExportIncludeOptions.food" type="checkbox" />
+            </label>
+            <label class="source-choice-card source-choice-card-simple backup-option-card">
+              <span><b>{{ t('aiExportIncludeHealth') }}</b><small>{{ t('aiExportIncludeHealthHint') }}</small></span>
+              <input v-model="aiExportIncludeOptions.health" type="checkbox" />
+            </label>
+          </div>
+          <div class="form-grid-two ai-export-range-grid">
+            <label class="field-label">{{ t('aiExportStartDate') }}<input v-model="aiExportStartDate" class="input" type="date" /></label>
+            <label class="field-label">{{ t('aiExportEndDate') }}<input v-model="aiExportEndDate" class="input" type="date" /></label>
+          </div>
+          <div class="dialog-actions">
+            <button class="text-button" type="button" @click="resetAiExportRange">{{ t('last90Days') }}</button>
+            <button class="text-button" type="button" @click="closeAiExportOptionsDialog">{{ t('cancel') }}</button>
+            <button class="filled-button" type="button" :disabled="exportBusy" @click="confirmAiExportOptionsExport">{{ t(aiExportMode === 'desktop-handoff' ? 'desktopAiExportSendSelected' : 'aiExportAllData') }}</button>
+          </div>
         </article>
       </div>
     </Teleport>
