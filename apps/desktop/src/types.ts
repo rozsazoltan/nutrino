@@ -18,7 +18,7 @@ export interface ServerStatus {
 
 
 export type MobileHandoffKind = 'backup_export' | 'ai_export' | 'backup_import' | string;
-export type MobileHandoffStatus = 'pending' | 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error' | string;
+export type MobileHandoffStatus = 'pending' | 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'expired' | 'error' | string;
 
 export interface MobileHandoffRequest {
   id: string;
@@ -32,6 +32,7 @@ export interface MobileHandoffRequest {
   result_filename?: string | null;
   result_mime_type?: string | null;
   result_base64?: string | null;
+  result_saved_path?: string | null;
   message?: string | null;
 }
 

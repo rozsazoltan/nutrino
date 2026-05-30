@@ -20,7 +20,7 @@ const androidAppGradlePaths = [
   path.join(androidDir, 'app', 'build.gradle.kts'),
   path.join(androidDir, 'app', 'build.gradle'),
 ];
-const NATIVE_STATE_VERSION = 16;
+const NATIVE_STATE_VERSION = 17;
 const NOTIFICATION_PLUGIN_OVERRIDE_VERSION = 3;
 const forceNativeClean = process.argv.includes('--force-native-clean')
   || process.env.NUTRINO_FORCE_ANDROID_NATIVE_CLEAN === '1';
@@ -1118,15 +1118,23 @@ class MainActivity : TauriActivity() {
         val actionId = findFirstStringExtra(intent, listOf(
             "NotificationUserAction",
             "notificationUserAction",
+            "notification_user_action",
             "actionId",
-            "action"
+            "action_id",
+            "action",
+            "android.intent.extra.NOTIFICATION_ACTION",
+            "tauriNotificationAction",
+            "tauri_notification_action"
         )) ?: "tap"
         val notificationJson = findFirstStringExtra(intent, listOf(
             "LocalNotficationObject",
             "LocalNotificationObject",
+            "localNotificationObject",
             "notification",
             "notificationJson",
-            "sourceJson"
+            "notification_json",
+            "sourceJson",
+            "source_json"
         ))
         if (notificationId == null && actionId == "tap" && notificationJson.isNullOrBlank()) return null
 
@@ -1140,7 +1148,28 @@ class MainActivity : TauriActivity() {
             } catch (_: Exception) {
             }
         }
+        payload.put("extras", intentExtrasToJson(intent))
         return payload
+    }
+
+    private fun intentExtrasToJson(intent: Intent): JSONObject {
+        val result = JSONObject()
+        val extras = intent.extras ?: return result
+        for (key in extras.keySet()) {
+            val value = extras.get(key) ?: continue
+            try {
+                when (value) {
+                    is Boolean -> result.put(key, value)
+                    is Int -> result.put(key, value)
+                    is Long -> result.put(key, value)
+                    is Double -> result.put(key, value)
+                    is Float -> result.put(key, value.toDouble())
+                    else -> result.put(key, value.toString())
+                }
+            } catch (_: Exception) {
+            }
+        }
+        return result
     }
 
     private fun findFirstIntExtra(intent: Intent, keys: List<String>): Int? {
@@ -1157,9 +1186,12 @@ class MainActivity : TauriActivity() {
     }
 
     private fun findFirstStringExtra(intent: Intent, keys: List<String>): String? {
+        val extras = intent.extras
         for (key in keys) {
             if (!intent.hasExtra(key)) continue
-            val value = intent.getStringExtra(key)
+            val direct = intent.getStringExtra(key)
+            if (!direct.isNullOrBlank()) return direct
+            val value = extras?.get(key)?.toString()
             if (!value.isNullOrBlank()) return value
         }
         return null

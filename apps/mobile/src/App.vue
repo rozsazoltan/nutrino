@@ -110,6 +110,7 @@ type NutrinoNotificationEvent = {
   id?: number | string;
   notification?: (NotificationOptions & { id?: number | string; extra?: Record<string, unknown>; data?: Record<string, unknown>; sourceJson?: string }) | null;
   extra?: Record<string, unknown>;
+  extras?: Record<string, unknown>;
   data?: Record<string, unknown>;
   sourceJson?: string;
 };
@@ -1390,6 +1391,7 @@ onMounted(() => {
   window.addEventListener('nutrino:android-back', handleNativeAndroidBack);
   window.addEventListener('nutrino:android-update-installer', handleAndroidUpdateInstallerEvent);
   window.addEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
+  window.addEventListener('nutrino:desktop-handoff-request-resolved', handleDesktopHandoffResolvedEvent as EventListener);
   (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = true;
   consumeNativePendingNotificationAction();
   void installWindowCloseGuard();
@@ -1417,6 +1419,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('nutrino:android-back', handleNativeAndroidBack);
   window.removeEventListener('nutrino:android-update-installer', handleAndroidUpdateInstallerEvent);
   window.removeEventListener('nutrino:notification-action', handleNativeNotificationActionEvent);
+  window.removeEventListener('nutrino:desktop-handoff-request-resolved', handleDesktopHandoffResolvedEvent as EventListener);
   (window as unknown as { __NUTRINO_NOTIFICATION_BRIDGE_READY__?: boolean }).__NUTRINO_NOTIFICATION_BRIDGE_READY__ = false;
   uninstallWindowCloseGuard();
   if (healthTimer) window.clearInterval(healthTimer);
@@ -11980,6 +11983,39 @@ function parseNotificationJson(value: unknown): Record<string, unknown> | null {
   }
 }
 
+function stringFromRecordKeys(record: Record<string, unknown> | null | undefined, keys: string[]): string | undefined {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  }
+  return undefined;
+}
+
+const notificationActionKeys = [
+  'NotificationUserAction',
+  'notificationUserAction',
+  'notification_user_action',
+  'actionId',
+  'action_id',
+  'action',
+  'android.intent.extra.NOTIFICATION_ACTION',
+  'tauriNotificationAction',
+  'tauri_notification_action',
+];
+
+const notificationSourceJsonKeys = [
+  'LocalNotficationObject',
+  'LocalNotificationObject',
+  'localNotificationObject',
+  'notification',
+  'notificationJson',
+  'notification_json',
+  'sourceJson',
+  'source_json',
+];
+
 function normalizeNotificationExtra(extra: unknown): Partial<NutrinoNotificationExtra> {
   const record = asRecord(extra);
   if (!record) return {};
@@ -12040,8 +12076,14 @@ function closeTransientSurfacesForNotificationAction() {
 async function applyNotificationAction(action: NutrinoNotificationAction, extra: Partial<NutrinoNotificationExtra>) {
   if (action === 'dismiss') return;
   if (extra.kind === 'desktop-handoff' || action.startsWith('desktop-handoff') || action === 'open-desktop-handoff') {
-    await pollDesktopHandoffRequests();
-    const request = extra.desktopHandoffRequestId ? desktopHandoffRequests.value.find((item) => item.id === extra.desktopHandoffRequestId) : null;
+    const explicitDesktopAction = action.startsWith('desktop-handoff') && action !== 'open-desktop-handoff';
+    const request = extra.desktopHandoffRequestId
+      ? await findDesktopHandoffRequestForAction(extra.desktopHandoffRequestId)
+      : (await pollDesktopHandoffRequests(), null);
+    if (!request && extra.desktopHandoffRequestId) {
+      removeDesktopHandoffRequestLocally(extra.desktopHandoffRequestId);
+      if (explicitDesktopAction) return;
+    }
     if (action === 'desktop-handoff-allow') {
       if (request) await approveDesktopExportRequest(request);
       return;
@@ -12108,13 +12150,17 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
 function handleNotificationAction(payload: unknown) {
   const event = asRecord(payload) as NutrinoNotificationEvent | null;
   if (!event) return;
-  const notification = asRecord(event.notification);
-  const sourceJson = parseNotificationJson(event.sourceJson) || parseNotificationJson(notification?.sourceJson);
+  const eventExtras = asRecord(event.extras);
+  const notification = asRecord(event.notification) || asRecord(parseNotificationJson(stringFromRecordKeys(eventExtras, notificationSourceJsonKeys)));
+  const sourceJson = parseNotificationJson(event.sourceJson)
+    || parseNotificationJson(notification?.sourceJson)
+    || parseNotificationJson(stringFromRecordKeys(eventExtras, notificationSourceJsonKeys));
   const sourceExtraRecord = asRecord(sourceJson?.extra) || asRecord(parseNotificationJson(sourceJson?.extra));
   const rawAction = event.actionId
     ?? event.action
     ?? event.userAction
     ?? event.notificationUserAction
+    ?? stringFromRecordKeys(eventExtras, notificationActionKeys)
     ?? sourceJson?.actionId
     ?? sourceJson?.action;
   const extraAction = sourceExtraRecord?.actionId ?? sourceExtraRecord?.action;
@@ -12123,6 +12169,7 @@ function handleNotificationAction(payload: unknown) {
     notification?.id
     ?? event.notificationId
     ?? event.id
+    ?? stringFromRecordKeys(eventExtras, ['NotificationId', 'notificationId', 'id'])
     ?? sourceJson?.id,
   );
   const extra = {
@@ -12131,6 +12178,7 @@ function handleNotificationAction(payload: unknown) {
     ...normalizeNotificationExtra(notification),
     ...normalizeNotificationExtra(event.data),
     ...normalizeNotificationExtra(event.extra),
+    ...normalizeNotificationExtra(eventExtras),
   };
   const signature = `${notificationId ?? 'unknown'}:${action}:${extra.kind ?? 'unknown'}:${extra.mealType ?? ''}:${extra.desktopHandoffRequestId ?? ''}`;
   const now = Date.now();
@@ -14262,20 +14310,49 @@ async function pollDesktopHandoffRequests() {
     if (activeDesktopHandoffRequest.value && !requests.some((request) => request.id === activeDesktopHandoffRequest.value?.id)) {
       activeDesktopHandoffRequest.value = null;
     }
-    if (!requests.length) desktopHandoffNotificationsOpen.value = false;
     for (const request of requests) void notifyDesktopHandoffRequest(request);
   } catch {
     // The normal server health polling already reports connectivity state.
   }
 }
 
+function sleepMs(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function findDesktopHandoffRequestForAction(requestId: string): Promise<MobileHandoffRequest | null> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await pollDesktopHandoffRequests();
+    const request = desktopHandoffRequests.value.find((item) => item.id === requestId) || null;
+    if (request) return request;
+    if (attempt < 3) await sleepMs(350);
+  }
+  return null;
+}
+
+function removeDesktopHandoffRequestLocally(requestId: string) {
+  desktopHandoffRequests.value = desktopHandoffRequests.value.filter((item) => item.id !== requestId);
+  void cancelDesktopHandoffNotification(requestId);
+  notifiedDesktopHandoffIds.delete(requestId);
+  if (activeDesktopHandoffRequest.value?.id === requestId) activeDesktopHandoffRequest.value = null;
+  if (!desktopHandoffRequests.value.length) desktopHandoffNotificationsOpen.value = false;
+}
+
+function emitDesktopHandoffResolvedEvent(requestId: string, status: string) {
+  window.dispatchEvent(new CustomEvent('nutrino:desktop-handoff-request-resolved', { detail: { requestId, status } }));
+}
+
+function handleDesktopHandoffResolvedEvent(event: Event) {
+  const detail = asRecord((event as CustomEvent<unknown>).detail);
+  const requestId = typeof detail?.requestId === 'string' ? detail.requestId : '';
+  if (!requestId) return;
+  removeDesktopHandoffRequestLocally(requestId);
+}
+
 async function finishDesktopHandoffRequest(request: MobileHandoffRequest, status: 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error', payload: { result_filename?: string; result_mime_type?: string; result_base64?: string; message?: string } = {}) {
   await respondMobileHandoffRequest(state, request.id, { status, ...payload });
-  desktopHandoffRequests.value = desktopHandoffRequests.value.filter((item) => item.id !== request.id);
-  await cancelDesktopHandoffNotification(request.id);
-  notifiedDesktopHandoffIds.delete(request.id);
-  if (activeDesktopHandoffRequest.value?.id === request.id) activeDesktopHandoffRequest.value = null;
-  if (!desktopHandoffRequests.value.length) desktopHandoffNotificationsOpen.value = false;
+  emitDesktopHandoffResolvedEvent(request.id, status);
+  removeDesktopHandoffRequestLocally(request.id);
 }
 
 async function rejectDesktopHandoffRequest(request = activeDesktopHandoffRequest.value) {
@@ -14625,8 +14702,8 @@ function setTab(tab: Tab) {
       </div>
     </header>
 
-    <div v-if="desktopHandoffNotificationsOpen" class="modal-backdrop desktop-handoff-backdrop">
-      <article class="modal-card desktop-handoff-dialog desktop-handoff-notifications-dialog">
+    <div v-if="desktopHandoffNotificationsOpen" class="dialog-backdrop desktop-handoff-notifications-backdrop" @click.self="closeDesktopHandoffNotifications">
+      <article class="settings-dialog desktop-handoff-notifications-dialog" role="dialog" aria-modal="true" :aria-label="t('desktopHandoffNotifications')">
         <div class="dialog-title-row">
           <div>
             <h2>{{ t('desktopHandoffNotifications') }}</h2>

@@ -7386,3 +7386,35 @@ select:focus {
   color: var(--on-surface-variant);
   line-height: 1.35;
 }
+
+/* Desktop handoff notifications modal */
+.desktop-handoff-notifications-backdrop {
+  z-index: calc(var(--z-overlay-dialog) + 40) !important;
+  background: rgba(0, 0, 0, .64) !important;
+  backdrop-filter: blur(8px) saturate(1.05);
+}
+
+.desktop-handoff-notifications-dialog {
+  width: min(100%, 34rem);
+  display: grid;
+  gap: 1rem;
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 72%, transparent);
+  background: color-mix(in srgb, var(--surface) 96%, var(--surface-container-highest));
+  box-shadow: 0 28px 96px rgba(0, 0, 0, .48);
+}
+
+.desktop-handoff-notifications-dialog h2 {
+  margin: 0;
+}
+
+.desktop-handoff-notifications-dialog .helper {
+  margin: .35rem 0 0;
+}
+
+@media (max-width: 560px) {
+  .desktop-handoff-notifications-dialog {
+    width: calc(100vw - 24px);
+    padding: 18px !important;
+    border-radius: 26px;
+  }
+}

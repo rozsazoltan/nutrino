@@ -2427,3 +2427,26 @@ body:has(.modal-backdrop) {
     justify-content: flex-start;
   }
 }
+
+/* Mobile handoff request controls */
+.mobile-handoff-panel-actions,
+.mobile-handoff-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.btn-secondary.danger-lite {
+  color: var(--danger, #b42318);
+  border-color: color-mix(in srgb, var(--danger, #b42318) 28%, transparent);
+}
+
+.mobile-handoff-saved-path {
+  max-width: min(460px, 52vw);
+  display: block;
+  color: var(--muted, #64748b);
+  overflow-wrap: anywhere;
+  text-align: right;
+}

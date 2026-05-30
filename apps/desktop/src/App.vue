@@ -91,6 +91,7 @@ const savedMobileHandoffResultIds = new Set<string>((() => {
 const updateRemindLaterKey = `nutrino.desktop.${appChannel}.update.remindLater.v1`;
 let updateCheckUnlisten: UnlistenFn | null = null;
 let mobileHandoffUnlisten: UnlistenFn | null = null;
+let lastMobileRequestedUpdateCheckAt = 0;
 
 type AppLanguage = 'system' | 'en' | 'hu' | 'de' | 'fr' | 'ru' | 'uk' | 'zh' | 'sk' | 'ro' | 'cs' | 'sl' | 'hr' | 'pl' | 'es' | 'pt';
 type LanguageOption = { code: AppLanguage; englishName: string; nativeName: string; locale: string; aliases: string[] };
@@ -5008,7 +5009,9 @@ async function checkForAppUpdates(options: { quiet?: boolean; manual?: boolean; 
       target: detectDesktopUpdateTarget(),
     });
     updateCheckResult.value = result;
-    if (result.status === 'available' && (options.ignoreRemindLater || options.manual || !updateRemindLaterActive(result))) {
+    const shouldOpenUpdateDialog = result.status === 'available'
+      && (options.ignoreRemindLater || options.manual || (!options.quiet && !updateRemindLaterActive(result)));
+    if (shouldOpenUpdateDialog) {
       updateDialogOpen.value = true;
       return;
     }
@@ -6579,12 +6582,31 @@ function mobileHandoffStatusLabel(status: string) {
   if (status === 'used') return 'Használva';
   if (status === 'kept') return 'Megtartva';
   if (status === 'deleted') return 'Törölve';
+  if (status === 'expired') return 'Lejárt';
   if (status === 'error') return 'Hiba';
   return typeLabel(status);
 }
 
 function mobileHandoffFileName(request: MobileHandoffRequest) {
   return request.result_filename || (request.kind === 'ai_export' ? `nutrino-mobile-ai-export-${timestampForBackupName()}.md` : `nutrino-mobile-backup-${timestampForBackupName()}.zip`);
+}
+
+function pendingMobileHandoffRequest(device: ConnectedDevice, kind: string) {
+  return mobileHandoffRequests.value.find((request) => request.device_id === device.id && request.kind === kind && request.status === 'pending') || null;
+}
+
+function hasPendingMobileHandoffRequest(device: ConnectedDevice, kind: string) {
+  return Boolean(pendingMobileHandoffRequest(device, kind));
+}
+
+function mobileHandoffActionTitle(device: ConnectedDevice, kind: string) {
+  return hasPendingMobileHandoffRequest(device, kind)
+    ? `${mobileHandoffKindLabel(kind)} kérés már függőben van ezen a mobilon.`
+    : '';
+}
+
+function canClearMobileHandoffHistory() {
+  return mobileHandoffRequests.value.some((request) => request.status !== 'pending');
 }
 
 async function refreshMobileHandoffRequests() {
@@ -6597,6 +6619,10 @@ async function refreshMobileHandoffRequests() {
 }
 
 async function requestMobileBackupExport(device: ConnectedDevice) {
+  if (hasPendingMobileHandoffRequest(device, 'backup_export')) {
+    setMessage(`${device.display_name}: már van függőben lévő backup export kérés.`);
+    return;
+  }
   loading.value = true;
   try {
     await commands.requestMobileBackupExport(device.id);
@@ -6610,6 +6636,10 @@ async function requestMobileBackupExport(device: ConnectedDevice) {
 }
 
 async function requestMobileAiExport(device: ConnectedDevice) {
+  if (hasPendingMobileHandoffRequest(device, 'ai_export')) {
+    setMessage(`${device.display_name}: már van függőben lévő AI export kérés.`);
+    return;
+  }
   loading.value = true;
   try {
     await commands.requestMobileAiExport(device.id);
@@ -6623,6 +6653,10 @@ async function requestMobileAiExport(device: ConnectedDevice) {
 }
 
 async function sendMobileBackupImport(device: ConnectedDevice) {
+  if (hasPendingMobileHandoffRequest(device, 'backup_import')) {
+    setMessage(`${device.display_name}: már van függőben lévő backup import kérés.`);
+    return;
+  }
   loading.value = true;
   try {
     const selected = await open({ multiple: false, filters: [{ name: 'nutrino mobile app backup', extensions: ['zip'] }] });
@@ -6641,6 +6675,7 @@ async function sendMobileBackupImport(device: ConnectedDevice) {
 }
 
 async function saveMobileHandoffResult(request: MobileHandoffRequest, automatic = false) {
+  if (request.result_saved_path && automatic) return;
   if (!request.result_base64) return setMessage('Ehhez a kéréshez nincs menthető fájl.');
   try {
     const bytes = base64ToBytes(request.result_base64);
@@ -6654,9 +6689,22 @@ async function saveMobileHandoffResult(request: MobileHandoffRequest, automatic 
 }
 
 async function autoSaveCompletedMobileHandoffResults() {
-  const completed = mobileHandoffRequests.value.filter((request) => request.result_base64 && !savedMobileHandoffResultIds.has(request.id));
+  const completed = mobileHandoffRequests.value.filter((request) => request.result_base64 && !request.result_saved_path && !savedMobileHandoffResultIds.has(request.id));
   for (const request of completed) {
     await saveMobileHandoffResult(request, true);
+  }
+}
+
+async function clearMobileHandoffHistory() {
+  loading.value = true;
+  try {
+    const removed = await commands.clearMobileHandoffHistory();
+    await refreshMobileHandoffRequests();
+    setMessage(removed ? `${removed} korábbi mobil művelet törölve.` : 'Nincs törölhető korábbi mobil művelet.');
+  } catch (error) {
+    setMessage(String(error));
+  } finally {
+    loading.value = false;
   }
 }
 
@@ -6854,8 +6902,10 @@ async function initializeDesktop() {
   void checkForAppUpdates({ quiet: true });
   try {
     updateCheckUnlisten = await listen('nutrino-update-check-requested', () => {
-      setMessage(t('ui.mobileRequestedDesktopUpdateCheck'));
-      void checkForAppUpdates({ quiet: true, ignoreRemindLater: true });
+      const now = Date.now();
+      if (now - lastMobileRequestedUpdateCheckAt < 60 * 60 * 1000) return;
+      lastMobileRequestedUpdateCheckAt = now;
+      void checkForAppUpdates({ quiet: true });
     });
   } catch {
     updateCheckUnlisten = null;
@@ -7265,9 +7315,9 @@ onBeforeUnmount(() => {
                   <p>{{ connectedDeviceSubtitle(device) }}</p>
                   <small>{{ t('ui.lastSeen') }} {{ formatDeviceSeenAt(device.last_seen) }} · {{ device.last_path }} · {{ device.request_count }} {{ t(device.request_count === 1 ? 'ui.requestSingular' : 'ui.requestPlural') }}</small>
                   <div class="connected-device-actions">
-                    <button class="btn-secondary" type="button" :disabled="loading" @click="requestMobileBackupExport(device)">Backup export kérése</button>
-                    <button class="btn-secondary" type="button" :disabled="loading" @click="requestMobileAiExport(device)">AI export kérése</button>
-                    <button class="btn-primary" type="button" :disabled="loading" @click="sendMobileBackupImport(device)">Backup import küldése</button>
+                    <button class="btn-secondary" type="button" :disabled="loading || hasPendingMobileHandoffRequest(device, 'backup_export')" :title="mobileHandoffActionTitle(device, 'backup_export')" @click="requestMobileBackupExport(device)">Backup export kérése</button>
+                    <button class="btn-secondary" type="button" :disabled="loading || hasPendingMobileHandoffRequest(device, 'ai_export')" :title="mobileHandoffActionTitle(device, 'ai_export')" @click="requestMobileAiExport(device)">AI export kérése</button>
+                    <button class="btn-primary" type="button" :disabled="loading || hasPendingMobileHandoffRequest(device, 'backup_import')" :title="mobileHandoffActionTitle(device, 'backup_import')" @click="sendMobileBackupImport(device)">Backup import küldése</button>
                   </div>
                 </div>
               </article>
@@ -7279,7 +7329,10 @@ onBeforeUnmount(() => {
                 <h2 class="text-xl font-bold">Mobil műveletek</h2>
                 <p class="mt-2 muted">Desktopról indított backup export, AI export és backup import kérések állapota.</p>
               </div>
-              <button class="btn-secondary" :disabled="loading" @click="refreshMobileHandoffRequests">{{ t('ui.refresh_63a6a') }}</button>
+              <div class="mobile-handoff-panel-actions">
+                <button class="btn-secondary" :disabled="loading" @click="refreshMobileHandoffRequests">{{ t('ui.refresh_63a6a') }}</button>
+                <button class="btn-secondary danger-lite" type="button" :disabled="loading || !canClearMobileHandoffHistory()" @click="clearMobileHandoffHistory">Előzmények törlése</button>
+              </div>
             </div>
             <div v-if="!mobileHandoffRequests.length" class="empty-state mt-4">Még nincs mobilra küldött kérés.</div>
             <div v-else class="mt-4 grid gap-3">
@@ -7290,8 +7343,9 @@ onBeforeUnmount(() => {
                     <small>{{ mobileHandoffKindLabel(request.kind) }} · {{ mobileHandoffStatusLabel(request.status) }} · {{ formatDateTime(request.created_at) }}</small>
                     <small v-if="request.message">{{ request.message }}</small>
                   </div>
-                  <div class="flex gap-2">
-                    <button v-if="request.result_base64" class="btn-primary" type="button" :disabled="loading" @click="saveMobileHandoffResult(request)">Fájl mentése</button>
+                  <div class="mobile-handoff-card-actions">
+                    <small v-if="request.result_saved_path" class="mobile-handoff-saved-path">Mentve: {{ request.result_saved_path }}</small>
+                    <button v-else-if="request.result_base64" class="btn-primary" type="button" :disabled="loading" @click="saveMobileHandoffResult(request)">Fájl mentése</button>
                   </div>
                 </div>
               </article>

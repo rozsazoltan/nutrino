@@ -2284,6 +2284,7 @@ version = "0.13.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "csv",
  "reqwest 0.12.28",

@@ -10,8 +10,9 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+use base64::{engine::general_purpose, Engine as _};
 use axum::{
-    extract::{ConnectInfo, Path as AxumPath, Query, State as AxumState, ws::{Message, WebSocket, WebSocketUpgrade}},
+    extract::{ConnectInfo, DefaultBodyLimit, Path as AxumPath, Query, State as AxumState, ws::{Message, WebSocket, WebSocketUpgrade}},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -29,6 +30,7 @@ use uuid::Uuid;
 
 const APP_NAME: &str = "Nutrino";
 const APP_VERSION: &str = env!("NUTRINO_APP_VERSION");
+const MOBILE_HANDOFF_RESPONSE_BODY_LIMIT: usize = 256 * 1024 * 1024;
 
 struct ServerRuntime {
     port: u16,
@@ -99,6 +101,7 @@ struct ConnectedDevice {
 
 const CONNECTED_DEVICE_ACTIVE_MS: i64 = 5 * 60 * 1000;
 const CONNECTED_DEVICE_KEEP_MS: i64 = 60 * 60 * 1000;
+const MOBILE_HANDOFF_PENDING_TTL_MS: i64 = 15 * 60 * 1000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MobileHandoffRequest {
@@ -113,6 +116,7 @@ struct MobileHandoffRequest {
     result_filename: Option<String>,
     result_mime_type: Option<String>,
     result_base64: Option<String>,
+    result_saved_path: Option<String>,
     message: Option<String>,
 }
 
@@ -144,6 +148,7 @@ struct MobileHandoffResponseInput {
     result_filename: Option<String>,
     result_mime_type: Option<String>,
     result_base64: Option<String>,
+    result_saved_path: Option<String>,
     message: Option<String>,
 }
 
@@ -733,6 +738,7 @@ pub fn run() {
             request_mobile_backup_export,
             request_mobile_ai_export,
             send_mobile_backup_import,
+            clear_mobile_handoff_history,
             get_default_download_dir,
             save_file_to_default_download_dir,
             download_and_open_update_installer,
@@ -768,6 +774,79 @@ fn configured_default_download_dir(app: &tauri::AppHandle, db_path: &Path) -> st
         .map_err(|error| format!("Could not resolve the default download directory: {error}"))
 }
 
+fn unique_download_path(dir: &Path, filename: &str) -> PathBuf {
+    let safe = safe_download_file_name(filename);
+    let path = dir.join(&safe);
+    if !path.exists() {
+        return path;
+    }
+    let stem = Path::new(&safe)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("nutrino-export");
+    let extension = Path::new(&safe).extension().and_then(|value| value.to_str()).unwrap_or_default();
+    for index in 2..1000 {
+        let candidate = if extension.is_empty() {
+            dir.join(format!("{stem}-{index}"))
+        } else {
+            dir.join(format!("{stem}-{index}.{extension}"))
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    dir.join(format!("{}-{}.bin", stem, Utc::now().format("%Y%m%d-%H%M%S")))
+}
+
+fn save_bytes_to_default_download_dir_blocking(app: &tauri::AppHandle, db_path: &Path, filename: &str, bytes: &[u8]) -> std::result::Result<String, String> {
+    if bytes.is_empty() {
+        return Err("Refusing to save an empty mobile export file.".to_string());
+    }
+    let dir = configured_default_download_dir(app, db_path)?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create the default download directory: {error}"))?;
+    let path = unique_download_path(&dir, filename);
+    {
+        let mut file = File::create(&path)
+            .map_err(|error| format!("Could not create export file: {error}"))?;
+        file.write_all(bytes)
+            .map_err(|error| format!("Could not write export file: {error}"))?;
+        file.flush()
+            .map_err(|error| format!("Could not finish export file: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Could not sync export file to disk: {error}"))?;
+    }
+    let metadata = std::fs::metadata(&path)
+        .map_err(|error| format!("Could not verify saved export file: {error}"))?;
+    if metadata.len() == 0 {
+        let _ = std::fs::remove_file(&path);
+        return Err("Saved mobile export file is empty.".to_string());
+    }
+    if metadata.len() != bytes.len() as u64 {
+        let _ = std::fs::remove_file(&path);
+        return Err(format!("Saved mobile export size mismatch: {} / {} bytes.", metadata.len(), bytes.len()));
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn decode_mobile_export_base64(base64_text: &str) -> std::result::Result<Vec<u8>, String> {
+    let normalized = base64_text.trim();
+    if normalized.is_empty() {
+        return Err("Missing mobile export data.".to_string());
+    }
+    general_purpose::STANDARD
+        .decode(normalized)
+        .or_else(|_| general_purpose::URL_SAFE.decode(normalized))
+        .or_else(|_| general_purpose::URL_SAFE_NO_PAD.decode(normalized))
+        .map_err(|error| format!("Could not decode mobile export data: {error}"))
+}
+
+fn save_base64_file_to_default_download_dir_blocking(app: &tauri::AppHandle, db_path: &Path, filename: &str, base64_text: &str) -> std::result::Result<String, String> {
+    let bytes = decode_mobile_export_base64(base64_text)?;
+    save_bytes_to_default_download_dir_blocking(app, db_path, filename, &bytes)
+}
+
 #[tauri::command]
 fn get_default_download_dir(app: tauri::AppHandle, state: State<'_, AppState>) -> std::result::Result<String, String> {
     configured_default_download_dir(&app, &state.db_path).map(|path| path.to_string_lossy().to_string())
@@ -776,21 +855,9 @@ fn get_default_download_dir(app: tauri::AppHandle, state: State<'_, AppState>) -
 #[tauri::command]
 async fn save_file_to_default_download_dir(app: tauri::AppHandle, state: State<'_, AppState>, filename: String, bytes: Vec<u8>) -> std::result::Result<String, String> {
     let db_path = state.db_path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let dir = configured_default_download_dir(&app, &db_path)?;
-        std::fs::create_dir_all(&dir)
-            .map_err(|error| format!("Could not create the default download directory: {error}"))?;
-        let path = dir.join(safe_download_file_name(&filename));
-        let mut file = File::create(&path)
-            .map_err(|error| format!("Could not create export file: {error}"))?;
-        file.write_all(&bytes)
-            .map_err(|error| format!("Could not write export file: {error}"))?;
-        file.flush()
-            .map_err(|error| format!("Could not finish export file: {error}"))?;
-        Ok(path.to_string_lossy().to_string())
-    })
-    .await
-    .map_err(|error| format!("Export save task failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || save_bytes_to_default_download_dir_blocking(&app, &db_path, &filename, &bytes))
+        .await
+        .map_err(|error| format!("Export save task failed: {error}"))?
 }
 
 
@@ -1218,10 +1285,13 @@ fn init_database(path: &Path) -> Result<()> {
             result_filename TEXT,
             result_mime_type TEXT,
             result_base64 TEXT,
+            result_saved_path TEXT,
             message TEXT
         );
         "#,
     )?;
+
+    let _ = conn.execute("ALTER TABLE mobile_handoff_requests ADD COLUMN result_saved_path TEXT", []);
 
     let _ = conn.execute("ALTER TABLE weight_logs ADD COLUMN bmi REAL NOT NULL DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE foods ADD COLUMN catalog_kind TEXT NOT NULL DEFAULT 'food'", []);
@@ -1516,6 +1586,7 @@ async fn start_api_server_internal(port: u16, state: &AppState) -> Result<Server
         .route("/api/v1/ingredients", get(api_list_ingredients).post(api_create_ingredient))
         .route("/api/v1/recipes", get(api_list_recipes))
         .route("/api/v1/activities", get(api_list_activities))
+        .layer(DefaultBodyLimit::max(MOBILE_HANDOFF_RESPONSE_BODY_LIMIT))
         .layer(CorsLayer::new().allow_origin(Any).allow_headers(Any).allow_methods(Any))
         .with_state(api_state);
 
@@ -2939,15 +3010,29 @@ fn mobile_handoff_request_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<
         result_filename: row.get(8)?,
         result_mime_type: row.get(9)?,
         result_base64: row.get(10)?,
-        message: row.get(11)?,
+        result_saved_path: row.get(11)?,
+        message: row.get(12)?,
     })
+}
+
+fn expire_mobile_handoff_requests(conn: &Connection) -> Result<usize> {
+    let cutoff = now_ms() - MOBILE_HANDOFF_PENDING_TTL_MS;
+    Ok(conn.execute(
+        r#"UPDATE mobile_handoff_requests
+           SET status = 'expired',
+               responded_at = ?1,
+               message = COALESCE(NULLIF(message, ''), 'The mobile request expired before the phone responded.')
+           WHERE status = 'pending' AND created_at <= ?2"#,
+        params![now_ms(), cutoff],
+    )?)
 }
 
 fn db_list_mobile_handoff_requests(path: &Path) -> Result<Vec<MobileHandoffRequest>> {
     let conn = open_conn(path)?;
+    expire_mobile_handoff_requests(&conn)?;
     let mut stmt = conn.prepare(
         r#"SELECT id, device_id, device_name, kind, status, created_at, responded_at, payload_json,
-                  result_filename, result_mime_type, result_base64, message
+                  result_filename, result_mime_type, result_base64, result_saved_path, message
            FROM mobile_handoff_requests
            ORDER BY created_at DESC
            LIMIT 100"#,
@@ -2973,6 +3058,15 @@ fn emit_mobile_handoff_event(notifier: &MobileHandoffNotifier, event: &str, devi
     });
 }
 
+fn mobile_handoff_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "backup_export" => "backup export",
+        "ai_export" => "AI export",
+        "backup_import" => "backup import",
+        _ => "handoff",
+    }
+}
+
 fn queue_mobile_handoff_request_internal(state: &AppState, device_id: String, kind: &str, mut payload: serde_json::Value) -> Result<MobileHandoffRequest> {
     if let Some(object) = payload.as_object_mut() {
         object.entry("desktop_name").or_insert_with(|| serde_json::json!(format!("{} Desktop", APP_NAME)));
@@ -2982,9 +3076,21 @@ fn queue_mobile_handoff_request_internal(state: &AppState, device_id: String, ki
     let now = now_ms();
     let payload_json = serde_json::to_string(&payload)?;
     let conn = open_conn(&state.db_path)?;
+    expire_mobile_handoff_requests(&conn)?;
+    let existing_pending: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mobile_handoff_requests WHERE device_id = ?1 AND kind = ?2 AND status = 'pending'",
+        params![device_id, kind],
+        |row| row.get(0),
+    )?;
+    if existing_pending > 0 {
+        return Err(anyhow!(
+            "A {} request is already pending for this mobile. Wait for the phone response or for the request to expire.",
+            mobile_handoff_kind_label(kind),
+        ));
+    }
     conn.execute(
-        r#"INSERT INTO mobile_handoff_requests (id, device_id, device_name, kind, status, created_at, responded_at, payload_json, result_filename, result_mime_type, result_base64, message)
-           VALUES (?1, ?2, ?3, ?4, 'pending', ?5, NULL, ?6, NULL, NULL, NULL, NULL)"#,
+        r#"INSERT INTO mobile_handoff_requests (id, device_id, device_name, kind, status, created_at, responded_at, payload_json, result_filename, result_mime_type, result_base64, result_saved_path, message)
+           VALUES (?1, ?2, ?3, ?4, 'pending', ?5, NULL, ?6, NULL, NULL, NULL, NULL, NULL)"#,
         params![id, device_id, device_name, kind, now, payload_json],
     )?;
     let request = db_get_mobile_handoff_request(&conn, &id)?;
@@ -2995,7 +3101,7 @@ fn queue_mobile_handoff_request_internal(state: &AppState, device_id: String, ki
 fn db_get_mobile_handoff_request(conn: &Connection, request_id: &str) -> Result<MobileHandoffRequest> {
     conn.query_row(
         r#"SELECT id, device_id, device_name, kind, status, created_at, responded_at, payload_json,
-                  result_filename, result_mime_type, result_base64, message
+                  result_filename, result_mime_type, result_base64, result_saved_path, message
            FROM mobile_handoff_requests
            WHERE id = ?1"#,
         params![request_id],
@@ -3028,6 +3134,15 @@ fn send_mobile_backup_import(device_id: String, filename: String, backup_base64:
         "mime_type": "application/zip",
         "backup_base64": backup_base64,
     })).map_err(stringify_error)
+}
+
+#[tauri::command]
+fn clear_mobile_handoff_history(state: State<'_, AppState>) -> Result<u64, String> {
+    let conn = open_conn(&state.db_path).map_err(stringify_error)?;
+    expire_mobile_handoff_requests(&conn).map_err(stringify_error)?;
+    conn.execute("DELETE FROM mobile_handoff_requests WHERE status != 'pending'", [])
+        .map(|count| count as u64)
+        .map_err(stringify_error)
 }
 
 fn active_connected_device_count(devices: &ConnectedDeviceRegistry) -> usize {
@@ -3292,9 +3407,10 @@ async fn mobile_handoff_requests(
     let header_device_id = header_value(&headers, "x-nutrino-device-id");
     let device_id = query.device_id.or(header_device_id).ok_or(StatusCode::BAD_REQUEST)?;
     let conn = open_conn(&state.db_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    expire_mobile_handoff_requests(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut stmt = conn.prepare(
         r#"SELECT id, device_id, device_name, kind, status, created_at, responded_at, payload_json,
-                  result_filename, result_mime_type, result_base64, message
+                  result_filename, result_mime_type, result_base64, result_saved_path, message
            FROM mobile_handoff_requests
            WHERE device_id = ?1 AND status = 'pending'
            ORDER BY created_at ASC
@@ -3410,6 +3526,47 @@ async fn mobile_handoff_response(
     let header_device_id = header_value(&headers, "x-nutrino-device-id").ok_or(StatusCode::BAD_REQUEST)?;
     let now = now_ms();
     let conn = open_conn(&state.db_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    expire_mobile_handoff_requests(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let pending_exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mobile_handoff_requests WHERE id = ?1 AND device_id = ?2 AND status = 'pending'",
+        params![request_id, header_device_id],
+        |row| row.get(0),
+    ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if pending_exists == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let result_filename = payload.result_filename.clone();
+    let result_mime_type = payload.result_mime_type.clone();
+    let result_base64 = payload.result_base64.clone();
+    let mut result_saved_path = payload.result_saved_path.clone();
+    let mut message = payload.message.clone();
+
+    if payload.status == "completed" && result_saved_path.is_none() {
+        if let Some(base64_text) = result_base64.as_deref().filter(|value| !value.trim().is_empty()) {
+            let fallback_filename = if payload.result_mime_type.as_deref() == Some("text/markdown") {
+                format!("nutrino-mobile-ai-export-{}.md", Utc::now().format("%Y%m%d-%H%M%S"))
+            } else {
+                format!("nutrino-mobile-backup-{}.zip", Utc::now().format("%Y%m%d-%H%M%S"))
+            };
+            let filename = result_filename.clone().unwrap_or(fallback_filename);
+            let base64_for_save = base64_text.to_string();
+            let app_handle = state.app_handle.clone();
+            let db_path = state.db_path.clone();
+            let saved_path = tauri::async_runtime::spawn_blocking(move || {
+                save_base64_file_to_default_download_dir_blocking(&app_handle, &db_path, &filename, &base64_for_save)
+            })
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            result_saved_path = Some(saved_path.clone());
+            message = Some(match message.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+                Some(existing) => format!("{existing} Saved to {saved_path}"),
+                None => format!("Saved to {saved_path}"),
+            });
+        }
+    }
+
     let changed = conn.execute(
         r#"UPDATE mobile_handoff_requests
            SET status = ?1,
@@ -3417,15 +3574,17 @@ async fn mobile_handoff_response(
                result_filename = ?3,
                result_mime_type = ?4,
                result_base64 = ?5,
-               message = ?6
-           WHERE id = ?7 AND device_id = ?8 AND status = 'pending'"#,
+               result_saved_path = ?6,
+               message = ?7
+           WHERE id = ?8 AND device_id = ?9 AND status = 'pending'"#,
         params![
             payload.status,
             now,
-            payload.result_filename,
-            payload.result_mime_type,
-            payload.result_base64,
-            payload.message,
+            result_filename,
+            result_mime_type,
+            result_base64,
+            result_saved_path,
+            message,
             request_id,
             header_device_id,
         ],
