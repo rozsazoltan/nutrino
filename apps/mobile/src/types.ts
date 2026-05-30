@@ -234,6 +234,41 @@ export interface WeightLog {
   updated_at: number;
 }
 
+
+export type MobileHandoffKind = 'backup_export' | 'ai_export' | 'backup_import' | string;
+export type MobileHandoffStatus = 'pending' | 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error' | string;
+
+export interface MobileHandoffRequest {
+  id: string;
+  device_id: string;
+  device_name?: string | null;
+  kind: MobileHandoffKind;
+  status: MobileHandoffStatus;
+  created_at: number;
+  responded_at?: number | null;
+  payload: {
+    filename?: string;
+    mime_type?: string;
+    desktop_name?: string;
+    backup_base64?: string;
+    startKey?: string;
+    endKey?: string;
+    [key: string]: unknown;
+  };
+  result_filename?: string | null;
+  result_mime_type?: string | null;
+  result_base64?: string | null;
+  message?: string | null;
+}
+
+export interface MobileHandoffResponseInput {
+  status: 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error';
+  result_filename?: string | null;
+  result_mime_type?: string | null;
+  result_base64?: string | null;
+  message?: string | null;
+}
+
 export interface ServerHealth {
   ok: boolean;
   name?: string;

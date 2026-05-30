@@ -7309,3 +7309,18 @@ select:focus {
 .diary-search-sort-row.segmented-pill-toggle button.active {
   border-radius: 999px !important;
 }
+
+.desktop-handoff-backdrop {
+  z-index: 90;
+}
+
+.desktop-handoff-dialog {
+  max-width: 28rem;
+}
+
+.desktop-handoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}

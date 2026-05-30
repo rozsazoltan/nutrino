@@ -9,7 +9,7 @@ import { cancel, createChannel, Importance, isPermissionGranted, onAction, regis
 import { driver, type DriveStep, type Driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
 import JSZip from 'jszip';
-import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, HealthAttachment, HealthCategoryType, HealthEntry, Ingredient, Intake, LocalizedNameMap, MealType, ProfilePurpose, Recipe, RecipeItem, WeightLog, GitHubCsvSource } from './types';
+import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, HealthAttachment, HealthCategoryType, HealthEntry, Ingredient, Intake, LocalizedNameMap, MealType, ProfilePurpose, Recipe, RecipeItem, WeightLog, GitHubCsvSource, MobileHandoffRequest } from './types';
 import {
   ageFromBirthday,
   bmi,
@@ -31,7 +31,7 @@ import {
   needsWeightPrompt,
   saveStateJson,
 } from './lib/storage';
-import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, syncGitHubCsvSources } from './lib/api';
+import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, listMobileHandoffRequests, mobileHandoffWebSocketUrl, respondMobileHandoffRequest, syncGitHubCsvSources } from './lib/api';
 import { checkNutrinoUpdates, type UpdateCheckResult } from './lib/releases';
 import { lucideSvg, type IconName } from './icons';
 
@@ -345,6 +345,10 @@ const duplicateMealTargetOpen = ref(false);
 const pendingDuplicateIntakeId = ref<string | null>(null);
 let entryLongPressTimer: number | undefined;
 let reminderTimer: number | undefined;
+let desktopHandoffTimer: number | undefined;
+let desktopHandoffReconnectTimer: number | undefined;
+let desktopHandoffPingTimer: number | undefined;
+let desktopHandoffSocket: WebSocket | null = null;
 let reminderScheduleRefreshTimer: number | undefined;
 let notificationActionListener: PluginListener | null = null;
 let lastNotificationActionSignature = '';
@@ -353,6 +357,10 @@ let onboardingDriver: Driver | null = null;
 const nativeReminderSchedulesActive = ref(false);
 const weightReminderModalOpen = ref(false);
 const notificationHighlightedMealType = ref<MealType | null>(null);
+const desktopHandoffRequests = ref<MobileHandoffRequest[]>([]);
+const activeDesktopHandoffRequest = ref<MobileHandoffRequest | null>(null);
+const desktopHandoffBusy = ref(false);
+const notifiedDesktopHandoffIds = new Set<string>();
 
 const languageSearch = ref('');
 const unlockedDiaryDate = ref<string | null>(null);
@@ -885,6 +893,10 @@ function handleVisibilityChange() {
   if (!document.hidden) {
     refreshTodayKey();
     void resumePendingUpdateInstallFromPermission();
+    if (state.settings.desktop_api_enabled !== false) {
+      void pollDesktopHandoffRequests();
+      startDesktopHandoffRealtime();
+    }
   }
 }
 
@@ -1379,7 +1391,10 @@ onMounted(() => {
   void installWindowCloseGuard();
   void refreshAppPermissionStatuses();
   void initializeNotifications();
-  if (state.settings.desktop_api_enabled !== false) void pollServerHealth({ syncOnChange: true, quiet: true });
+  if (state.settings.desktop_api_enabled !== false) {
+    void pollServerHealth({ syncOnChange: true, quiet: true });
+    startDesktopHandoffPolling();
+  }
   healthTimer = window.setInterval(() => void pollServerHealth({ syncOnChange: true, quiet: true }), 30000);
   reminderTimer = window.setInterval(checkReminderNotifications, 60000);
   checkReminderNotifications();
@@ -1402,6 +1417,8 @@ onBeforeUnmount(() => {
   uninstallWindowCloseGuard();
   if (healthTimer) window.clearInterval(healthTimer);
   if (reminderTimer) window.clearInterval(reminderTimer);
+  if (desktopHandoffTimer) window.clearInterval(desktopHandoffTimer);
+  closeDesktopHandoffSocket();
   if (reminderScheduleRefreshTimer) window.clearTimeout(reminderScheduleRefreshTimer);
   void notificationActionListener?.unregister();
   onboardingDriver?.destroy();
@@ -7435,6 +7452,56 @@ for (const language of Object.keys(translations)) {
   };
 }
 
+const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>> = {
+  en: {
+    desktopHandoffRequestTitle: 'Desktop request',
+    desktopHandoffRequestBody: '{desktop} sent a data request.',
+    desktopBackupExportRequestTitle: 'Backup export request',
+    desktopBackupExportRequestBody: '{desktop} wants to receive a mobile backup export. Allow data transfer?',
+    desktopAiExportRequestTitle: 'AI export request',
+    desktopAiExportRequestBody: '{desktop} wants to receive an AI Markdown export. Allow data transfer?',
+    desktopBackupImportRequestTitle: 'New backup from desktop',
+    desktopBackupImportRequestBody: '{desktop} sent a new backup ({filename}). Use it, keep it as a local restore point, or delete it?',
+    desktopHandoffAllow: 'Allow',
+    desktopHandoffReject: 'Reject',
+    desktopHandoffUseBackup: 'Use backup',
+    desktopHandoffKeepBackup: 'Keep backup',
+    desktopHandoffDeleteBackup: 'Delete',
+    desktopHandoffRejected: 'Desktop request rejected.',
+    desktopHandoffExportSent: 'Export sent to desktop.',
+    desktopBackupImportUsed: 'Desktop backup applied.',
+    desktopBackupImportKept: 'Desktop backup kept as a local restore point.',
+    desktopBackupImportDeleted: 'Desktop backup deleted.',
+  },
+  hu: {
+    desktopHandoffRequestTitle: 'Desktop kérés',
+    desktopHandoffRequestBody: '{desktop} adatkezelési kérést küldött.',
+    desktopBackupExportRequestTitle: 'Backup export kérés',
+    desktopBackupExportRequestBody: '{desktop} mobil backup exportot szeretne kapni. Engedélyezed az adattovábbítást?',
+    desktopAiExportRequestTitle: 'AI export kérés',
+    desktopAiExportRequestBody: '{desktop} AI Markdown exportot szeretne kapni. Engedélyezed az adattovábbítást?',
+    desktopBackupImportRequestTitle: 'Új backup érkezett desktopról',
+    desktopBackupImportRequestBody: '{desktop} új backupot küldött ({filename}). Használod, megtartod helyi visszaállítási pontként, vagy törlöd?',
+    desktopHandoffAllow: 'Engedélyezés',
+    desktopHandoffReject: 'Elutasítás',
+    desktopHandoffUseBackup: 'Használom',
+    desktopHandoffKeepBackup: 'Megtartom',
+    desktopHandoffDeleteBackup: 'Törlés',
+    desktopHandoffRejected: 'Desktop kérés elutasítva.',
+    desktopHandoffExportSent: 'Export elküldve a desktopnak.',
+    desktopBackupImportUsed: 'Desktop backup alkalmazva.',
+    desktopBackupImportKept: 'Desktop backup megtartva helyi visszaállítási pontként.',
+    desktopBackupImportDeleted: 'Desktop backup törölve.',
+  },
+};
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...normalizeTranslationValues(desktopHandoffTranslations[language] || {}),
+  };
+}
+
 const onboardingGuideTranslations: Record<string, Partial<Record<string, string>>> = {
   en: {
     permissionsReady: 'permissions ready',
@@ -7659,10 +7726,20 @@ watch(() => state.settings.health_diary_enabled, (enabled) => {
 watch(() => state.settings.desktop_api_enabled, (enabled) => {
   if (enabled) {
     void pollServerHealth({ syncOnChange: true, quiet: true });
+    startDesktopHandoffPolling();
     return;
   }
+  if (desktopHandoffTimer) window.clearInterval(desktopHandoffTimer);
+  desktopHandoffTimer = undefined;
+  closeDesktopHandoffSocket();
+  desktopHandoffRequests.value = [];
+  activeDesktopHandoffRequest.value = null;
   serverOnline.value = false;
   state.pairing.lastSyncError = undefined;
+});
+watch(() => `${state.pairing.baseUrl}|${state.pairing.password || ''}|${state.pairing.token || ''}`, () => {
+  closeDesktopHandoffSocket();
+  if (state.settings.desktop_api_enabled !== false) startDesktopHandoffPolling();
 });
 watch(() => state.settings.github_csv_enabled, (enabled) => {
   if (enabled) void syncGitHubDailyIfDue();
@@ -13301,6 +13378,28 @@ async function createBackupProfile(reason = t('manualBackupProfile'), forcedKind
   return record;
 }
 
+async function createBackupProfileFromState(snapshotInput: Partial<AppState>, reason = t('importBackupProfile'), forcedKind: BackupProfileKind = 'manual'): Promise<BackupProfileSummary> {
+  await waitForIdle();
+  const snapshot = normalizeImportedState(snapshotInput);
+  await yieldToUi();
+  const serialized = JSON.stringify(snapshot);
+  const createdAt = Date.now();
+  const record: StoredBackupProfile = {
+    id: generateId(`backup-profile-${forcedKind}`),
+    kind: forcedKind,
+    name: reason,
+    createdAt,
+    version: appVersion,
+    byteLength: new TextEncoder().encode(serialized).length,
+    counts: backupCounts(snapshot),
+    state: snapshot,
+  };
+  await saveBackupProfileRecord(record);
+  await pruneBackupProfiles();
+  await refreshBackupProfiles();
+  return record;
+}
+
 async function ensureDailyBackupProfile() {
   const today = dateKey();
   if (localStorage.getItem(mobileDailyBackupDateKey) === today) return;
@@ -13622,6 +13721,28 @@ async function bytesToNumberArrayChunked(bytes: Uint8Array, progressStart = 70, 
   return result;
 }
 
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(String(value || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function textToBase64(text: string): string {
+  return bytesToBase64(new TextEncoder().encode(text));
+}
+
 function fallbackDownloadAppData(bytes: Uint8Array, filename = mobileBackupFileName()) {
   assertValidZipBytes(bytes);
   const blob = new Blob([bytesToArrayBuffer(bytes)], { type: 'application/zip' });
@@ -13930,6 +14051,37 @@ async function exportDataForOtherChannel() {
   await exportAppDataWithOptions(channelTransferBackupFileName(), t('channelTransferExportProfile'), t('channelTransferExportCreated'), defaultBackupIncludeOptions());
 }
 
+async function mobileBackupDataTextFromBytes(bytes: Uint8Array): Promise<{ dataText: string; importedState: Partial<AppState> }> {
+  assertValidZipBytes(bytes);
+  const zip = await JSZip.loadAsync(bytes);
+  const manifestText = await zip.file('manifest.json')?.async('string');
+  const rawDataText = await zip.file('mobile-app-data.json')?.async('string');
+  if (!rawDataText) throw new Error(t('invalidBackupFile'));
+  const dataText = await backupDataTextWithMedia(zip, rawDataText);
+  if (manifestText) {
+    const manifest = JSON.parse(manifestText) as { app?: string; formatVersion?: number; exportType?: string; channel?: string };
+    if (manifest.app !== 'nutrino' || manifest.formatVersion !== 1 || manifest.exportType !== 'mobile-app') {
+      throw new Error(t('invalidBackupFile'));
+    }
+  }
+  return { dataText, importedState: JSON.parse(dataText) as Partial<AppState> };
+}
+
+async function applyMobileBackupBytes(bytes: Uint8Array, beforeReason = t('beforeImportBackupProfile'), afterReason = t('importBackupProfile'), successMessage = t('appDataImported')) {
+  const { dataText } = await mobileBackupDataTextFromBytes(bytes);
+  await createBackupProfile(beforeReason);
+  applyImportedState(dataText);
+  for (const entry of state.healthEntries || []) {
+    try {
+      await saveHealthEntryMedia(entry);
+    } catch {
+      // Keep imported diary data even if a media item cannot be cached locally.
+    }
+  }
+  await createBackupProfile(afterReason);
+  showToast(successMessage);
+}
+
 async function importAppDataWithOptions(confirmMessage = t('confirmImportOverwrite'), beforeReason = t('beforeImportBackupProfile'), afterReason = t('importBackupProfile'), successMessage = t('appDataImported')) {
   try {
     const bytes = await pickBackupBytesForImport();
@@ -13965,6 +14117,246 @@ async function importAppDataWithOptions(confirmMessage = t('confirmImportOverwri
 
 async function importAppData() {
   await importAppDataWithOptions();
+}
+
+function desktopHandoffDesktopName(request: MobileHandoffRequest) {
+  return String(request.payload.desktop_name || state.pairing.baseUrl || t('sourceDesktop'));
+}
+
+function desktopHandoffTitle(request: MobileHandoffRequest | null) {
+  if (!request) return '';
+  if (request.kind === 'backup_export') return t('desktopBackupExportRequestTitle');
+  if (request.kind === 'ai_export') return t('desktopAiExportRequestTitle');
+  if (request.kind === 'backup_import') return t('desktopBackupImportRequestTitle');
+  return t('desktopHandoffRequestTitle');
+}
+
+function desktopHandoffBody(request: MobileHandoffRequest | null) {
+  if (!request) return '';
+  const desktopName = desktopHandoffDesktopName(request);
+  if (request.kind === 'backup_export') return t('desktopBackupExportRequestBody').replace('{desktop}', desktopName);
+  if (request.kind === 'ai_export') return t('desktopAiExportRequestBody').replace('{desktop}', desktopName);
+  if (request.kind === 'backup_import') return t('desktopBackupImportRequestBody').replace('{desktop}', desktopName).replace('{filename}', String(request.payload.filename || 'backup.zip'));
+  return t('desktopHandoffRequestBody').replace('{desktop}', desktopName);
+}
+
+async function notifyDesktopHandoffRequest(request: MobileHandoffRequest) {
+  if (notifiedDesktopHandoffIds.has(request.id)) return;
+  notifiedDesktopHandoffIds.add(request.id);
+  await notifyUser(desktopHandoffTitle(request), desktopHandoffBody(request));
+}
+
+async function pollDesktopHandoffRequests() {
+  if (state.settings.desktop_api_enabled === false || !state.pairing.baseUrl.trim()) return;
+  try {
+    const requests = await listMobileHandoffRequests(state);
+    desktopHandoffRequests.value = requests;
+    if (!activeDesktopHandoffRequest.value && requests.length) {
+      activeDesktopHandoffRequest.value = requests[0];
+      await notifyDesktopHandoffRequest(requests[0]);
+    }
+    for (const request of requests) void notifyDesktopHandoffRequest(request);
+  } catch {
+    // The normal server health polling already reports connectivity state.
+  }
+}
+
+async function finishDesktopHandoffRequest(request: MobileHandoffRequest, status: 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error', payload: { result_filename?: string; result_mime_type?: string; result_base64?: string; message?: string } = {}) {
+  await respondMobileHandoffRequest(state, request.id, { status, ...payload });
+  desktopHandoffRequests.value = desktopHandoffRequests.value.filter((item) => item.id !== request.id);
+  if (activeDesktopHandoffRequest.value?.id === request.id) activeDesktopHandoffRequest.value = desktopHandoffRequests.value[0] ?? null;
+}
+
+async function rejectDesktopHandoffRequest() {
+  const request = activeDesktopHandoffRequest.value;
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  try {
+    await finishDesktopHandoffRequest(request, 'rejected', { message: t('desktopHandoffRejected') });
+    showToast(t('desktopHandoffRejected'));
+  } catch (error) {
+    showToast(String(error));
+  } finally {
+    desktopHandoffBusy.value = false;
+  }
+}
+
+async function approveDesktopExportRequest() {
+  const request = activeDesktopHandoffRequest.value;
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  exportBusy.value = true;
+  exportTitle.value = request.kind === 'ai_export' ? t('aiExportAllData') : t('backupExportInProgress');
+  exportStatus.value = t('backupPreparing');
+  exportProgress.value = 8;
+  try {
+    if (request.kind === 'ai_export') {
+      refreshTodayKey();
+      const startKey = typeof request.payload.startKey === 'string' ? request.payload.startKey : dateKeyOffset(todayKey.value, -89);
+      const endKey = typeof request.payload.endKey === 'string' ? request.payload.endKey : todayKey.value;
+      const range = { startKey, endKey, startMs: dayStartMs(startKey), endMs: dayEndMs(endKey) };
+      const markdown = buildAllDataAiMarkdown(range);
+      await finishDesktopHandoffRequest(request, 'completed', {
+        result_filename: `nutrino-mobile-ai-export-${startKey}-${endKey}.md`,
+        result_mime_type: 'text/markdown',
+        result_base64: textToBase64(markdown),
+        message: t('desktopHandoffExportSent'),
+      });
+      showToast(t('desktopHandoffExportSent'));
+    } else {
+      const bytes = await buildMobileBackupZip(defaultBackupIncludeOptions());
+      await finishDesktopHandoffRequest(request, 'completed', {
+        result_filename: mobileBackupFileName(),
+        result_mime_type: 'application/zip',
+        result_base64: bytesToBase64(bytes),
+        message: t('desktopHandoffExportSent'),
+      });
+      showToast(t('desktopHandoffExportSent'));
+    }
+  } catch (error) {
+    try {
+      await finishDesktopHandoffRequest(request, 'error', { message: String(error) });
+    } catch {
+      // keep the original error visible below
+    }
+    showToast(String(error));
+  } finally {
+    exportBusy.value = false;
+    exportProgress.value = 0;
+    exportStatus.value = '';
+    exportTitle.value = '';
+    desktopHandoffBusy.value = false;
+  }
+}
+
+async function useDesktopBackupImportRequest() {
+  const request = activeDesktopHandoffRequest.value;
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  try {
+    const bytes = base64ToBytes(String(request.payload.backup_base64 || ''));
+    await applyMobileBackupBytes(bytes, t('beforeImportBackupProfile'), t('importBackupProfile'), t('appDataImported'));
+    await finishDesktopHandoffRequest(request, 'used', { message: t('desktopBackupImportUsed') });
+  } catch (error) {
+    try { await finishDesktopHandoffRequest(request, 'error', { message: String(error) }); } catch {}
+    showToast(String(error));
+  } finally {
+    desktopHandoffBusy.value = false;
+  }
+}
+
+async function keepDesktopBackupImportRequest() {
+  const request = activeDesktopHandoffRequest.value;
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  try {
+    const bytes = base64ToBytes(String(request.payload.backup_base64 || ''));
+    const { importedState } = await mobileBackupDataTextFromBytes(bytes);
+    await createBackupProfileFromState(importedState, `${t('desktopBackupImportKept')} · ${String(request.payload.filename || 'backup.zip')}`, 'manual');
+    await finishDesktopHandoffRequest(request, 'kept', { message: t('desktopBackupImportKept') });
+    showToast(t('desktopBackupImportKept'));
+  } catch (error) {
+    try { await finishDesktopHandoffRequest(request, 'error', { message: String(error) }); } catch {}
+    showToast(String(error));
+  } finally {
+    desktopHandoffBusy.value = false;
+  }
+}
+
+async function deleteDesktopBackupImportRequest() {
+  const request = activeDesktopHandoffRequest.value;
+  if (!request || desktopHandoffBusy.value) return;
+  desktopHandoffBusy.value = true;
+  try {
+    await finishDesktopHandoffRequest(request, 'deleted', { message: t('desktopBackupImportDeleted') });
+    showToast(t('desktopBackupImportDeleted'));
+  } catch (error) {
+    showToast(String(error));
+  } finally {
+    desktopHandoffBusy.value = false;
+  }
+}
+
+function closeDesktopHandoffSocket() {
+  if (desktopHandoffReconnectTimer) window.clearTimeout(desktopHandoffReconnectTimer);
+  if (desktopHandoffPingTimer) window.clearInterval(desktopHandoffPingTimer);
+  desktopHandoffReconnectTimer = undefined;
+  desktopHandoffPingTimer = undefined;
+  const socket = desktopHandoffSocket;
+  desktopHandoffSocket = null;
+  if (!socket) return;
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onerror = null;
+  socket.onclose = null;
+  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+}
+
+function scheduleDesktopHandoffSocketReconnect(delayMs = 5000) {
+  if (desktopHandoffReconnectTimer) window.clearTimeout(desktopHandoffReconnectTimer);
+  if (state.settings.desktop_api_enabled === false || !state.pairing.baseUrl.trim()) return;
+  desktopHandoffReconnectTimer = window.setTimeout(() => {
+    desktopHandoffReconnectTimer = undefined;
+    startDesktopHandoffRealtime();
+  }, delayMs);
+}
+
+function handleDesktopHandoffRealtimeMessage(raw: string) {
+  try {
+    const payload = JSON.parse(raw) as { event?: string };
+    if (payload.event === 'connected' || payload.event === 'request_created' || payload.event === 'request_updated' || payload.event === 'resync') {
+      void pollDesktopHandoffRequests();
+    }
+  } catch {
+    // Ignore non-JSON websocket frames; the fallback polling loop still keeps state in sync.
+  }
+}
+
+function startDesktopHandoffRealtime() {
+  if (state.settings.desktop_api_enabled === false || !state.pairing.baseUrl.trim()) return;
+  if (desktopHandoffSocket && (desktopHandoffSocket.readyState === WebSocket.OPEN || desktopHandoffSocket.readyState === WebSocket.CONNECTING)) return;
+
+  const url = mobileHandoffWebSocketUrl(state);
+  if (!url) return;
+
+  try {
+    const socket = new WebSocket(url);
+    desktopHandoffSocket = socket;
+
+    socket.onopen = () => {
+      if (desktopHandoffPingTimer) window.clearInterval(desktopHandoffPingTimer);
+      desktopHandoffPingTimer = window.setInterval(() => {
+        if (desktopHandoffSocket?.readyState === WebSocket.OPEN) {
+          desktopHandoffSocket.send(JSON.stringify({ event: 'ping', sent_at: Date.now() }));
+        }
+      }, 20000);
+      void pollDesktopHandoffRequests();
+    };
+
+    socket.onmessage = (event) => {
+      if (typeof event.data === 'string') handleDesktopHandoffRealtimeMessage(event.data);
+    };
+
+    socket.onerror = () => {
+      socket.close();
+    };
+
+    socket.onclose = () => {
+      if (desktopHandoffSocket === socket) desktopHandoffSocket = null;
+      if (desktopHandoffPingTimer) window.clearInterval(desktopHandoffPingTimer);
+      desktopHandoffPingTimer = undefined;
+      scheduleDesktopHandoffSocketReconnect();
+    };
+  } catch {
+    scheduleDesktopHandoffSocketReconnect();
+  }
+}
+
+function startDesktopHandoffPolling() {
+  if (desktopHandoffTimer) window.clearInterval(desktopHandoffTimer);
+  void pollDesktopHandoffRequests();
+  startDesktopHandoffRealtime();
+  desktopHandoffTimer = window.setInterval(pollDesktopHandoffRequests, 30000);
 }
 
 async function importDataFromOtherChannel() {
@@ -14122,6 +14514,25 @@ function setTab(tab: Tab) {
         </button>
       </div>
     </header>
+
+    <div v-if="activeDesktopHandoffRequest" class="modal-backdrop desktop-handoff-backdrop">
+      <article class="modal-card desktop-handoff-dialog">
+        <div class="dialog-title-row">
+          <h2>{{ desktopHandoffTitle(activeDesktopHandoffRequest) }}</h2>
+          <button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" :disabled="desktopHandoffBusy" @click="rejectDesktopHandoffRequest" v-html="lucideSvg('x')"></button>
+        </div>
+        <p class="helper big">{{ desktopHandoffBody(activeDesktopHandoffRequest) }}</p>
+        <div v-if="activeDesktopHandoffRequest.kind === 'backup_import'" class="dialog-actions desktop-handoff-actions">
+          <button class="filled-button" type="button" :disabled="desktopHandoffBusy" @click="useDesktopBackupImportRequest">{{ t('desktopHandoffUseBackup') }}</button>
+          <button class="outlined-button" type="button" :disabled="desktopHandoffBusy" @click="keepDesktopBackupImportRequest">{{ t('desktopHandoffKeepBackup') }}</button>
+          <button class="delete-button" type="button" :disabled="desktopHandoffBusy" @click="deleteDesktopBackupImportRequest">{{ t('desktopHandoffDeleteBackup') }}</button>
+        </div>
+        <div v-else class="dialog-actions desktop-handoff-actions">
+          <button class="filled-button" type="button" :disabled="desktopHandoffBusy" @click="approveDesktopExportRequest">{{ t('desktopHandoffAllow') }}</button>
+          <button class="outlined-button" type="button" :disabled="desktopHandoffBusy" @click="rejectDesktopHandoffRequest">{{ t('desktopHandoffReject') }}</button>
+        </div>
+      </article>
+    </div>
 
     <section v-if="activeTab === 'home'" class="page-stack home-page">
       <article v-if="weightPromptDue" class="card weight-prompt">
@@ -14876,7 +15287,7 @@ function setTab(tab: Tab) {
             <div v-for="[code] in localNameI18nEntries()" :key="code" class="local-i18n-row">
               <span>{{ languageLabel(code) }}</span>
               <input v-model="ensureLocalNameI18n()[code]" class="input" />
-              <button type="button" class="text-button danger" @click="removeLocalNameTranslation(code)">{{ t('delete') }}</button>
+              <button type="button" class="delete-button" @click="removeLocalNameTranslation(code)">{{ t('delete') }}</button>
             </div>
             <select class="input local-i18n-add-select" @change="addLocalNameTranslation($event)">
               <option value="">{{ t('translationAddPlaceholder') }}</option>
@@ -14935,7 +15346,7 @@ function setTab(tab: Tab) {
                     <b>{{ localRecipeRowItem(row) ? localRecipeItemLabel(row.food_id) : t('selectItem') }}</b>
                     <small>{{ localRecipeRowItem(row) ? localRecipeRowHint(row) : t('localRecipeSearchHint') }}</small>
                   </div>
-                  <button class="text-button danger" type="button" @click="removeLocalRecipeItem(index)">{{ t('delete') }}</button>
+                  <button class="delete-button" type="button" @click="removeLocalRecipeItem(index)">{{ t('delete') }}</button>
                 </div>
                 <div class="inline-field-action local-recipe-search-action">
                   <input v-model="row.query" class="input" type="search" autocomplete="off" autocapitalize="none" spellcheck="false" :placeholder="t('searchItem')" @focus="openLocalRecipeRowPicker(row)" />

@@ -6,11 +6,12 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
-    extract::{ConnectInfo, Query, State as AxumState},
+    extract::{ConnectInfo, Path as AxumPath, Query, State as AxumState, ws::{Message, WebSocket, WebSocketUpgrade}},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -22,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tokio::sync::oneshot;
+use tokio::sync::{broadcast, oneshot};
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
@@ -35,11 +36,13 @@ struct ServerRuntime {
 }
 
 type ConnectedDeviceRegistry = Arc<Mutex<HashMap<String, ConnectedDevice>>>;
+type MobileHandoffNotifier = broadcast::Sender<MobileHandoffWsEvent>;
 
 struct AppState {
     db_path: PathBuf,
     server: Mutex<Option<ServerRuntime>>,
     connected_devices: ConnectedDeviceRegistry,
+    handoff_notifier: MobileHandoffNotifier,
     app_handle: tauri::AppHandle,
 }
 
@@ -95,6 +98,59 @@ struct ConnectedDevice {
 
 const CONNECTED_DEVICE_ACTIVE_MS: i64 = 5 * 60 * 1000;
 const CONNECTED_DEVICE_KEEP_MS: i64 = 60 * 60 * 1000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MobileHandoffRequest {
+    id: String,
+    device_id: String,
+    device_name: Option<String>,
+    kind: String,
+    status: String,
+    created_at: i64,
+    responded_at: Option<i64>,
+    payload: serde_json::Value,
+    result_filename: Option<String>,
+    result_mime_type: Option<String>,
+    result_base64: Option<String>,
+    message: Option<String>,
+}
+
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MobileHandoffWsEvent {
+    event: String,
+    device_id: String,
+    request_id: Option<String>,
+    request_kind: Option<String>,
+    server_time: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MobileHandoffQuery {
+    device_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MobileHandoffWsQuery {
+    device_id: Option<String>,
+    token: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MobileHandoffResponseInput {
+    status: String,
+    result_filename: Option<String>,
+    result_mime_type: Option<String>,
+    result_base64: Option<String>,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MobileHandoffResponseAck {
+    accepted: bool,
+    server_time: i64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HealthResponse {
@@ -507,6 +563,7 @@ struct ApiState {
     auth_required: bool,
     dev_mode: bool,
     connected_devices: ConnectedDeviceRegistry,
+    handoff_notifier: MobileHandoffNotifier,
     app_handle: tauri::AppHandle,
 }
 
@@ -530,10 +587,12 @@ pub fn run() {
         .setup(|app| {
             let db_path = database_path(app.handle())?;
             init_database(&db_path)?;
+            let (handoff_notifier, _) = broadcast::channel::<MobileHandoffWsEvent>(64);
             app.manage(AppState {
                 db_path: db_path.clone(),
                 server: Mutex::new(None),
                 connected_devices: Arc::new(Mutex::new(HashMap::new())),
+                handoff_notifier,
                 app_handle: app.handle().clone(),
             });
 
@@ -669,6 +728,10 @@ pub fn run() {
             merge_catalog_item,
             list_catalog_duplicate_suggestions,
             list_connected_devices,
+            list_mobile_handoff_requests,
+            request_mobile_backup_export,
+            request_mobile_ai_export,
+            send_mobile_backup_import,
             download_and_open_update_installer,
         ])
         .run(tauri::generate_context!())
@@ -1086,6 +1149,22 @@ fn init_database(path: &Path) -> Result<()> {
             status TEXT NOT NULL DEFAULT 'pending',
             applied_at INTEGER
         );
+
+
+        CREATE TABLE IF NOT EXISTS mobile_handoff_requests (
+            id TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL,
+            device_name TEXT,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at INTEGER NOT NULL,
+            responded_at INTEGER,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            result_filename TEXT,
+            result_mime_type TEXT,
+            result_base64 TEXT,
+            message TEXT
+        );
         "#,
     )?;
 
@@ -1364,6 +1443,7 @@ async fn start_api_server_internal(port: u16, state: &AppState) -> Result<Server
         auth_required,
         dev_mode: dev_mode(),
         connected_devices: state.connected_devices.clone(),
+        handoff_notifier: state.handoff_notifier.clone(),
         app_handle: state.app_handle.clone(),
     };
 
@@ -1372,6 +1452,9 @@ async fn start_api_server_internal(port: u16, state: &AppState) -> Result<Server
         .route("/api/v1/update/check", post(update_check_requested))
         .route("/api/v1/sync/pull", get(sync_pull))
         .route("/api/v1/sync/push", post(sync_push))
+        .route("/api/v1/mobile/requests", get(mobile_handoff_requests))
+        .route("/api/v1/mobile/requests/ws", get(mobile_handoff_ws))
+        .route("/api/v1/mobile/requests/{request_id}/response", post(mobile_handoff_response))
         .route("/api/v1/foods", get(api_list_foods).post(api_create_food))
         .route("/api/v1/ingredients", get(api_list_ingredients).post(api_create_ingredient))
         .route("/api/v1/recipes", get(api_list_recipes))
@@ -2784,6 +2867,112 @@ fn list_connected_devices(state: State<'_, AppState>) -> Result<Vec<ConnectedDev
     Ok(list)
 }
 
+
+fn mobile_handoff_request_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MobileHandoffRequest> {
+    let payload_json: String = row.get(7)?;
+    Ok(MobileHandoffRequest {
+        id: row.get(0)?,
+        device_id: row.get(1)?,
+        device_name: row.get(2)?,
+        kind: row.get(3)?,
+        status: row.get(4)?,
+        created_at: row.get(5)?,
+        responded_at: row.get(6)?,
+        payload: serde_json::from_str(&payload_json).unwrap_or_else(|_| serde_json::json!({})),
+        result_filename: row.get(8)?,
+        result_mime_type: row.get(9)?,
+        result_base64: row.get(10)?,
+        message: row.get(11)?,
+    })
+}
+
+fn db_list_mobile_handoff_requests(path: &Path) -> Result<Vec<MobileHandoffRequest>> {
+    let conn = open_conn(path)?;
+    let mut stmt = conn.prepare(
+        r#"SELECT id, device_id, device_name, kind, status, created_at, responded_at, payload_json,
+                  result_filename, result_mime_type, result_base64, message
+           FROM mobile_handoff_requests
+           ORDER BY created_at DESC
+           LIMIT 100"#,
+    )?;
+    let rows = stmt.query_map([], mobile_handoff_request_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn device_name_for_handoff(state: &AppState, device_id: &str) -> Option<String> {
+    state.connected_devices
+        .lock()
+        .ok()
+        .and_then(|devices| devices.get(device_id).map(|device| device.display_name.clone()))
+}
+
+fn emit_mobile_handoff_event(notifier: &MobileHandoffNotifier, event: &str, device_id: String, request_id: Option<String>, request_kind: Option<String>) {
+    let _ = notifier.send(MobileHandoffWsEvent {
+        event: event.to_string(),
+        device_id,
+        request_id,
+        request_kind,
+        server_time: now_ms(),
+    });
+}
+
+fn queue_mobile_handoff_request_internal(state: &AppState, device_id: String, kind: &str, mut payload: serde_json::Value) -> Result<MobileHandoffRequest> {
+    if let Some(object) = payload.as_object_mut() {
+        object.entry("desktop_name").or_insert_with(|| serde_json::json!(format!("{} Desktop", APP_NAME)));
+    }
+    let device_name = device_name_for_handoff(state, &device_id);
+    let id = format!("mobile-handoff-{}", Uuid::new_v4());
+    let now = now_ms();
+    let payload_json = serde_json::to_string(&payload)?;
+    let conn = open_conn(&state.db_path)?;
+    conn.execute(
+        r#"INSERT INTO mobile_handoff_requests (id, device_id, device_name, kind, status, created_at, responded_at, payload_json, result_filename, result_mime_type, result_base64, message)
+           VALUES (?1, ?2, ?3, ?4, 'pending', ?5, NULL, ?6, NULL, NULL, NULL, NULL)"#,
+        params![id, device_id, device_name, kind, now, payload_json],
+    )?;
+    let request = db_get_mobile_handoff_request(&conn, &id)?;
+    emit_mobile_handoff_event(&state.handoff_notifier, "request_created", request.device_id.clone(), Some(request.id.clone()), Some(request.kind.clone()));
+    Ok(request)
+}
+
+fn db_get_mobile_handoff_request(conn: &Connection, request_id: &str) -> Result<MobileHandoffRequest> {
+    conn.query_row(
+        r#"SELECT id, device_id, device_name, kind, status, created_at, responded_at, payload_json,
+                  result_filename, result_mime_type, result_base64, message
+           FROM mobile_handoff_requests
+           WHERE id = ?1"#,
+        params![request_id],
+        mobile_handoff_request_from_row,
+    ).context("mobile handoff request not found")
+}
+
+#[tauri::command]
+fn list_mobile_handoff_requests(state: State<'_, AppState>) -> Result<Vec<MobileHandoffRequest>, String> {
+    db_list_mobile_handoff_requests(&state.db_path).map_err(stringify_error)
+}
+
+#[tauri::command]
+fn request_mobile_backup_export(device_id: String, state: State<'_, AppState>) -> Result<MobileHandoffRequest, String> {
+    queue_mobile_handoff_request_internal(&state, device_id, "backup_export", serde_json::json!({})).map_err(stringify_error)
+}
+
+#[tauri::command]
+fn request_mobile_ai_export(device_id: String, state: State<'_, AppState>) -> Result<MobileHandoffRequest, String> {
+    queue_mobile_handoff_request_internal(&state, device_id, "ai_export", serde_json::json!({})).map_err(stringify_error)
+}
+
+#[tauri::command]
+fn send_mobile_backup_import(device_id: String, filename: String, backup_base64: String, state: State<'_, AppState>) -> Result<MobileHandoffRequest, String> {
+    if backup_base64.trim().is_empty() {
+        return Err("Missing backup payload.".into());
+    }
+    queue_mobile_handoff_request_internal(&state, device_id, "backup_import", serde_json::json!({
+        "filename": filename,
+        "mime_type": "application/zip",
+        "backup_base64": backup_base64,
+    })).map_err(stringify_error)
+}
+
 fn active_connected_device_count(devices: &ConnectedDeviceRegistry) -> usize {
     let now = now_ms();
     devices
@@ -3034,6 +3223,164 @@ async fn sync_push(
         server_time: now,
     }))
 }
+
+async fn mobile_handoff_requests(
+    AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(query): Query<MobileHandoffQuery>,
+) -> Result<Json<Vec<MobileHandoffRequest>>, StatusCode> {
+    authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/mobile/requests");
+    let header_device_id = header_value(&headers, "x-nutrino-device-id");
+    let device_id = query.device_id.or(header_device_id).ok_or(StatusCode::BAD_REQUEST)?;
+    let conn = open_conn(&state.db_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut stmt = conn.prepare(
+        r#"SELECT id, device_id, device_name, kind, status, created_at, responded_at, payload_json,
+                  result_filename, result_mime_type, result_base64, message
+           FROM mobile_handoff_requests
+           WHERE device_id = ?1 AND status = 'pending'
+           ORDER BY created_at ASC
+           LIMIT 10"#,
+    ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows = stmt.query_map(params![device_id], mobile_handoff_request_from_row)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let requests = rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(requests))
+}
+
+async fn mobile_handoff_ws(
+    ws: WebSocketUpgrade,
+    AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(query): Query<MobileHandoffWsQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    authorize_with_optional_query_token(&headers, query.token.as_deref(), &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/mobile/requests/ws");
+    let header_device_id = header_value(&headers, "x-nutrino-device-id");
+    let device_id = query.device_id.or(header_device_id).ok_or(StatusCode::BAD_REQUEST)?;
+    let receiver = state.handoff_notifier.subscribe();
+    Ok(ws.on_upgrade(move |socket| mobile_handoff_ws_session(socket, state, device_id, receiver)))
+}
+
+async fn mobile_handoff_ws_session(
+    mut socket: WebSocket,
+    state: ApiState,
+    device_id: String,
+    mut receiver: broadcast::Receiver<MobileHandoffWsEvent>,
+) {
+    let connected_event = MobileHandoffWsEvent {
+        event: "connected".to_string(),
+        device_id: device_id.clone(),
+        request_id: None,
+        request_kind: None,
+        server_time: now_ms(),
+    };
+    if let Ok(text) = serde_json::to_string(&connected_event) {
+        if socket.send(Message::Text(text.into())).await.is_err() {
+            return;
+        }
+    }
+
+    let mut ping_timer = tokio::time::interval(Duration::from_secs(25));
+    loop {
+        tokio::select! {
+            _ = ping_timer.tick() => {
+                if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
+            }
+            message = socket.recv() => {
+                match message {
+                    Some(Ok(Message::Ping(payload))) => {
+                        if socket.send(Message::Pong(payload)).await.is_err() { break; }
+                    }
+                    Some(Ok(Message::Text(text))) => {
+                        if text.contains("ping") {
+                            let pong = serde_json::json!({ "event": "pong", "server_time": now_ms() }).to_string();
+                            if socket.send(Message::Text(pong.into())).await.is_err() { break; }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) => break,
+                }
+            }
+            event = receiver.recv() => {
+                match event {
+                    Ok(event) if event.device_id == device_id => {
+                        if let Ok(text) = serde_json::to_string(&event) {
+                            if socket.send(Message::Text(text.into())).await.is_err() { break; }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let lagged = MobileHandoffWsEvent {
+                            event: "resync".to_string(),
+                            device_id: device_id.clone(),
+                            request_id: None,
+                            request_kind: None,
+                            server_time: now_ms(),
+                        };
+                        if let Ok(text) = serde_json::to_string(&lagged) {
+                            if socket.send(Message::Text(text.into())).await.is_err() { break; }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+
+    let _ = state.app_handle.emit("nutrino-mobile-handoff-ws-closed", device_id);
+}
+
+async fn mobile_handoff_response(
+    AxumState(state): AxumState<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    AxumPath(request_id): AxumPath<String>,
+    Json(payload): Json<MobileHandoffResponseInput>,
+) -> Result<Json<MobileHandoffResponseAck>, StatusCode> {
+    authorize(&headers, &state.token, state.auth_required)?;
+    record_connected_device(&headers, peer, &state, "/api/v1/mobile/requests/response");
+    let allowed_status = matches!(payload.status.as_str(), "completed" | "rejected" | "used" | "kept" | "deleted" | "error");
+    if !allowed_status {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let header_device_id = header_value(&headers, "x-nutrino-device-id").ok_or(StatusCode::BAD_REQUEST)?;
+    let now = now_ms();
+    let conn = open_conn(&state.db_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let changed = conn.execute(
+        r#"UPDATE mobile_handoff_requests
+           SET status = ?1,
+               responded_at = ?2,
+               result_filename = ?3,
+               result_mime_type = ?4,
+               result_base64 = ?5,
+               message = ?6
+           WHERE id = ?7 AND device_id = ?8 AND status = 'pending'"#,
+        params![
+            payload.status,
+            now,
+            payload.result_filename,
+            payload.result_mime_type,
+            payload.result_base64,
+            payload.message,
+            request_id,
+            header_device_id,
+        ],
+    ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if changed == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    emit_mobile_handoff_event(&state.handoff_notifier, "request_updated", header_device_id.clone(), Some(request_id.clone()), None);
+    let _ = state.app_handle.emit("nutrino-mobile-handoff-updated", request_id);
+    Ok(Json(MobileHandoffResponseAck { accepted: true, server_time: now }))
+}
+
 async fn api_list_foods(
     AxumState(state): AxumState<ApiState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -3109,7 +3456,15 @@ async fn api_list_activities(
 }
 
 fn authorize(headers: &HeaderMap, token: &str, required: bool) -> Result<(), StatusCode> {
+    authorize_with_optional_query_token(headers, None, token, required)
+}
+
+fn authorize_with_optional_query_token(headers: &HeaderMap, query_token: Option<&str>, token: &str, required: bool) -> Result<(), StatusCode> {
     if !required {
+        return Ok(());
+    }
+
+    if query_token.map(|value| value == token).unwrap_or(false) {
         return Ok(());
     }
 

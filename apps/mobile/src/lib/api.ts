@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult, DesktopUpdateCheckResponse } from '../types';
+import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult, DesktopUpdateCheckResponse, MobileHandoffRequest, MobileHandoffResponseInput } from '../types';
 import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeActivity, normalizeFood, normalizeIngredient, normalizeRecipe, resolveCatalogId } from './storage';
 
 const APP_CHANNEL = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
@@ -18,7 +18,7 @@ type MobileDeviceInfo = {
 
 let mobileDeviceInfoPromise: Promise<MobileDeviceInfo> | null = null;
 
-function getOrCreateDeviceId(): string {
+export function getOrCreateDeviceId(): string {
   try {
     const current = localStorage.getItem(DEVICE_ID_STORAGE_KEY);
     if (current) return current;
@@ -167,6 +167,39 @@ export async function requestDesktopUpdateCheck(baseUrl: string, tokenOrPassword
   return await requestJson<DesktopUpdateCheckResponse>(baseUrl, tokenOrPassword, '/update/check', {
     method: 'POST',
     body: JSON.stringify({ client_version: APP_VERSION, reason }),
+  });
+}
+
+
+export function mobileHandoffWebSocketUrl(state: AppState): string {
+  const { baseUrl } = state.pairing;
+  const normalizedBaseUrl = normalizeApiBaseUrl(baseUrl);
+  if (!normalizedBaseUrl) return '';
+
+  const url = new URL(`${normalizedBaseUrl}/mobile/requests/ws`);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('device_id', getOrCreateDeviceId());
+
+  const password = authSecret(state.pairing.password ?? state.pairing.token ?? '');
+  if (password) url.searchParams.set('token', password);
+
+  return url.toString();
+}
+
+export async function listMobileHandoffRequests(state: AppState): Promise<MobileHandoffRequest[]> {
+  const { baseUrl } = state.pairing;
+  const password = state.pairing.password ?? state.pairing.token ?? '';
+  if (!baseUrl.trim()) return [];
+  return await requestJson<MobileHandoffRequest[]>(baseUrl, password, '/mobile/requests');
+}
+
+export async function respondMobileHandoffRequest(state: AppState, requestId: string, payload: MobileHandoffResponseInput): Promise<void> {
+  const { baseUrl } = state.pairing;
+  const password = state.pairing.password ?? state.pairing.token ?? '';
+  if (!baseUrl.trim()) throw new Error('Missing API base URL.');
+  await requestJson<{ accepted: boolean; server_time: number }>(baseUrl, password, `/mobile/requests/${encodeURIComponent(requestId)}/response`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }
 

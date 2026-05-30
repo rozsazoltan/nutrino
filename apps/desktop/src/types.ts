@@ -16,6 +16,25 @@ export interface ServerStatus {
   connected_devices: number;
 }
 
+
+export type MobileHandoffKind = 'backup_export' | 'ai_export' | 'backup_import' | string;
+export type MobileHandoffStatus = 'pending' | 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error' | string;
+
+export interface MobileHandoffRequest {
+  id: string;
+  device_id: string;
+  device_name?: string | null;
+  kind: MobileHandoffKind;
+  status: MobileHandoffStatus;
+  created_at: number;
+  responded_at?: number | null;
+  payload: Record<string, unknown>;
+  result_filename?: string | null;
+  result_mime_type?: string | null;
+  result_base64?: string | null;
+  message?: string | null;
+}
+
 export interface ConnectedDevice {
   id: string;
   display_name: string;
