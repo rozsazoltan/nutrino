@@ -364,6 +364,8 @@ const weightReminderModalOpen = ref(false);
 const notificationHighlightedMealType = ref<MealType | null>(null);
 const desktopHandoffRequests = ref<MobileHandoffRequest[]>([]);
 const activeDesktopHandoffRequest = ref<MobileHandoffRequest | null>(null);
+const desktopBackupExportScopeRequest = ref<MobileHandoffRequest | null>(null);
+const backupOptionsMode = ref<'local' | 'desktop-handoff'>('local');
 const desktopHandoffNotificationsOpen = ref(false);
 const desktopHandoffBusy = ref(false);
 const pendingDesktopHandoffNotificationCount = computed(() => desktopHandoffRequests.value.length);
@@ -1130,7 +1132,7 @@ function handleBackNavigation(event?: PopStateEvent) {
   }
 
   if (backupOptionsOpen.value) {
-    backupOptionsOpen.value = false;
+    closeBackupOptionsDialog();
     keepBackInsideApp();
     return;
   }
@@ -7378,7 +7380,7 @@ const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, strin
     healthTitleRequired: 'Health entry title is required.', healthEntrySaved: 'Health entry saved.', healthEntryUpdated: 'Health entry updated.', searchHealthDiary: 'Search this day', healthSearchCurrentDay: 'Current day search', healthSearchHint: 'Searches title, description, category and notes only on the selected day.', noHealthEntries: 'No health entries for this day.', noHealthSearchResults: 'No matching health entries.', healthHomeHint: 'Today’s health notes',
     healthAnalysis: 'Health analysis', last30Days: 'Last 30 days', last180Days: 'Last 180 days', last360Days: 'Last 360 days', allTime: 'All time', recurringEvents: 'Recurring events', recurrenceChart: 'Recurrence chart', healthNoInsight: 'Add health entries to see recurring patterns.', healthRecurringInsight: 'recurring pattern(s), most often', healthRecentInsight: 'health note(s) in the last 30 days, most often',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready health summary exported.', selectedDayHealthNote: 'Health entries for the selected day are shown below.', none: 'none', healthDiaryTracking: 'Track health data', healthDiaryTrackingHint: 'Enable the separate health diary, symptom logging and health analysis.', healthDiaryDisabled: 'Health diary is disabled in Settings.', healthEventsShort: 'events', healthAnalysisWindow: 'Analysis window', healthEventFrequency: 'Event frequency', healthFrequencyColumns: '30 / 180 / 360 days / all', healthSelectedEventTrend: 'Monthly frequency for the selected event',
-    backupOptions: 'Backup contents', backupOptionsBody: 'Choose what should be included in this ZIP backup. Everything is selected by default.', backupIncludeCatalog: 'Activity + saved food items', backupIncludeCatalogHint: 'Local and synced foods, ingredients, recipes, activities and catalog sources.', backupIncludeFoodDiary: 'Food diary', backupIncludeFoodDiaryHint: 'Meal entries, activity logs and weight logs.', backupIncludeHealthDiary: 'Health diary', backupIncludeHealthDiaryHint: 'Health entries with recurrence links and attachments.', backupIncludeHealthMedia: 'Health attachments', backupIncludeHealthMediaHint: 'Photos and videos attached to health entries. Turn off for a smaller backup.', backupSelectAtLeastOne: 'Select at least one backup content group.', backupExportInProgress: 'Preparing export', backupPreparing: 'Preparing backup data...', backupPacking: 'Packing ZIP file...', backupPackingMedia: 'Packing health photos and videos...', backupOpeningPicker: 'Opening file picker...',
+    backupOptions: 'Backup contents', backupOptionsBody: 'Choose what should be included in this ZIP backup. Everything is selected by default.', backupIncludeCatalog: 'Activity + saved food items', backupIncludeCatalogHint: 'Local and synced foods, ingredients, recipes, activities and catalog sources.', backupIncludeFoodDiary: 'Food diary', backupIncludeFoodDiaryHint: 'Meal entries, activity logs and weight logs.', backupIncludeHealthDiary: 'Health diary', backupIncludeHealthDiaryHint: 'Health entries with recurrence links and attachments.', backupIncludeHealthMedia: 'Photos, videos and media', backupIncludeHealthMediaHint: 'Photos and videos attached to health entries. Turn off for a smaller backup.', backupIncludeHealthMediaWarning: 'Including photos and videos can drastically increase the backup size.', backupSelectAtLeastOne: 'Select at least one backup content group.', backupExportInProgress: 'Preparing export', backupPreparing: 'Preparing backup data...', backupPacking: 'Packing ZIP file...', backupPackingMedia: 'Packing health photos and videos...', backupOpeningPicker: 'Opening file picker...',
     appPurpose: 'App purpose', profilePurposeMissing: 'Choose at least one purpose.', selectAtLeastOnePurpose: 'Select at least one purpose.', onboardingPurposeIntro: 'What do you want to use Nutrino for? Select at least one option.',
     purposeWeightLoss: 'Weight loss', purposeWeightLossHint: 'Track a calorie deficit and progress.', purposeWeightGain: 'Weight gain', purposeWeightGainHint: 'Track enough intake and weight changes.', purposeHealthyEating: 'Healthy eating', purposeHealthyEatingHint: 'Focus on nutrients and balanced days.', purposeMealLogging: 'Meal logging', purposeMealLoggingHint: 'Keep a simple food diary.', purposeHealthLogging: 'Health issue logging', purposeHealthLoggingHint: 'Track symptoms and recurring signs.',
     healthAnalysisDayHint: 'Open analysis for the selected day, recurrence context and longer-term trends.', healthClinicalContext: 'Clinical context', healthClinicalContextHint: 'Focuses on recurrence, timing, attachments and category mix. Useful for preparing a concise doctor visit summary.', healthDayPatternAnalysis: 'Selected day patterns', healthDayPatternHint: 'Today / all-time count / average recurrence interval.', healthAverageInterval: 'avg every', healthRecurringSignal: 'recurring', healthNewEvent: 'new', healthNotFrequent: 'not frequent', healthClinicalDisclaimer: 'This summary is a structured diary view, not a diagnosis. Share severe, worsening or urgent symptoms with a clinician.', healthStillOngoing: 'Still ongoing', healthStillOngoingHint: 'Ask again tomorrow if this symptom has not resolved.', healthResolvedAt: 'Resolved at', healthNeedsReview: 'needs review', healthResolvedSameDay: 'same day', healthEntriesToReview: 'Health entries to review', healthEntriesToReviewHint: 'Confirm whether symptoms resolved or are still ongoing.', noHealthEntriesToReview: 'No health entries need review.', healthReviewReminderTitle: 'Health diary review', healthReviewReminderBody: 'Review unresolved health entries and symptom duration.', healthOngoing: 'Ongoing', healthAverageDuration: 'Avg duration', searchPreviousHealthEvents: 'Search previous health events', searchHealthEvents: 'Search health events', chooseHealthEvent: 'Choose event', healthNoPreviousEvents: 'No previous health events yet.', healthAttachmentStorageHint: 'Attachments are stored in local app data and can be included or omitted from ZIP backups.', healthAttachmentPreview: 'Preview attachment', healthAttachmentName: 'Attachment name', healthAttachmentMissingData: 'This backup does not contain the attachment file data.', healthAttachmentPreviewUnavailable: 'This photo format cannot be previewed on this device.', lastUsed: 'last used', ignore: 'Ignore', activityAnalysis: 'Activity analysis', activityAnalysisHint: 'Each day shows total active minutes and one pie chart split by activity type.', activityAnalysisRange: 'Activity analysis range', activeDays: 'Active days', activityTypeBreakdown: 'Minutes by activity type', minutesShort: 'min', healthCategoryDistribution: 'Category mix', healthTimingPattern: 'Time-of-day pattern', healthWeekdayPattern: 'Weekday pattern', healthDurationDistribution: 'Duration distribution', healthRecurrenceSignals: 'Recurrence signals', healthBusyDays: 'Days with most entries', healthNoAnalysisData: 'No health data in this period.', healthEntryDetails: 'Entry details', healthOccurrences: 'Occurrences', healthFirstSeen: 'First seen', healthLastSeen: 'Last seen', healthOccurrenceHistory: 'Occurrence history', healthEventDates: 'Dates', healthPatternHeatmap: 'Pattern heatmap', healthTimeMorning: 'Morning', healthTimeAfternoon: 'Afternoon', healthTimeEvening: 'Evening', healthTimeNight: 'Night', healthDurationSameDay: 'Same day', healthDurationTwoThreeDays: '2-3 days', healthDurationFourSevenDays: '4-7 days', healthDurationLong: '8+ days', healthDurationOngoing: 'Ongoing', healthCategoryPain: 'Pain', healthCategoryDigestive: 'Digestive', healthCategoryStool: 'Stool changes', healthCategorySkin: 'Skin', healthCategoryRespiratory: 'Respiratory', healthCategorySleep: 'Sleep', healthCategoryMood: 'Mood', healthCategoryInjury: 'Injury', healthCategoryEnergy: 'Energy', healthCategoryOther: 'Other',
@@ -7391,7 +7393,7 @@ const mobileHealthDiaryTranslations: Record<string, Partial<Record<string, strin
     healthTitleRequired: 'Az egészségbejegyzés címe kötelező.', healthEntrySaved: 'Egészségbejegyzés mentve.', healthEntryUpdated: 'Egészségbejegyzés frissítve.', searchHealthDiary: 'Keresés ezen a napon', healthSearchCurrentDay: 'Keresés az aktuális napon', healthSearchHint: 'Csak a kiválasztott nap címeiben, leírásaiban, kategóriáiban és jegyzeteiben keres.', noHealthEntries: 'Nincs egészségbejegyzés erre a napra.', noHealthSearchResults: 'Nincs találat az egészségnaplóban.', healthHomeHint: 'Mai egészségjegyzetek',
     healthAnalysis: 'Egészség analízis', last30Days: 'Utolsó 30 nap', last180Days: 'Utolsó 180 nap', last360Days: 'Utolsó 360 nap', allTime: 'Összes idő', recurringEvents: 'Visszatérő események', recurrenceChart: 'Ismétlődés diagram', healthNoInsight: 'Adj hozzá egészségbejegyzéseket a visszatérő mintákhoz.', healthRecurringInsight: 'visszatérő minta, leggyakrabban', healthRecentInsight: 'egészségjegyzet az utolsó 30 napban, leggyakrabban',
     healthAiExport: 'AI export', healthAiExportCreated: 'AI-ready egészség összefoglaló exportálva.', selectedDayHealthNote: 'A kiválasztott nap egészségbejegyzései lent láthatók.', none: 'nincs', healthDiaryTracking: 'Egészségügyi adatok vezetése', healthDiaryTrackingHint: 'Külön egészségnapló, tünetrögzítés és egészség analízis bekapcsolása.', healthDiaryDisabled: 'Az egészségnapló ki van kapcsolva a beállításokban.', healthEventsShort: 'esemény', healthAnalysisWindow: 'Elemzési időszak', healthEventFrequency: 'Esemény gyakoriság', healthFrequencyColumns: '30 / 180 / 360 nap / összes', healthSelectedEventTrend: 'A kiválasztott esemény havi gyakorisága',
-    backupOptions: 'Backup tartalma', backupOptionsBody: 'Válaszd ki, mi kerüljön ebbe a ZIP mentésbe. Alapból minden be van pipálva.', backupIncludeCatalog: 'Aktivitás + étel mentett tételek', backupIncludeCatalogHint: 'Helyi és szinkronizált ételek, alapanyagok, receptek, aktivitások és katalógusforrások.', backupIncludeFoodDiary: 'Étel napló', backupIncludeFoodDiaryHint: 'Étkezések, aktivitásnaplók és súlynapló.', backupIncludeHealthDiary: 'Egészségügyi napló', backupIncludeHealthDiaryHint: 'Egészségbejegyzések ismétlődési kapcsolatokkal és csatolmányokkal.', backupIncludeHealthMedia: 'Egészségügyi csatolmányok', backupIncludeHealthMediaHint: 'Az egészségbejegyzésekhez csatolt fotók és videók. Kisebb backuphoz kapcsold ki.', backupSelectAtLeastOne: 'Legalább egy backup tartalmi csoportot válassz ki.', backupExportInProgress: 'Export készítése', backupPreparing: 'Backup adatok előkészítése...', backupPacking: 'ZIP fájl csomagolása...', backupPackingMedia: 'Egészségügyi fotók és videók csomagolása...', backupOpeningPicker: 'Fájlkezelő megnyitása...',
+    backupOptions: 'Backup tartalma', backupOptionsBody: 'Válaszd ki, mi kerüljön ebbe a ZIP mentésbe. Alapból minden be van pipálva.', backupIncludeCatalog: 'Aktivitás + étel mentett tételek', backupIncludeCatalogHint: 'Helyi és szinkronizált ételek, alapanyagok, receptek, aktivitások és katalógusforrások.', backupIncludeFoodDiary: 'Étel napló', backupIncludeFoodDiaryHint: 'Étkezések, aktivitásnaplók és súlynapló.', backupIncludeHealthDiary: 'Egészségügyi napló', backupIncludeHealthDiaryHint: 'Egészségbejegyzések ismétlődési kapcsolatokkal és csatolmányokkal.', backupIncludeHealthMedia: 'Fotó, videó és média', backupIncludeHealthMediaHint: 'Az egészségbejegyzésekhez csatolt fotók és videók. Kisebb backuphoz kapcsold ki.', backupIncludeHealthMediaWarning: 'A fotók és videók belerakása drasztikusan megnövelheti a backup méretét.', backupSelectAtLeastOne: 'Legalább egy backup tartalmi csoportot válassz ki.', backupExportInProgress: 'Export készítése', backupPreparing: 'Backup adatok előkészítése...', backupPacking: 'ZIP fájl csomagolása...', backupPackingMedia: 'Egészségügyi fotók és videók csomagolása...', backupOpeningPicker: 'Fájlkezelő megnyitása...',
     appPurpose: 'App használati cél', profilePurposeMissing: 'Válassz legalább egy célt.', selectAtLeastOnePurpose: 'Válassz legalább egy célt.', onboardingPurposeIntro: 'Mire szeretnéd használni a Nutrinót? Válassz legalább egy opciót.',
     purposeWeightLoss: 'Fogyás', purposeWeightLossHint: 'Deficit és haladás követése.', purposeWeightGain: 'Tömegnövelés', purposeWeightGainHint: 'Elég bevitel és súlyváltozás követése.', purposeHealthyEating: 'Egészséges étkezés', purposeHealthyEatingHint: 'Tápanyagok és kiegyensúlyozott napok.', purposeMealLogging: 'Étkezésnapló', purposeMealLoggingHint: 'Egyszerű ételnapló vezetése.', purposeHealthLogging: 'Egészségprobléma naplózás', purposeHealthLoggingHint: 'Tünetek és visszatérő jelek követése.',
     healthAnalysisDayHint: 'Elemzés megnyitása a kiválasztott naphoz, ismétlődési kontextussal és hosszabb távú trendekkel.', healthClinicalContext: 'Klinikai kontextus', healthClinicalContextHint: 'Ismétlődésre, időzítésre, csatolmányokra és kategória-eloszlásra fókuszál. Orvosi konzultáció előkészítéséhez hasznos.', healthDayPatternAnalysis: 'Kiválasztott napi minták', healthDayPatternHint: 'Mai / összes előfordulás / átlagos ismétlődési távolság.', healthAverageInterval: 'átlagosan ennyi naponta:', healthRecurringSignal: 'visszatérő', healthNewEvent: 'új', healthNotFrequent: 'nem gyakori', healthClinicalDisclaimer: 'Ez strukturált naplóösszefoglaló, nem diagnózis. Súlyosbodó, erős vagy sürgős tünettel fordulj orvoshoz.', healthStillOngoing: 'Még nem múlt el', healthStillOngoingHint: 'Ha még tart, holnap újra rákérdez az app.', healthResolvedAt: 'Elmúlt ekkor', healthNeedsReview: 'átnézendő', healthResolvedSameDay: 'azonos nap', healthEntriesToReview: 'Átnézendő egészségügyi bejegyzések', healthEntriesToReviewHint: 'Jelöld, hogy elmúlt-e a tünet, vagy még tart.', noHealthEntriesToReview: 'Nincs átnézendő egészségügyi bejegyzés.', healthReviewReminderTitle: 'Egészségnapló átnézés', healthReviewReminderBody: 'Nézd át a nyitott egészségbejegyzéseket és a tünetek időtartamát.', healthOngoing: 'Még tart', healthAverageDuration: 'Átlag időtartam', searchPreviousHealthEvents: 'Korábbi egészségesemények keresése', searchHealthEvents: 'Egészségesemény keresése', chooseHealthEvent: 'Esemény választása', healthNoPreviousEvents: 'Még nincs korábbi egészségesemény.', healthAttachmentStorageHint: 'A csatolmányok helyi appadatként vannak tárolva, és ZIP backupba betehetők vagy kihagyhatók.', healthAttachmentPreview: 'Csatolmány megtekintése', healthAttachmentName: 'Csatolmány neve', healthAttachmentMissingData: 'Ez a backup nem tartalmazza a csatolmány fájladatát.', healthAttachmentPreviewUnavailable: 'Ezt a fotóformátumot ezen az eszközön nem lehet előnézetben megjeleníteni.', lastUsed: 'utoljára', ignore: 'Figyelmen kívül hagyás', activityAnalysis: 'Aktivitás analízis', activityAnalysisHint: 'Minden napnál látszik az aktív perc összesen, és egy kördiagram típusok szerinti percmegosztással.', activityAnalysisRange: 'Aktivitás elemzési időszak', activeDays: 'Aktív napok', activityTypeBreakdown: 'Percek aktivitástípus szerint', minutesShort: 'perc', healthCategoryDistribution: 'Kategória-megoszlás', healthTimingPattern: 'Napszak szerinti minta', healthWeekdayPattern: 'Heti minta', healthDurationDistribution: 'Időtartam-megoszlás', healthRecurrenceSignals: 'Ismétlődési jelek', healthBusyDays: 'Legtöbb bejegyzéses napok', healthNoAnalysisData: 'Nincs egészségadat ebben az időszakban.', healthEntryDetails: 'Bejegyzés részletei', healthOccurrences: 'Előfordulások', healthFirstSeen: 'Első alkalom', healthLastSeen: 'Utolsó alkalom', healthOccurrenceHistory: 'Előfordulási előzmények', healthEventDates: 'Dátumok', healthPatternHeatmap: 'Mintázat hőtérkép', healthTimeMorning: 'Reggel', healthTimeAfternoon: 'Délután', healthTimeEvening: 'Este', healthTimeNight: 'Éjszaka', healthDurationSameDay: 'Azonos nap', healthDurationTwoThreeDays: '2-3 nap', healthDurationFourSevenDays: '4-7 nap', healthDurationLong: '8+ nap', healthDurationOngoing: 'Még tart', healthCategoryPain: 'Fájdalom', healthCategoryDigestive: 'Emésztés', healthCategoryStool: 'Székletváltozás', healthCategorySkin: 'Bőr', healthCategoryRespiratory: 'Légzés', healthCategorySleep: 'Alvás', healthCategoryMood: 'Hangulat', healthCategoryInjury: 'Sérülés', healthCategoryEnergy: 'Energia', healthCategoryOther: 'Egyéb',
@@ -7484,6 +7486,9 @@ const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>
     desktopHandoffDeleteBackup: 'Delete',
     desktopHandoffRejected: 'Desktop request rejected.',
     desktopHandoffExportSent: 'Export sent to desktop.',
+    desktopBackupExportScopeTitle: 'Choose backup data',
+    desktopBackupExportScopeBody: 'The desktop request is approved. Choose which data groups should be included before sending the backup.',
+    desktopBackupExportSendSelected: 'Send selected data',
     desktopBackupImportUsed: 'Desktop backup applied.',
     desktopBackupImportKept: 'Desktop backup kept as a local restore point.',
     desktopBackupImportDeleted: 'Desktop backup deleted.',
@@ -7510,6 +7515,9 @@ const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>
     desktopHandoffDeleteBackup: 'Törlés',
     desktopHandoffRejected: 'Desktop kérés elutasítva.',
     desktopHandoffExportSent: 'Export elküldve a desktopnak.',
+    desktopBackupExportScopeTitle: 'Backup adatok kiválasztása',
+    desktopBackupExportScopeBody: 'A desktop kérés engedélyezve lett. Válaszd ki, milyen adatcsoportok kerüljenek a backupba, mielőtt elküldöd.',
+    desktopBackupExportSendSelected: 'Kijelölt adatok küldése',
     desktopBackupImportUsed: 'Desktop backup alkalmazva.',
     desktopBackupImportKept: 'Desktop backup megtartva helyi visszaállítási pontként.',
     desktopBackupImportDeleted: 'Desktop backup törölve.',
@@ -12067,6 +12075,7 @@ function closeTransientSurfacesForNotificationAction() {
   weightReminderModalOpen.value = false;
   desktopHandoffNotificationsOpen.value = false;
   notificationHighlightedMealType.value = null;
+  closeBackupOptionsDialog();
   backupProfilesOpen.value = false;
   duplicateMealTargetOpen.value = false;
   entryActionSheet.value = null;
@@ -13655,8 +13664,11 @@ function defaultBackupIncludeOptions(): BackupIncludeOptions {
   return { catalog: true, foodDiary: true, healthDiary: true, healthMedia: true };
 }
 
-function resetBackupIncludeOptions() {
-  const defaults = defaultBackupIncludeOptions();
+function defaultDesktopBackupIncludeOptions(): BackupIncludeOptions {
+  return { catalog: true, foodDiary: true, healthDiary: true, healthMedia: false };
+}
+
+function resetBackupIncludeOptions(defaults = defaultBackupIncludeOptions()) {
   backupIncludeOptions.catalog = defaults.catalog;
   backupIncludeOptions.foodDiary = defaults.foodDiary;
   backupIncludeOptions.healthDiary = defaults.healthDiary;
@@ -13772,15 +13784,41 @@ function dataUrlBase64Payload(dataUrl: string) {
   return match ? { mime: match[1], base64: match[2] } : null;
 }
 
+function closeBackupOptionsDialog() {
+  backupOptionsOpen.value = false;
+  backupOptionsMode.value = 'local';
+  desktopBackupExportScopeRequest.value = null;
+}
+
 function openBackupOptionsDialog() {
-  resetBackupIncludeOptions();
+  backupOptionsMode.value = 'local';
+  desktopBackupExportScopeRequest.value = null;
+  resetBackupIncludeOptions(defaultBackupIncludeOptions());
+  backupOptionsOpen.value = true;
+}
+
+function openDesktopBackupExportScopeDialog(request: MobileHandoffRequest) {
+  backupOptionsMode.value = 'desktop-handoff';
+  desktopBackupExportScopeRequest.value = request;
+  activeDesktopHandoffRequest.value = request;
+  resetBackupIncludeOptions(defaultDesktopBackupIncludeOptions());
+  desktopHandoffNotificationsOpen.value = false;
   backupOptionsOpen.value = true;
 }
 
 async function confirmBackupOptionsExport() {
   const includeOptions = selectedBackupIncludeOptions();
   if (!backupIncludesAny(includeOptions)) return showToast(t('backupSelectAtLeastOne'));
-  backupOptionsOpen.value = false;
+  if (backupOptionsMode.value === 'desktop-handoff') {
+    const request = desktopBackupExportScopeRequest.value;
+    if (!request) return closeBackupOptionsDialog();
+    backupOptionsOpen.value = false;
+    await sendDesktopBackupExportRequest(request, includeOptions);
+    backupOptionsMode.value = 'local';
+    desktopBackupExportScopeRequest.value = null;
+    return;
+  }
+  closeBackupOptionsDialog();
   await exportAppDataWithOptions(mobileBackupFileName(), t('exportBackupProfile'), t('appDataExportCreated'), includeOptions);
 }
 
@@ -14358,6 +14396,9 @@ async function pollDesktopHandoffRequests() {
     if (activeDesktopHandoffRequest.value && !requests.some((request) => request.id === activeDesktopHandoffRequest.value?.id)) {
       activeDesktopHandoffRequest.value = null;
     }
+    if (desktopBackupExportScopeRequest.value && !requests.some((request) => request.id === desktopBackupExportScopeRequest.value?.id)) {
+      closeBackupOptionsDialog();
+    }
     for (const request of requests) void notifyDesktopHandoffRequest(request);
   } catch {
     // The normal server health polling already reports connectivity state.
@@ -14383,6 +14424,7 @@ function removeDesktopHandoffRequestLocally(requestId: string) {
   void cancelDesktopHandoffNotification(requestId);
   notifiedDesktopHandoffIds.delete(requestId);
   if (activeDesktopHandoffRequest.value?.id === requestId) activeDesktopHandoffRequest.value = null;
+  if (desktopBackupExportScopeRequest.value?.id === requestId) closeBackupOptionsDialog();
   if (!desktopHandoffRequests.value.length) desktopHandoffNotificationsOpen.value = false;
 }
 
@@ -14416,39 +14458,23 @@ async function rejectDesktopHandoffRequest(request = activeDesktopHandoffRequest
   }
 }
 
-async function approveDesktopExportRequest(request = activeDesktopHandoffRequest.value) {
+async function sendDesktopBackupExportRequest(request: MobileHandoffRequest, includeOptions = defaultDesktopBackupIncludeOptions()) {
   if (!request || desktopHandoffBusy.value) return;
   desktopHandoffBusy.value = true;
   exportBusy.value = true;
-  exportTitle.value = request.kind === 'ai_export' ? t('aiExportAllData') : t('backupExportInProgress');
+  exportTitle.value = t('backupExportInProgress');
   exportStatus.value = t('backupPreparing');
   exportProgress.value = 8;
   try {
-    if (request.kind === 'ai_export') {
-      refreshTodayKey();
-      const startKey = typeof request.payload.startKey === 'string' ? request.payload.startKey : dateKeyOffset(todayKey.value, -89);
-      const endKey = typeof request.payload.endKey === 'string' ? request.payload.endKey : todayKey.value;
-      const range = { startKey, endKey, startMs: dayStartMs(startKey), endMs: dayEndMs(endKey) };
-      const markdown = buildAllDataAiMarkdown(range);
-      await uploadDesktopHandoffResultFile(
-        request,
-        new TextEncoder().encode(markdown),
-        `nutrino-mobile-ai-export-${startKey}-${endKey}.md`,
-        'text/markdown',
-        t('desktopHandoffExportSent'),
-      );
-      showToast(t('desktopHandoffExportSent'));
-    } else {
-      const bytes = await buildMobileBackupZip(defaultBackupIncludeOptions());
-      await uploadDesktopHandoffResultFile(
-        request,
-        bytes,
-        mobileBackupFileName(),
-        'application/zip',
-        t('desktopHandoffExportSent'),
-      );
-      showToast(t('desktopHandoffExportSent'));
-    }
+    const bytes = await buildMobileBackupZip(includeOptions);
+    await uploadDesktopHandoffResultFile(
+      request,
+      bytes,
+      mobileBackupFileName(),
+      'application/zip',
+      t('desktopHandoffExportSent'),
+    );
+    showToast(t('desktopHandoffExportSent'));
   } catch (error) {
     try {
       await finishDesktopHandoffRequest(request, 'error', { message: String(error) });
@@ -14464,6 +14490,48 @@ async function approveDesktopExportRequest(request = activeDesktopHandoffRequest
     desktopHandoffBusy.value = false;
   }
 }
+
+async function approveDesktopExportRequest(request = activeDesktopHandoffRequest.value) {
+  if (!request || desktopHandoffBusy.value) return;
+  if (request.kind === 'backup_export') {
+    openDesktopBackupExportScopeDialog(request);
+    return;
+  }
+  desktopHandoffBusy.value = true;
+  exportBusy.value = true;
+  exportTitle.value = t('aiExportAllData');
+  exportStatus.value = t('backupPreparing');
+  exportProgress.value = 8;
+  try {
+    refreshTodayKey();
+    const startKey = typeof request.payload.startKey === 'string' ? request.payload.startKey : dateKeyOffset(todayKey.value, -89);
+    const endKey = typeof request.payload.endKey === 'string' ? request.payload.endKey : todayKey.value;
+    const range = { startKey, endKey, startMs: dayStartMs(startKey), endMs: dayEndMs(endKey) };
+    const markdown = buildAllDataAiMarkdown(range);
+    await uploadDesktopHandoffResultFile(
+      request,
+      new TextEncoder().encode(markdown),
+      `nutrino-mobile-ai-export-${startKey}-${endKey}.md`,
+      'text/markdown',
+      t('desktopHandoffExportSent'),
+    );
+    showToast(t('desktopHandoffExportSent'));
+  } catch (error) {
+    try {
+      await finishDesktopHandoffRequest(request, 'error', { message: String(error) });
+    } catch {
+      // keep the original error visible below
+    }
+    showToast(String(error));
+  } finally {
+    exportBusy.value = false;
+    exportProgress.value = 0;
+    exportStatus.value = '';
+    exportTitle.value = '';
+    desktopHandoffBusy.value = false;
+  }
+}
+
 
 async function useDesktopBackupImportRequest(request = activeDesktopHandoffRequest.value) {
   if (!request || desktopHandoffBusy.value) return;
@@ -16108,10 +16176,10 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="backupOptionsOpen" class="dialog-backdrop app-overlay" @click.self="backupOptionsOpen = false">
+      <div v-if="backupOptionsOpen" class="dialog-backdrop app-overlay" @click.self="closeBackupOptionsDialog">
         <article class="settings-dialog backup-options-dialog">
-          <div class="dialog-title-row"><h2>{{ t('backupOptions') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="backupOptionsOpen = false" v-html="lucideSvg('x')"></button></div>
-          <p class="helper big">{{ t('backupOptionsBody') }}</p>
+          <div class="dialog-title-row"><h2>{{ t(backupOptionsMode === 'desktop-handoff' ? 'desktopBackupExportScopeTitle' : 'backupOptions') }}</h2><button class="icon-button dialog-close-icon" type="button" :aria-label="t('close')" :title="t('close')" @click="closeBackupOptionsDialog" v-html="lucideSvg('x')"></button></div>
+          <p class="helper big">{{ t(backupOptionsMode === 'desktop-handoff' ? 'desktopBackupExportScopeBody' : 'backupOptionsBody') }}</p>
           <div class="backup-options-list">
             <label class="source-choice-card source-choice-card-simple backup-option-card">
               <span><b>{{ t('backupIncludeCatalog') }}</b><small>{{ t('backupIncludeCatalogHint') }}</small></span>
@@ -16125,14 +16193,14 @@ function setTab(tab: Tab) {
               <span><b>{{ t('backupIncludeHealthDiary') }}</b><small>{{ t('backupIncludeHealthDiaryHint') }}</small></span>
               <input v-model="backupIncludeOptions.healthDiary" type="checkbox" />
             </label>
-            <label v-if="backupIncludeOptions.healthDiary" class="source-choice-card source-choice-card-simple backup-option-card">
-              <span><b>{{ t('backupIncludeHealthMedia') }}</b><small>{{ t('backupIncludeHealthMediaHint') }}</small></span>
+            <label v-if="backupIncludeOptions.healthDiary" class="source-choice-card source-choice-card-simple backup-option-card backup-option-card-media">
+              <span class="backup-media-option-copy"><b><span class="backup-media-warning-icon" aria-hidden="true">!</span>{{ t('backupIncludeHealthMedia') }}</b><small>{{ t('backupIncludeHealthMediaHint') }}</small><small class="backup-media-warning-text">{{ t('backupIncludeHealthMediaWarning') }}</small></span>
               <input v-model="backupIncludeOptions.healthMedia" type="checkbox" />
             </label>
           </div>
           <div class="dialog-actions">
-            <button class="text-button" type="button" @click="backupOptionsOpen = false">{{ t('cancel') }}</button>
-            <button class="filled-button" type="button" @click="confirmBackupOptionsExport">{{ t('exportAppData') }}</button>
+            <button class="text-button" type="button" @click="closeBackupOptionsDialog">{{ t('cancel') }}</button>
+            <button class="filled-button" type="button" @click="confirmBackupOptionsExport">{{ t(backupOptionsMode === 'desktop-handoff' ? 'desktopBackupExportSendSelected' : 'exportAppData') }}</button>
           </div>
         </article>
       </div>
