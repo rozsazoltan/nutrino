@@ -16155,7 +16155,7 @@ function setTab(tab: Tab) {
             <div class="dialog-actions">
               <button class="text-button" type="button" @click="resetAiExportRange">{{ t('last90Days') }}</button>
               <button class="text-button" type="button" @click="settingsDialog = null">{{ t('cancel') }}</button>
-              <button class="filled-button" type="button" :disabled="exportBusy" @click="exportAllDataAiMarkdown">{{ t('aiExportAllData') }}</button>
+              <button class="filled-button" type="button" :disabled="exportBusy" @click="() => exportAllDataAiMarkdown()">{{ t('aiExportAllData') }}</button>
             </div>
           </template>
           <template v-else-if="settingsDialog === 'calculations'">
