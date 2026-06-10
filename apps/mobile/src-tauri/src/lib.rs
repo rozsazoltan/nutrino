@@ -30,8 +30,6 @@ pub fn run() {
         .expect("error while running nutrino mobile");
 }
 
-
-
 #[derive(Debug, Clone, Serialize)]
 struct MobileDeviceInfo {
     device_name: Option<String>,
@@ -133,7 +131,13 @@ fn validate_zip_bytes(bytes: &[u8]) -> Result<(), String> {
 fn safe_zip_filename(filename: String) -> String {
     let safe_name = filename
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') { ch } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
         .collect::<String>();
 
     let safe_name = if safe_name.trim().is_empty() {
@@ -152,7 +156,13 @@ fn safe_zip_filename(filename: String) -> String {
 fn safe_export_filename(filename: String, default_name: &str, default_extension: &str) -> String {
     let safe_name = filename
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') { ch } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
         .collect::<String>();
 
     let safe_name = if safe_name.trim().is_empty() {
@@ -179,7 +189,11 @@ fn validate_text_export_bytes(bytes: &[u8]) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn write_mobile_backup_file(app: tauri::AppHandle, filename: String, bytes: Vec<u8>) -> Result<String, String> {
+fn write_mobile_backup_file(
+    app: tauri::AppHandle,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
     validate_zip_bytes(&bytes)?;
 
     let safe_name = safe_zip_filename(filename);
@@ -188,15 +202,22 @@ fn write_mobile_backup_file(app: tauri::AppHandle, filename: String, bytes: Vec<
         .app_data_dir()
         .map_err(|error| format!("Could not resolve app data directory: {error}"))?
         .join("exports");
-    std::fs::create_dir_all(&dir).map_err(|error| format!("Could not create backup export directory: {error}"))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create backup export directory: {error}"))?;
 
     let path = dir.join(safe_name);
-    std::fs::write(&path, &bytes).map_err(|error| format!("Could not write backup ZIP: {error}"))?;
+    std::fs::write(&path, &bytes)
+        .map_err(|error| format!("Could not write backup ZIP: {error}"))?;
 
-    let saved = std::fs::read(&path).map_err(|error| format!("Could not verify backup ZIP: {error}"))?;
+    let saved =
+        std::fs::read(&path).map_err(|error| format!("Could not verify backup ZIP: {error}"))?;
     if saved.len() != bytes.len() || saved.first() != Some(&0x50) || saved.get(1) != Some(&0x4b) {
         let _ = std::fs::remove_file(&path);
-        return Err(format!("Backup ZIP verification failed: saved {} B, expected {} B", saved.len(), bytes.len()));
+        return Err(format!(
+            "Backup ZIP verification failed: saved {} B, expected {} B",
+            saved.len(),
+            bytes.len()
+        ));
     }
 
     Ok(path.to_string_lossy().to_string())
@@ -204,13 +225,18 @@ fn write_mobile_backup_file(app: tauri::AppHandle, filename: String, bytes: Vec<
 
 #[tauri::command]
 fn read_mobile_backup_file(path: String) -> Result<Vec<u8>, String> {
-    let bytes = std::fs::read(&path).map_err(|error| format!("Could not read backup ZIP: {error}"))?;
+    let bytes =
+        std::fs::read(&path).map_err(|error| format!("Could not read backup ZIP: {error}"))?;
     validate_zip_bytes(&bytes)?;
     Ok(bytes)
 }
 
 #[tauri::command]
-fn export_mobile_backup_via_android_picker(app: tauri::AppHandle, filename: String, bytes: Vec<u8>) -> Result<String, String> {
+fn export_mobile_backup_via_android_picker(
+    app: tauri::AppHandle,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
     validate_zip_bytes(&bytes)?;
     let safe_name = safe_zip_filename(filename);
 
@@ -230,9 +256,9 @@ fn export_mobile_backup_via_android_picker(app: tauri::AppHandle, filename: Stri
         };
 
         {
-            let mut file = api
-                .open_file_writable(&selected_path)
-                .map_err(|error| format!("Could not open selected backup file for writing: {error}"))?;
+            let mut file = api.open_file_writable(&selected_path).map_err(|error| {
+                format!("Could not open selected backup file for writing: {error}")
+            })?;
             file.write_all(&bytes)
                 .map_err(|error| format!("Could not write selected backup ZIP: {error}"))?;
             file.flush()
@@ -251,7 +277,11 @@ fn export_mobile_backup_via_android_picker(app: tauri::AppHandle, filename: Stri
 
         validate_zip_bytes(&saved)?;
         if saved.len() != bytes.len() {
-            return Err(format!("Backup ZIP verification failed: saved {} B, expected {} B", saved.len(), bytes.len()));
+            return Err(format!(
+                "Backup ZIP verification failed: saved {} B, expected {} B",
+                saved.len(),
+                bytes.len()
+            ));
         }
 
         return Ok(format!("{} B", saved.len()));
@@ -265,14 +295,27 @@ fn export_mobile_backup_via_android_picker(app: tauri::AppHandle, filename: Stri
     }
 }
 
-
 #[tauri::command]
-fn export_text_via_android_picker(app: tauri::AppHandle, filename: String, mime_type: String, bytes: Vec<u8>) -> Result<String, String> {
+fn export_text_via_android_picker(
+    app: tauri::AppHandle,
+    filename: String,
+    mime_type: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
     validate_text_export_bytes(&bytes)?;
-    let extension = if filename.to_ascii_lowercase().ends_with(".json") { "json" } else { "md" };
+    let extension = if filename.to_ascii_lowercase().ends_with(".json") {
+        "json"
+    } else {
+        "md"
+    };
     let safe_name = safe_export_filename(filename, "nutrino-export", extension);
     let mime = if mime_type.trim().is_empty() {
-        if safe_name.to_ascii_lowercase().ends_with(".json") { "application/json" } else { "text/markdown" }.to_string()
+        if safe_name.to_ascii_lowercase().ends_with(".json") {
+            "application/json"
+        } else {
+            "text/markdown"
+        }
+        .to_string()
     } else {
         mime_type
     };
@@ -293,9 +336,9 @@ fn export_text_via_android_picker(app: tauri::AppHandle, filename: String, mime_
         };
 
         {
-            let mut file = api
-                .open_file_writable(&selected_path)
-                .map_err(|error| format!("Could not open selected export file for writing: {error}"))?;
+            let mut file = api.open_file_writable(&selected_path).map_err(|error| {
+                format!("Could not open selected export file for writing: {error}")
+            })?;
             file.write_all(&bytes)
                 .map_err(|error| format!("Could not write selected export file: {error}"))?;
             file.flush()
@@ -313,7 +356,11 @@ fn export_text_via_android_picker(app: tauri::AppHandle, filename: String, mime_
         }
 
         if saved.len() != bytes.len() {
-            return Err(format!("Export verification failed: saved {} B, expected {} B", saved.len(), bytes.len()));
+            return Err(format!(
+                "Export verification failed: saved {} B, expected {} B",
+                saved.len(),
+                bytes.len()
+            ));
         }
 
         return Ok(format!("{} B", saved.len()));
@@ -329,12 +376,18 @@ fn export_text_via_android_picker(app: tauri::AppHandle, filename: String, mime_
 }
 
 #[tauri::command]
-fn export_markdown_via_android_picker(app: tauri::AppHandle, filename: String, bytes: Vec<u8>) -> Result<String, String> {
+fn export_markdown_via_android_picker(
+    app: tauri::AppHandle,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
     export_text_via_android_picker(app, filename, "text/markdown".to_string(), bytes)
 }
 
 #[tauri::command]
-fn import_mobile_backup_via_android_picker(app: tauri::AppHandle) -> Result<Option<Vec<u8>>, String> {
+fn import_mobile_backup_via_android_picker(
+    app: tauri::AppHandle,
+) -> Result<Option<Vec<u8>>, String> {
     #[cfg(target_os = "android")]
     {
         use std::io::Read;

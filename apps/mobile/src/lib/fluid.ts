@@ -44,8 +44,7 @@ export const ALCOHOL_KCAL_PRESETS: AlcoholKcalPreset[] = [
 
 export function alcoholPreset(kind: FluidAlcoholKind): AlcoholKcalPreset {
   return (
-    ALCOHOL_KCAL_PRESETS.find((preset) => preset.kind === kind) ||
-    ALCOHOL_KCAL_PRESETS[ALCOHOL_KCAL_PRESETS.length - 1]
+    ALCOHOL_KCAL_PRESETS.find((preset) => preset.kind === kind) || ALCOHOL_KCAL_PRESETS[ALCOHOL_KCAL_PRESETS.length - 1]
   );
 }
 
@@ -65,12 +64,8 @@ export function estimateFluidAlcoholKcal(input: {
   return Math.max(0, Math.round(Number(input.amountDl || 0) * preset.kcal));
 }
 
-export function fluidLogKcal(
-  entry: Pick<FluidLog, 'is_alcohol' | 'kcal'>,
-): number {
-  return entry.is_alcohol
-    ? Math.max(0, Math.round(Number(entry.kcal || 0)))
-    : 0;
+export function fluidLogKcal(entry: Pick<FluidLog, 'is_alcohol' | 'kcal'>): number {
+  return entry.is_alcohol ? Math.max(0, Math.round(Number(entry.kcal || 0))) : 0;
 }
 
 export function formatFluidAmount(amountDl: number): string {
