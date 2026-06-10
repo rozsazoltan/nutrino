@@ -20,6 +20,7 @@ import type {
   WeightLog,
   GitHubCsvSource,
   LocalizedNameMap,
+  FluidLog,
 } from '../types';
 
 const STORAGE_KEY = 'nutrino.mobile.v3.state';
@@ -159,10 +160,31 @@ export function defaultState(): AppState {
     activities: fallbackActivities,
     intakes: [],
     activityLogs: [],
+    fluidLogs: [],
     weightLogs: [],
     healthEntries: [],
     catalogAliases: [],
     githubSources: [],
+  };
+}
+
+
+function normalizeFluidLog(entry: Partial<FluidLog> | null | undefined): FluidLog | null {
+  if (!entry) return null;
+  const amountDl = Number(entry.amount_dl ?? 0);
+  const consumedAt = Number(entry.consumed_at || entry.created_at || Date.now());
+  if (!Number.isFinite(amountDl) || amountDl <= 0) return null;
+  return {
+    id: String(entry.id || generateId('fluid')),
+    consumed_at: Number.isFinite(consumedAt) ? consumedAt : Date.now(),
+    amount_dl: Math.max(0, Math.round(amountDl * 10) / 10),
+    is_alcohol: entry.is_alcohol === true,
+    alcohol_kind: entry.alcohol_kind || null,
+    kcal: Number.isFinite(Number(entry.kcal)) ? Math.max(0, Math.round(Number(entry.kcal))) : 0,
+    note: entry.note ? String(entry.note) : null,
+    pending_sync: entry.pending_sync !== false,
+    created_at: Number(entry.created_at || consumedAt || Date.now()),
+    updated_at: Number(entry.updated_at || entry.created_at || consumedAt || Date.now()),
   };
 }
 
@@ -275,6 +297,7 @@ export function loadState(): AppState {
       activities: Array.isArray(parsed.activities) ? parsed.activities.map((activity) => normalizeActivity(activity)) : defaults.activities,
       intakes: Array.isArray(parsed.intakes) ? parsed.intakes : [],
       activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
+      fluidLogs: Array.isArray((parsed as any).fluidLogs) ? ((parsed as any).fluidLogs as Partial<FluidLog>[]).map(normalizeFluidLog).filter(Boolean) as FluidLog[] : [],
       weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
       healthEntries: Array.isArray((parsed as any).healthEntries) ? ((parsed as any).healthEntries as HealthEntry[]).map(normalizeHealthEntry) : [],
       catalogAliases: Array.isArray(parsed.catalogAliases) ? parsed.catalogAliases : [],

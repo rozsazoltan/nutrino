@@ -21,7 +21,10 @@
     "check:android-mainactivity-bridge": "node scripts/check-android-mainactivity-bridge.mjs",
     "check:desktop-raw-i18n-keys": "node scripts/check-desktop-raw-i18n-keys.mjs",
     "prune:android": "pnpm --filter nutrino-mobile android:prune",
-    "size:android": "pnpm --filter nutrino-mobile android:size"
+    "size:android": "pnpm --filter nutrino-mobile android:size",
+    "test:app": "node scripts/check-app-domain.mjs",
+    "check:release-workflows": "node scripts/check-release-workflows.mjs",
+    "check": "pnpm test:app && pnpm check:i18n && pnpm check:android-mainactivity-bridge && pnpm check:release-workflows"
   },
   "devDependencies": {
     "typescript": "^5.9.0"

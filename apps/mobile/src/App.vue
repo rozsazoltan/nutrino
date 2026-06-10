@@ -9,7 +9,7 @@ import { cancel, createChannel, Importance, isPermissionGranted, onAction, regis
 import { driver, type DriveStep, type Driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
 import JSZip from 'jszip';
-import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, HealthAttachment, HealthCategoryType, HealthEntry, Ingredient, Intake, LocalizedNameMap, MealType, ProfilePurpose, Recipe, RecipeItem, WeightLog, GitHubCsvSource, MobileHandoffKind, MobileHandoffRequest } from './types';
+import type { ActivityDefinition, ActivityLog, AppLanguage, AppState, CatalogSourceKind, Food, HealthAttachment, HealthCategoryType, HealthEntry, Ingredient, Intake, LocalizedNameMap, MealType, ProfilePurpose, Recipe, RecipeItem, WeightLog, GitHubCsvSource, MobileHandoffKind, MobileHandoffRequest, FluidLog, FluidAlcoholKind } from './types';
 import {
   ageFromBirthday,
   bmi,
@@ -37,7 +37,7 @@ import { lucideSvg, type IconName } from './icons';
 
 type Tab = 'home' | 'diary' | 'recipes' | 'profile';
 type DiaryTab = 'food' | 'health';
-type AddMode = 'food' | 'activity' | null;
+type AddMode = 'food' | 'activity' | 'fluid' | null;
 type MealEntryMode = 'catalog' | 'note';
 type CatalogSearchScope = 'title' | 'all' | 'brand' | 'category' | 'description';
 type WeightTrendMode = 'daily' | 'weekly' | 'monthly';
@@ -257,6 +257,11 @@ const activityId = ref('');
 const activityMinutes = ref<number | null>(null);
 const activityKcal = ref<number | null>(null);
 const activitySource = ref<ActivityLog['source']>('activity_catalog');
+const fluidAmountDl = ref<number | null>(2);
+const fluidIsAlcohol = ref(false);
+const fluidAlcoholKind = ref<FluidAlcoholKind>('beer');
+const fluidCustomKcal = ref<number | null>(200);
+const fluidNote = ref('');
 const weightInput = ref<number | null>(null);
 const healthEditorOpen = ref(false);
 const healthEditorMode = ref<HealthEditorMode>('new');
@@ -346,7 +351,7 @@ const calorieLegendOpen = ref(false);
 const weightLegendOpen = ref(false);
 const selectedCalorieRowKey = ref<string | null>(null);
 const selectedWeightRowKey = ref<string | null>(null);
-type EntryActionSheetState = { kind: 'intake' | 'activity'; id: string };
+type EntryActionSheetState = { kind: 'intake' | 'activity' | 'fluid'; id: string };
 const entryActionSheet = ref<EntryActionSheetState | null>(null);
 const duplicateMealTargetOpen = ref(false);
 const pendingDuplicateIntakeId = ref<string | null>(null);
@@ -414,6 +419,7 @@ type BackupProfileSummary = {
     activities: number;
     intakes: number;
     activityLogs: number;
+    fluidLogs: number;
     weightLogs: number;
     healthEntries: number;
   };
@@ -710,7 +716,17 @@ const mealIconSvg: Record<string, string> = {
   lunch_dining: lucideSvg('sandwich'),
   dinner_dining: lucideSvg('utensils'),
   bakery_dining: lucideSvg('cookie'),
+  water_drop: lucideSvg('glassWater'),
 };
+
+const fluidQuickAmountsDl = [1, 2, 3];
+const alcoholKcalPresets: Array<{ kind: FluidAlcoholKind; kcal: number; labelKey: string; hintKey: string }> = [
+  { kind: 'beer', kcal: 45, labelKey: 'alcoholBeer', hintKey: 'alcoholBeerHint' },
+  { kind: 'wine', kcal: 85, labelKey: 'alcoholWine', hintKey: 'alcoholWineHint' },
+  { kind: 'spirits', kcal: 230, labelKey: 'alcoholSpirits', hintKey: 'alcoholSpiritsHint' },
+  { kind: 'cocktail', kcal: 160, labelKey: 'alcoholCocktail', hintKey: 'alcoholCocktailHint' },
+  { kind: 'other', kcal: 200, labelKey: 'alcoholOther', hintKey: 'alcoholOtherHint' },
+];
 
 let pendingStateSaveTimer: number | undefined;
 let pendingStateSaveIdle: number | undefined;
@@ -977,6 +993,14 @@ function hasActiveMealSheetDraft(): boolean {
       selectedCatalogId.value ||
       Number(foodAmount.value || 0) > 0 ||
       Object.values(recipeIngredientAmounts.value).some((value) => Number(value || 0) > 0),
+    );
+  }
+
+  if (addMode.value === 'fluid') {
+    return Boolean(
+      Number(fluidAmountDl.value || 0) !== 2 ||
+      fluidIsAlcohol.value ||
+      fluidNote.value.trim(),
     );
   }
 
@@ -1459,6 +1483,7 @@ onBeforeUnmount(() => {
 const activeLogDateKey = computed(() => activeTab.value === 'home' ? todayKey.value : selectedDate.value);
 const currentDayIntakes = computed(() => state.intakes.filter((entry) => inSelectedDay(entry.consumed_at)));
 const currentDayActivities = computed(() => state.activityLogs.filter((entry) => inSelectedDay(entry.performed_at)));
+const currentDayFluidLogs = computed(() => state.fluidLogs.filter((entry) => inSelectedDay(entry.consumed_at)));
 const currentDayWeight = computed(() => latestWeightForDay(state.weightLogs, activeLogDateKey.value));
 const currentDayWeightKg = computed(() => currentDayWeight.value?.weight_kg ?? state.profile.current_weight_kg);
 const currentWeight = computed(() => currentDayWeightKg.value);
@@ -1471,7 +1496,9 @@ const exerciseEatbackRatio = computed(() => Math.max(0, Math.min(1, Number(state
 const creditedBurnedKcal = computed(() => Math.round(burnedKcal.value * exerciseEatbackRatio.value));
 const baseDailyGoal = computed(() => dailyKcalGoal(profileForActiveDay.value, 0) + Number(state.settings.kcal_adjustment || 0));
 const dailyGoal = computed(() => dailyKcalGoal(profileForActiveDay.value, burnedKcal.value) + Number(state.settings.kcal_adjustment || 0));
-const consumedKcal = computed(() => Math.round(currentDayIntakes.value.reduce((sum, entry) => sum + intakeKcal(entry), 0)));
+const fluidAlcoholKcal = computed(() => Math.round(currentDayFluidLogs.value.reduce((sum, entry) => sum + fluidLogKcal(entry), 0)));
+const consumedKcal = computed(() => Math.round(currentDayIntakes.value.reduce((sum, entry) => sum + intakeKcal(entry), 0) + fluidAlcoholKcal.value));
+const consumedFluidDl = computed(() => Math.round(currentDayFluidLogs.value.reduce((sum, entry) => sum + Number(entry.amount_dl || 0), 0) * 10) / 10);
 const calorieDeficitEnabled = computed(() => state.settings.calorie_deficit_enabled === true);
 const targetDeficitKcal = computed(() => calorieDeficitEnabled.value ? Math.max(0, Math.round(Number(state.settings.target_deficit_kcal || 0))) : 0);
 const effectiveDailyGoal = computed(() => calorieDeficitEnabled.value
@@ -7495,6 +7522,71 @@ for (const language of Object.keys(translations)) {
   };
 }
 
+const fluidTrackingTranslations: Record<string, Partial<Record<string, string>>> = {
+  en: {
+    fluids: 'Fluids',
+    addFluid: 'I drank fluids',
+    addFluidHint: 'Log water, drinks or alcohol in dl.',
+    fluidHomeHint: 'Daily fluid total',
+    fluidSheetHint: 'Enter the amount in dl. Alcohol adds estimated kcal to the day.',
+    fluidAmountDl: 'Amount (dl)',
+    fluidWater: 'Fluid',
+    fluidAlcohol: 'Alcohol',
+    fluidAlcoholHint: 'Adds estimated alcohol calories to the day.',
+    fluidAlcoholKcalPreview: 'Estimated alcohol kcal',
+    fluidAdded: 'Fluid logged.',
+    noFluids: 'No fluids logged yet.',
+    deleteFluidConfirm: 'Delete this fluid entry?',
+    fluidNotePlaceholder: 'Optional note, e.g. coffee, tea, water, wine…',
+    alcoholBeer: 'Beer',
+    alcoholBeerHint: '≈45 kcal / dl',
+    alcoholWine: 'Wine',
+    alcoholWineHint: '≈85 kcal / dl',
+    alcoholSpirits: 'Spirits',
+    alcoholSpiritsHint: '≈230 kcal / dl',
+    alcoholCocktail: 'Cocktail / mixed drink',
+    alcoholCocktailHint: '≈160 kcal / dl',
+    alcoholOther: 'Other alcohol',
+    alcoholOtherHint: 'Default 200 kcal per drink',
+    alcoholCustomKcal: 'Custom kcal for this drink',
+  },
+  hu: {
+    fluids: 'Folyadék',
+    addFluid: 'Folyadékot ittam',
+    addFluidHint: 'Víz, ital vagy alkohol rögzítése dl-ben.',
+    fluidHomeHint: 'Napi folyadék összesen',
+    fluidSheetHint: 'Add meg a mennyiséget dl-ben. Alkohol esetén becsült kcal is bekerül a napba.',
+    fluidAmountDl: 'Mennyiség (dl)',
+    fluidWater: 'Folyadék',
+    fluidAlcohol: 'Alkohol',
+    fluidAlcoholHint: 'Becsült alkohol kalóriát ad a naphoz.',
+    fluidAlcoholKcalPreview: 'Becsült alkohol kcal',
+    fluidAdded: 'Folyadék rögzítve.',
+    noFluids: 'Még nincs folyadék rögzítve.',
+    deleteFluidConfirm: 'Törlöd ezt a folyadék bejegyzést?',
+    fluidNotePlaceholder: 'Opcionális megjegyzés, pl. kávé, tea, víz, bor…',
+    alcoholBeer: 'Sör',
+    alcoholBeerHint: 'kb. 45 kcal / dl',
+    alcoholWine: 'Bor',
+    alcoholWineHint: 'kb. 85 kcal / dl',
+    alcoholSpirits: 'Tömény',
+    alcoholSpiritsHint: 'kb. 230 kcal / dl',
+    alcoholCocktail: 'Koktél / kevert ital',
+    alcoholCocktailHint: 'kb. 160 kcal / dl',
+    alcoholOther: 'Egyéb alkohol',
+    alcoholOtherHint: 'alapból 200 kcal / ivás',
+    alcoholCustomKcal: 'Egyedi kcal ehhez az italhoz',
+  },
+};
+translations.en = { ...translations.en, ...normalizeTranslationValues(fluidTrackingTranslations.en || {}) };
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...normalizeTranslationValues(fluidTrackingTranslations[language] || {}),
+  };
+}
+
 const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>> = {
   en: {
     desktopHandoffRequestTitle: 'Desktop request',
@@ -10408,6 +10500,11 @@ function aiActivityMarkdown(entry: ActivityLog) {
   return `- time=${new Date(entry.performed_at).toISOString()} name="${markdownInline(entry.activity_name)}" type=${markdownInline(activityTypeLabel(activityTypeForLog(entry)))} source=${entry.source} duration_min=${aiMetricNumber(Number(entry.duration_min || 0))} kcal=${Math.round(Number(entry.kcal || 0))}${definition?.description ? ` description="${markdownInline(definition.description)}"` : ''}`;
 }
 
+function aiFluidMarkdown(entry: FluidLog) {
+  const alcoholKind = entry.is_alcohol ? entry.alcohol_kind || 'other' : 'none';
+  return `- time=${new Date(entry.consumed_at).toISOString()} amount_dl=${aiMetricNumber(Number(entry.amount_dl || 0))} alcohol=${entry.is_alcohol ? 'true' : 'false'} alcohol_kind=${alcoholKind} kcal=${fluidLogKcal(entry)}${entry.note ? ` note="${markdownInline(entry.note)}"` : ''}`;
+}
+
 function aiHealthMediaCounts(entry: HealthEntry) {
   const items = healthMediaItemsForEntry(entry);
   const photoCount = items.filter((item) => item.attachment.type === 'photo').length;
@@ -10451,11 +10548,13 @@ function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; start
   const includeHealth = includeOptions.health === true;
   const intakes = includeFood ? state.intakes.filter((entry) => isWithinAiExportRange(entry.consumed_at, range)).sort((a, b) => a.consumed_at - b.consumed_at) : [];
   const activities = includeFood ? state.activityLogs.filter((entry) => isWithinAiExportRange(entry.performed_at, range)).sort((a, b) => a.performed_at - b.performed_at) : [];
+  const fluids = includeFood ? state.fluidLogs.filter((entry) => isWithinAiExportRange(entry.consumed_at, range)).sort((a, b) => a.consumed_at - b.consumed_at) : [];
   const healthEntries = includeHealth ? (state.healthEntries || []).filter((entry) => !entry.deleted_at && isWithinAiExportRange(entry.occurred_at, range)).sort((a, b) => a.occurred_at - b.occurred_at) : [];
   const weights = includeFood ? state.weightLogs.filter((entry) => isWithinAiExportRange(entry.measured_at, range)).sort((a, b) => a.measured_at - b.measured_at) : [];
   const dayKeys = [...new Set([
     ...intakes.map((entry) => dateKey(new Date(entry.consumed_at))),
     ...activities.map((entry) => dateKey(new Date(entry.performed_at))),
+    ...fluids.map((entry) => dateKey(new Date(entry.consumed_at))),
     ...healthEntries.map((entry) => dateKey(new Date(entry.occurred_at))),
     ...weights.map((entry) => dateKey(new Date(entry.measured_at))),
   ])].sort();
@@ -10487,6 +10586,9 @@ function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; start
     `- days_with_data=${dayKeys.length}`,
     `- food_entries=${intakes.length}`,
     `- activity_entries=${activities.length}`,
+    `- fluid_entries=${fluids.length}`,
+    `- fluid_total_dl=${aiMetricNumber(fluids.reduce((sum, entry) => sum + Number(entry.amount_dl || 0), 0))}`,
+    `- fluid_alcohol_kcal=${Math.round(fluids.reduce((sum, entry) => sum + fluidLogKcal(entry), 0))}`,
     `- health_entries=${healthEntries.length}`,
     `- health_unique_events=${healthEventCounts.size}`,
     `- weight_logs=${weights.length}`,
@@ -10508,6 +10610,7 @@ function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; start
   for (const key of dayKeys) {
     const dayIntakeRows = intakes.filter((entry) => dateKey(new Date(entry.consumed_at)) === key);
     const dayActivityRows = activities.filter((entry) => dateKey(new Date(entry.performed_at)) === key);
+    const dayFluidRows = fluids.filter((entry) => dateKey(new Date(entry.consumed_at)) === key);
     const dayHealthRows = healthEntries.filter((entry) => dateKey(new Date(entry.occurred_at)) === key);
     const dayWeightRows = weights.filter((entry) => dateKey(new Date(entry.measured_at)) === key);
     lines.push('', `### ${key}`);
@@ -10523,6 +10626,11 @@ function buildAllDataAiMarkdown(range: { startKey: string; endKey: string; start
     if (dayActivityRows.length) {
       lines.push('#### Activity');
       for (const entry of dayActivityRows) lines.push(aiActivityMarkdown(entry));
+    }
+    if (dayFluidRows.length) {
+      lines.push('#### Fluids');
+      lines.push(`- day_totals amount_dl=${aiMetricNumber(dayFluidRows.reduce((sum, entry) => sum + Number(entry.amount_dl || 0), 0))} alcohol_kcal=${Math.round(dayFluidRows.reduce((sum, entry) => sum + fluidLogKcal(entry), 0))}`);
+      for (const entry of dayFluidRows) lines.push(aiFluidMarkdown(entry));
     }
     if (dayHealthRows.length) {
       lines.push('#### Health');
@@ -11162,13 +11270,26 @@ function dayEffectiveKcalGoal(key: string) {
   return Math.max(0, dailyKcalGoal(profileForDay(key), 0) + Number(state.settings.kcal_adjustment || 0) + credited - deficit);
 }
 
+function dayFluidLogs(key: string) {
+  return state.fluidLogs.filter((entry) => entry.consumed_at >= dayStartMs(key) && entry.consumed_at < dayEndMs(key));
+}
+
+function dayFluidKcal(key: string) {
+  return Math.round(dayFluidLogs(key).reduce((sum, entry) => sum + fluidLogKcal(entry), 0));
+}
+
+function dayFluidDl(key: string) {
+  return Math.round(dayFluidLogs(key).reduce((sum, entry) => sum + Number(entry.amount_dl || 0), 0) * 10) / 10;
+}
+
 function dayMacroSummary(key: string) {
   const intakes = dayIntakes(key);
   const kcalGoal = dayFullKcalGoal(key);
   const macroKcalGoal = Math.max(1, calorieDeficitEnabled.value ? dayEffectiveKcalGoal(key) : kcalGoal);
   const summary = macroForEntries(intakes);
+  const fluidKcal = dayFluidKcal(key);
   return {
-    kcal: summary.kcal,
+    kcal: summary.kcal + fluidKcal,
     kcalGoal,
     effectiveKcalGoal: dayEffectiveKcalGoal(key),
     carbs: summary.carbs,
@@ -11230,12 +11351,13 @@ function buildCenteredDateKeys(centerKey: string, count: number, maxEndKey = tod
 function buildDailyAnalysis(key: string): DailyAnalysisRow {
   const intakes = dayIntakes(key);
   const activities = dayActivities(key);
-  const consumed = macroForEntries(intakes).kcal;
+  const fluids = dayFluidLogs(key);
+  const consumed = macroForEntries(intakes).kcal + dayFluidKcal(key);
   const burned = Math.round(activities.reduce((sum, entry) => sum + entry.kcal, 0));
   const credited = Math.round(burned * Math.max(0, Math.min(1, Number(state.settings.exercise_kcal_eatback_percent ?? 50) / 100)));
   const full = dayFullKcalGoal(key);
   const effective = dayEffectiveKcalGoal(key);
-  const tracked = intakes.length > 0 || activities.length > 0;
+  const tracked = intakes.length > 0 || activities.length > 0 || fluids.length > 0;
   return {
     key,
     label: formatDate(dayStartMs(key)),
@@ -12611,7 +12733,7 @@ function buildCalendar(monthDate: Date) {
       selected: key === selectedDate.value,
       future: isFuture,
       searchMatch: Boolean(calendarSearch.value.trim()) && calendarSearchDayKeys.value.has(key),
-      hasEntries: !isFuture && (intakes.length > 0 || activities.length > 0),
+      hasEntries: !isFuture && (intakes.length > 0 || activities.length > 0 || dayFluidLogs(key).length > 0),
       hasHealthEntries: !isFuture && healthEntries.length > 0,
       bmi: !isFuture && weight ? bmi(weight.weight_kg, state.profile.height_cm) : 0,
       weightKg: !isFuture ? weight?.weight_kg ?? null : null,
@@ -12725,6 +12847,11 @@ async function chooseQuickAdd(section: MealSection) {
   await openFoodAdd(section.key);
 }
 
+function chooseQuickAddFluid() {
+  closeQuickAddMenu();
+  openFluidAdd();
+}
+
 function chooseQuickAddHealthEntry() {
   closeQuickAddMenu();
   openNewHealthEntry();
@@ -12748,10 +12875,113 @@ function closeSheet() {
   foodAmount.value = null;
   activityMinutes.value = null;
   activityKcal.value = null;
+  resetFluidForm();
   recipeCustomizeOpen.value = false;
   recipeIngredientAmounts.value = {};
   mealEntryMode.value = 'catalog';
   resetMealNoteForm();
+}
+
+
+function resetFluidForm() {
+  fluidAmountDl.value = 2;
+  fluidIsAlcohol.value = false;
+  fluidAlcoholKind.value = 'beer';
+  fluidCustomKcal.value = 200;
+  fluidNote.value = '';
+}
+
+function selectedAlcoholPreset() {
+  return alcoholKcalPresets.find((preset) => preset.kind === fluidAlcoholKind.value) || alcoholKcalPresets.at(-1)!;
+}
+
+function fluidAlcoholKcalEstimate(amountDl = Number(fluidAmountDl.value || 0), kind: FluidAlcoholKind = fluidAlcoholKind.value) {
+  if (!fluidIsAlcohol.value) return 0;
+  const preset = alcoholKcalPresets.find((item) => item.kind === kind) || alcoholKcalPresets.at(-1)!;
+  if (kind === 'other') return Math.max(0, Math.round(Number(fluidCustomKcal.value || preset.kcal)));
+  return Math.max(0, Math.round(Number(amountDl || 0) * preset.kcal));
+}
+
+function fluidLogKcal(entry: FluidLog) {
+  return entry.is_alcohol ? Math.max(0, Math.round(Number(entry.kcal || 0))) : 0;
+}
+
+const fluidKcalPreview = computed(() => fluidAlcoholKcalEstimate());
+
+function fluidLogTitle(entry: FluidLog) {
+  if (!entry.is_alcohol) return t('fluidWater');
+  const preset = alcoholKcalPresets.find((item) => item.kind === entry.alcohol_kind);
+  return `${t('fluidAlcohol')} · ${preset ? t(preset.labelKey) : t('alcoholOther')}`;
+}
+
+function fluidLogSubtitle(entry: FluidLog) {
+  const kcal = fluidLogKcal(entry);
+  const parts = [`${formatFluidAmount(entry.amount_dl)}`, formatDateTime(entry.consumed_at)];
+  if (kcal > 0) parts.push(`${kcal} kcal`);
+  if (entry.note) parts.push(entry.note);
+  return parts.join(' · ');
+}
+
+function formatFluidAmount(amountDl: number) {
+  const rounded = Math.round(Number(amountDl || 0) * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)} dl`;
+}
+
+function openFluidAdd() {
+  if (!confirmFutureDateAccess()) return;
+  addMode.value = 'fluid';
+  resetFluidForm();
+}
+
+function setFluidAmount(amountDl: number) {
+  fluidAmountDl.value = amountDl;
+}
+
+function addFluidLog() {
+  const amountDl = Number(fluidAmountDl.value || 0);
+  if (!Number.isFinite(amountDl) || amountDl <= 0) return showToast(t('amountGreaterThanZero'));
+  const now = Date.now();
+  const consumedAt = timestampForActiveLogDay(now);
+  const isAlcohol = fluidIsAlcohol.value === true;
+  const payload: FluidLog = {
+    id: generateId('fluid'),
+    consumed_at: consumedAt,
+    amount_dl: Math.round(amountDl * 10) / 10,
+    is_alcohol: isAlcohol,
+    alcohol_kind: isAlcohol ? fluidAlcoholKind.value : null,
+    kcal: isAlcohol ? fluidAlcoholKcalEstimate(amountDl) : 0,
+    note: fluidNote.value.trim() || null,
+    pending_sync: false,
+    created_at: now,
+    updated_at: now,
+  };
+  state.fluidLogs.push(payload);
+  closeSheet();
+  showToast(t('fluidAdded'));
+}
+
+function removeFluidLog(id: string) {
+  if (!ensureSelectedDayEditing()) return;
+  if (!window.confirm(t('deleteFluidConfirm'))) return;
+  state.fluidLogs = state.fluidLogs.filter((entry) => entry.id !== id);
+  entryActionSheet.value = null;
+}
+
+function duplicateFluidLog(id: string) {
+  if (!ensureSelectedDayEditing()) return;
+  const entry = state.fluidLogs.find((item) => item.id === id);
+  if (!entry) return;
+  const now = Date.now();
+  state.fluidLogs.push({
+    ...entry,
+    id: generateId('fluid'),
+    consumed_at: timestampForActiveLogDay(now),
+    pending_sync: true,
+    created_at: now,
+    updated_at: now,
+  });
+  entryActionSheet.value = null;
+  showToast(t('entryDuplicated'));
 }
 
 function addFoodLog() {
@@ -12906,6 +13136,7 @@ function clearEntryLongPress() {
 
 const actionSheetIntake = computed(() => entryActionSheet.value?.kind === 'intake' ? state.intakes.find((entry) => entry.id === entryActionSheet.value?.id) || null : null);
 const actionSheetActivity = computed(() => entryActionSheet.value?.kind === 'activity' ? state.activityLogs.find((entry) => entry.id === entryActionSheet.value?.id) || null : null);
+const actionSheetFluid = computed(() => entryActionSheet.value?.kind === 'fluid' ? state.fluidLogs.find((entry) => entry.id === entryActionSheet.value?.id) || null : null);
 
 function upsertWeightForDay(value: number, source: WeightLog['source'], key = activeLogDateKey.value) {
   const now = Date.now();
@@ -13565,13 +13796,14 @@ function backupCounts(snapshot: AppState): BackupProfileSummary['counts'] {
     activities: snapshot.activities.length,
     intakes: snapshot.intakes.length,
     activityLogs: snapshot.activityLogs.length,
+    fluidLogs: snapshot.fluidLogs.length,
     weightLogs: snapshot.weightLogs.length,
     healthEntries: snapshot.healthEntries?.length || 0,
   };
 }
 
 function backupProfileSubtitle(profile: BackupProfileSummary) {
-  return `${formatDate(profile.createdAt)} · ${profile.counts.intakes + profile.counts.activityLogs + profile.counts.weightLogs + (profile.counts.healthEntries || 0)} ${t('entries')} · ${formatBytes(profile.byteLength)}`;
+  return `${formatDate(profile.createdAt)} · ${profile.counts.intakes + profile.counts.activityLogs + (profile.counts.fluidLogs || 0) + profile.counts.weightLogs + (profile.counts.healthEntries || 0)} ${t('entries')} · ${formatBytes(profile.byteLength)}`;
 }
 
 function openBackupDb(): Promise<IDBDatabase> {
@@ -13790,6 +14022,7 @@ function normalizeImportedState(parsed: Partial<AppState>): AppState {
     activities: Array.isArray(parsed.activities) && parsed.activities.length ? parsed.activities : defaults.activities,
     intakes: Array.isArray(parsed.intakes) ? parsed.intakes : [],
     activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
+    fluidLogs: Array.isArray((parsed as any).fluidLogs) ? (parsed as any).fluidLogs : [],
     weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
     healthEntries: Array.isArray((parsed as any).healthEntries) ? (parsed as any).healthEntries : [],
     catalogAliases: Array.isArray(parsed.catalogAliases) ? parsed.catalogAliases : [],
@@ -13800,7 +14033,7 @@ function normalizeImportedState(parsed: Partial<AppState>): AppState {
 function applyImportedState(text: string) {
   const parsed = JSON.parse(text) as Partial<AppState>;
   if (!parsed || typeof parsed !== 'object') throw new Error(t('invalidBackupFile'));
-  const knownKeys = ['profile', 'pairing', 'settings', 'foods', 'ingredients', 'recipes', 'recipeItems', 'activities', 'intakes', 'activityLogs', 'weightLogs', 'healthEntries', 'catalogAliases', 'githubSources'];
+  const knownKeys = ['profile', 'pairing', 'settings', 'foods', 'ingredients', 'recipes', 'recipeItems', 'activities', 'intakes', 'activityLogs', 'fluidLogs', 'weightLogs', 'healthEntries', 'catalogAliases', 'githubSources'];
   if (!knownKeys.some((key) => key in parsed)) throw new Error(t('invalidBackupFile'));
   const imported = normalizeImportedState(parsed);
   imported.pairing.channel = appChannel;
@@ -13863,6 +14096,7 @@ function stateForBackupIncludeOptions(options: BackupIncludeOptions): AppState {
   if (!options.foodDiary) {
     snapshot.intakes = [];
     snapshot.activityLogs = [];
+    snapshot.fluidLogs = [];
     snapshot.weightLogs = [];
   }
   if (!options.healthDiary) {
@@ -15080,6 +15314,15 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
+      <article class="card meal-card fluid-summary-card">
+        <button class="meal-header" type="button" @click="openFluidAdd">
+          <span class="material-icon" v-html="lucideSvg('glassWater')"></span>
+          <span><b>{{ t('fluids') }}</b><small>{{ t('fluidHomeHint') }}</small></span>
+          <span class="section-summary-text">{{ formatFluidAmount(consumedFluidDl) }}<template v-if="fluidAlcoholKcal"> · {{ fluidAlcoholKcal }} kcal</template></span>
+          <span class="plus-button">+</span>
+        </button>
+      </article>
+
       <article v-for="section in sections" :key="section.key" class="card meal-card" :data-tour="section.key === 'breakfast' ? 'meal-logging' : undefined">
         <button class="meal-header" @click="section.key === 'activity' ? openActivityAdd() : openFoodAdd(section.key)">
           <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
@@ -15285,6 +15528,22 @@ function setTab(tab: Tab) {
           <small>{{ t('selectedDayEntriesNote') }}</small>
         </div>
         <button class="outlined-button unlock-button" @click="unlockSelectedDay"><span v-html="lucideSvg('lockOpen')"></span>{{ t('unlockDay') }}</button>
+      </article>
+
+      <article class="card meal-card fluid-summary-card">
+        <button class="meal-header" :class="{ locked: !selectedDayUnlocked }" type="button" @click="selectedDayUnlocked && openFluidAdd()">
+          <span class="material-icon" v-html="lucideSvg('glassWater')"></span>
+          <span><b>{{ t('fluids') }}</b><small>{{ currentDayFluidLogs.length }} {{ t('entries') }}</small></span>
+          <span class="section-summary-text">{{ formatFluidAmount(consumedFluidDl) }}<template v-if="fluidAlcoholKcal"> · {{ fluidAlcoholKcal }} kcal</template></span>
+          <span v-if="selectedDayUnlocked" class="plus-button">+</span>
+        </button>
+        <div class="entry-list">
+          <div v-for="entry in currentDayFluidLogs" :id="`fluid-entry-${entry.id}`" :key="entry.id" class="entry-row fluid-entry-row" @pointerdown="selectedDayUnlocked && startEntryLongPress('fluid', entry.id, $event)" @pointerup="clearEntryLongPress" @pointercancel="clearEntryLongPress" @contextmenu.prevent="selectedDayUnlocked && (entryActionSheet = { kind: 'fluid', id: entry.id })">
+            <div><b>{{ fluidLogTitle(entry) }}</b><small>{{ fluidLogSubtitle(entry) }}</small></div>
+            <div v-if="selectedDayUnlocked" class="entry-actions"><button class="entry-icon-button" :aria-label="t('duplicate')" :title="t('duplicate')" @click.stop="duplicateFluidLog(entry.id)" v-html="lucideSvg('refreshCw')"></button><button class="entry-icon-button danger" :aria-label="t('delete')" :title="t('delete')" @click.stop="removeFluidLog(entry.id)" v-html="lucideSvg('trash2')"></button></div>
+          </div>
+          <p v-if="!currentDayFluidLogs.length" class="empty-line">{{ t('noFluids') }}</p>
+        </div>
       </article>
 
       <article v-for="section in sections" :key="`diary-${section.key}`" class="card meal-card">
@@ -15562,6 +15821,10 @@ function setTab(tab: Tab) {
             <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
             <span><b>{{ t(section.key) }}</b><small>{{ sectionHint(section) }}</small></span>
           </button>
+          <button class="quick-add-option quick-add-fluid-option" type="button" @click="chooseQuickAddFluid">
+            <span class="material-icon" v-html="lucideSvg('glassWater')"></span>
+            <span><b>{{ t('addFluid') }}</b><small>{{ t('addFluidHint') }}</small></span>
+          </button>
           <button v-if="healthDiaryEnabled" class="quick-add-option quick-add-health-option" @click="chooseQuickAddHealthEntry">
             <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
             <span><b>{{ t('addHealthEntry') }}</b><small>{{ t('healthEntrySheetHint') }}</small></span>
@@ -15574,7 +15837,35 @@ function setTab(tab: Tab) {
       <div v-if="addMode" class="sheet-backdrop app-overlay" @click.self="requestCloseSheet">
         <article class="bottom-sheet">
         <div class="sheet-handle"></div>
-        <template v-if="addMode === 'food'">
+        <template v-if="addMode === 'fluid'">
+          <h2>{{ t('addFluid') }}</h2>
+          <p class="helper big">{{ t('fluidSheetHint') }}</p>
+          <div class="fluid-quick-row">
+            <button v-for="amount in fluidQuickAmountsDl" :key="`fluid-${amount}`" type="button" class="outlined-button" :class="{ active: Number(fluidAmountDl || 0) === amount }" @click="setFluidAmount(amount)">{{ amount }} dl</button>
+          </div>
+          <label class="field-label">{{ t('fluidAmountDl') }}
+            <input v-model.number="fluidAmountDl" class="input" type="number" min="0.1" step="0.1" inputmode="decimal" @focus="selectNumberInput" @pointerdown="clearNumberInputOnDoubleTap" />
+          </label>
+          <label class="source-choice-card source-choice-card-simple fluid-alcohol-card">
+            <span><b>{{ t('fluidAlcohol') }}</b><small>{{ t('fluidAlcoholHint') }}</small></span>
+            <input v-model="fluidIsAlcohol" type="checkbox" />
+          </label>
+          <div v-if="fluidIsAlcohol" class="fluid-alcohol-options">
+            <div class="alcohol-preset-grid">
+              <button v-for="preset in alcoholKcalPresets" :key="preset.kind" class="dialog-option alcohol-preset-button" type="button" :class="{ active: fluidAlcoholKind === preset.kind }" @click="fluidAlcoholKind = preset.kind">
+                <span>{{ t(preset.labelKey) }}</span>
+                <small>{{ t(preset.hintKey) }}</small>
+              </button>
+            </div>
+            <label v-if="fluidAlcoholKind === 'other'" class="field-label">{{ t('alcoholCustomKcal') }}
+              <input v-model.number="fluidCustomKcal" class="input" type="number" min="0" step="1" inputmode="decimal" @focus="selectNumberInput" @pointerdown="clearNumberInputOnDoubleTap" />
+            </label>
+            <p class="fluid-kcal-preview">{{ t('fluidAlcoholKcalPreview') }}: <b>{{ fluidKcalPreview }} kcal</b></p>
+          </div>
+          <textarea v-model="fluidNote" class="input note-textarea" rows="2" :placeholder="t('fluidNotePlaceholder')"></textarea>
+          <button class="filled-button wide" type="button" @click="addFluidLog">{{ t('add') }}</button>
+        </template>
+        <template v-else-if="addMode === 'food'">
           <h2>{{ editingIntakeId ? t('edit') : t('addTo') }} {{ t(addMealType) }}</h2>
           <div v-if="!editingIntakeId || mealEntryMode === 'note'" class="unit-toggle three meal-entry-toggle segmented-pill-toggle">
             <button type="button" :class="mealEntryMode === 'catalog' ? 'active' : ''" @click="startCatalogMealEntry">{{ t('existingItem') }}</button>
@@ -16305,6 +16596,11 @@ function setTab(tab: Tab) {
             <p class="helper big">{{ actionSheetActivity.activity_name }}</p>
             <button class="dialog-option" @click="duplicateActivity(actionSheetActivity.id)"><span>{{ t('duplicate') }}</span><small>{{ actionSheetActivity.kcal }} kcal</small></button>
             <div class="dialog-actions"><button class="text-button" @click="editActivityLog(actionSheetActivity); entryActionSheet = null">{{ t('edit') }}</button><button class="delete-button" @click="removeActivity(actionSheetActivity.id); entryActionSheet = null">{{ t('delete') }}</button></div>
+          </template>
+          <template v-else-if="actionSheetFluid">
+            <p class="helper big">{{ fluidLogTitle(actionSheetFluid) }}</p>
+            <button class="dialog-option" @click="duplicateFluidLog(actionSheetFluid.id)"><span>{{ t('duplicate') }}</span><small>{{ fluidLogSubtitle(actionSheetFluid) }}</small></button>
+            <div class="dialog-actions"><button class="delete-button" @click="removeFluidLog(actionSheetFluid.id); entryActionSheet = null">{{ t('delete') }}</button></div>
           </template>
         </article>
       </div>

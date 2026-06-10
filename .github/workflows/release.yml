@@ -4,13 +4,23 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version without a leading v, for example 0.11.18"
+        description: "Release version without a leading v, for example 0.14.0"
         required: true
         type: string
       ref:
-        description: "Git ref to release"
+        description: "Target branch to release from and merge back into"
         required: false
         default: master
+        type: string
+      release_name_prefix:
+        description: "GitHub Release title prefix"
+        required: false
+        default: "Nutrino "
+        type: string
+      release_name_suffix:
+        description: "GitHub Release title suffix"
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -24,296 +34,42 @@ env:
   NODE_VERSION: "22"
   PNPM_VERSION: "10.32.1"
   ANDROID_NDK_VERSION: "27.0.11718014"
+  RELEASE_ARTIFACT_DIR: dist/release-artifacts
+  RELEASE_UPLOAD_DIR: dist/release-upload
 
 jobs:
-  validate-release:
-    name: Prepare release
+  prepare-release:
+    name: Prepare release branch
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.release.outputs.version }}
-      tag: ${{ steps.release.outputs.tag }}
-      previous_tag: ${{ steps.previous-tag.outputs.previous_tag }}
-      target_sha: ${{ steps.target.outputs.target_sha }}
+      version: ${{ steps.prepare.outputs.version }}
+      version_tag: ${{ steps.prepare.outputs.version_tag }}
       release_branch: ${{ steps.prepare.outputs.release_branch }}
-      base_branch: ${{ steps.prepare.outputs.base_branch }}
+      target_branch: ${{ steps.prepare.outputs.target_branch }}
+      release_sha: ${{ steps.prepare.outputs.release_sha }}
     steps:
-      - name: Checkout release ref
+      - name: Checkout target branch
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Resolve release version
-        id: release
-        shell: bash
-        run: |
-          set -euo pipefail
+      - name: Install github-release
+        uses: verzly/github-release@latest
+        with:
+          install-only: true
 
-          RAW_VERSION="${{ inputs.version }}"
-          VERSION="${RAW_VERSION#v}"
-
-          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Release version must be a full semantic version, for example 0.11.18"
-            exit 1
-          fi
-
-          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
-
-      - name: Prepare release version commit
+      - name: Prepare release branch
         id: prepare
         shell: bash
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-          RELEASE_REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
 
-          BASE_BRANCH="${RELEASE_REF#refs/heads/}"
-          if [[ "${BASE_BRANCH}" == refs/* ]]; then
-            echo "::error::Release ref must be a branch name so the workflow can create a release branch from it: ${RELEASE_REF}"
-            exit 1
-          fi
-
-          if ! git show-ref --verify --quiet "refs/remotes/origin/${BASE_BRANCH}"; then
-            echo "::error::Release ref must be an existing branch so the workflow can create a release branch from it: ${RELEASE_REF}"
-            exit 1
-          fi
-
-          RELEASE_BRANCH="release/v${VERSION}"
-          if git ls-remote --exit-code --heads origin "${RELEASE_BRANCH}" >/dev/null 2>&1; then
-            echo "::error::Release branch already exists: ${RELEASE_BRANCH}"
-            exit 1
-          fi
-
-          git checkout -B "${RELEASE_BRANCH}" "origin/${BASE_BRANCH}"
-          echo "base_branch=${BASE_BRANCH}" >> "${GITHUB_OUTPUT}"
-          echo "release_branch=${RELEASE_BRANCH}" >> "${GITHUB_OUTPUT}"
-
-          node <<'NODE'
-          const fs = require('node:fs');
-
-          const version = process.env.VERSION;
-          const [major, minor, patch] = version.split('.').map((part) => Number.parseInt(part, 10));
-          const androidVersionCode = major * 10000 + minor * 100 + patch;
-
-          function writeIfChanged(path, next) {
-            const previous = fs.readFileSync(path, 'utf8');
-            if (previous !== next) {
-              fs.writeFileSync(path, next);
-            }
-          }
-
-          function updateJson(path, update) {
-            const data = JSON.parse(fs.readFileSync(path, 'utf8'));
-            update(data);
-            writeIfChanged(path, `${JSON.stringify(data, null, 2)}\n`);
-          }
-
-          function updateCargoToml(path) {
-            const source = fs.readFileSync(path, 'utf8');
-            const next = source.replace(/^(version\s*=\s*")[^"]+(")/m, `$1${version}$2`);
-            if (next === source) {
-              throw new Error(`Missing package version in ${path}`);
-            }
-            writeIfChanged(path, next);
-          }
-
-          function updateCargoLockPackage(path, packageName) {
-            const source = fs.readFileSync(path, 'utf8');
-            const lines = source.split(/\r?\n/);
-            let inPackage = false;
-            let matchedPackage = false;
-            let foundPackage = false;
-
-            for (let index = 0; index < lines.length; index += 1) {
-              const line = lines[index];
-              if (line === '[[package]]') {
-                inPackage = true;
-                matchedPackage = false;
-                continue;
-              }
-              if (inPackage && line === `name = "${packageName}"`) {
-                matchedPackage = true;
-                foundPackage = true;
-                continue;
-              }
-              if (inPackage && matchedPackage && line.startsWith('version = "')) {
-                lines[index] = `version = "${version}"`;
-                matchedPackage = false;
-              }
-            }
-
-            if (!foundPackage) {
-              throw new Error(`Missing ${packageName} package entry in ${path}`);
-            }
-            writeIfChanged(path, lines.join('\n'));
-          }
-
-          const packageJsonPaths = [
-            'package.json',
-            'packages/shared/package.json',
-            'packages/ui/package.json',
-            'apps/desktop/package.json',
-            'apps/mobile/package.json',
-          ];
-
-          for (const path of packageJsonPaths) {
-            updateJson(path, (data) => {
-              data.version = version;
-            });
-          }
-
-          updateJson('apps/desktop/src-tauri/tauri.conf.json', (data) => {
-            data.version = version;
-          });
-          updateJson('apps/mobile/src-tauri/tauri.conf.json', (data) => {
-            data.version = version;
-            data.bundle ??= {};
-            data.bundle.android ??= {};
-            data.bundle.android.versionCode = androidVersionCode;
-          });
-
-          updateCargoToml('apps/desktop/src-tauri/Cargo.toml');
-          updateCargoToml('apps/mobile/src-tauri/Cargo.toml');
-          updateCargoLockPackage('apps/desktop/src-tauri/Cargo.lock', 'nutrino_desktop');
-          updateCargoLockPackage('apps/mobile/src-tauri/Cargo.lock', 'nutrino_mobile');
-          NODE
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if git diff --quiet; then
-            echo "Release files are already prepared for v${VERSION}"
-          else
-            git add \
-              package.json \
-              packages/shared/package.json \
-              packages/ui/package.json \
-              apps/desktop/package.json \
-              apps/mobile/package.json \
-              apps/desktop/src-tauri/tauri.conf.json \
-              apps/mobile/src-tauri/tauri.conf.json \
-              apps/desktop/src-tauri/Cargo.toml \
-              apps/mobile/src-tauri/Cargo.toml \
-              apps/desktop/src-tauri/Cargo.lock \
-              apps/mobile/src-tauri/Cargo.lock
-            git commit -m "chore: prepare release v${VERSION}"
-          fi
-
-          git push origin "HEAD:${RELEASE_BRANCH}"
-          echo "prepared_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-
-      - name: Resolve target commit
-        id: target
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "target_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-
-      - name: Validate repository versions
-        shell: bash
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-
-          node <<'NODE'
-          const fs = require('node:fs');
-
-          const version = process.env.VERSION;
-          const failures = [];
-
-          function readJson(path) {
-            return JSON.parse(fs.readFileSync(path, 'utf8'));
-          }
-
-          function expect(label, actual, expected = version) {
-            if (String(actual) !== String(expected)) {
-              failures.push(`${label}: expected ${expected}, got ${actual}`);
-            }
-          }
-
-          function cargoVersion(path) {
-            const content = fs.readFileSync(path, 'utf8');
-            const match = content.match(/^version\s*=\s*"([^"]+)"/m);
-            if (!match) throw new Error(`Missing package version in ${path}`);
-            return match[1];
-          }
-
-          function cargoLockPackageVersion(path, packageName) {
-            const content = fs.readFileSync(path, 'utf8');
-            const blocks = content.split(/(?=^\[\[package\]\]$)/m);
-            const block = blocks.find((item) => item.includes(`name = "${packageName}"`));
-            if (!block) throw new Error(`Missing ${packageName} package entry in ${path}`);
-            const match = block.match(/^version\s*=\s*"([^"]+)"/m);
-            if (!match) throw new Error(`Missing ${packageName} package version in ${path}`);
-            return match[1];
-          }
-
-          const [major, minor, patch] = version.split('.').map(Number);
-          const expectedAndroidVersionCode = major * 10000 + minor * 100 + patch;
-
-          expect('package.json', readJson('package.json').version);
-          expect('packages/shared/package.json', readJson('packages/shared/package.json').version);
-          expect('packages/ui/package.json', readJson('packages/ui/package.json').version);
-          expect('apps/desktop/package.json', readJson('apps/desktop/package.json').version);
-          expect('apps/mobile/package.json', readJson('apps/mobile/package.json').version);
-          expect('apps/desktop/src-tauri/tauri.conf.json', readJson('apps/desktop/src-tauri/tauri.conf.json').version);
-          expect('apps/mobile/src-tauri/tauri.conf.json', readJson('apps/mobile/src-tauri/tauri.conf.json').version);
-          expect('apps/desktop/src-tauri/Cargo.toml', cargoVersion('apps/desktop/src-tauri/Cargo.toml'));
-          expect('apps/mobile/src-tauri/Cargo.toml', cargoVersion('apps/mobile/src-tauri/Cargo.toml'));
-          expect('apps/desktop/src-tauri/Cargo.lock nutrino_desktop', cargoLockPackageVersion('apps/desktop/src-tauri/Cargo.lock', 'nutrino_desktop'));
-          expect('apps/mobile/src-tauri/Cargo.lock nutrino_mobile', cargoLockPackageVersion('apps/mobile/src-tauri/Cargo.lock', 'nutrino_mobile'));
-          expect(
-            'apps/mobile/src-tauri/tauri.conf.json bundle.android.versionCode',
-            readJson('apps/mobile/src-tauri/tauri.conf.json').bundle?.android?.versionCode,
-            expectedAndroidVersionCode,
-          );
-
-          if (failures.length > 0) {
-            console.error(failures.map((item) => `- ${item}`).join('\n'));
-            process.exit(1);
-          }
-          NODE
-
-      - name: Resolve previous full release tag
-        id: previous-tag
-        shell: bash
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          git fetch --tags --force
-
-          PREVIOUS_TAG="$(python3 <<'PY'
-          import os
-          import re
-          import subprocess
-
-          current = tuple(int(part) for part in os.environ['VERSION'].split('.'))
-          pattern = re.compile(r'^v(\d+)\.(\d+)\.(\d+)$')
-          tags = subprocess.check_output(['git', 'tag', '--list'], text=True).splitlines()
-          candidates = []
-          for tag in tags:
-              match = pattern.match(tag.strip())
-              if not match:
-                  continue
-              value = tuple(int(part) for part in match.groups())
-              if value < current:
-                  candidates.append((value, tag.strip()))
-          candidates.sort()
-          print(candidates[-1][1] if candidates else '')
-          PY
-          )"
-
-          echo "previous_tag=${PREVIOUS_TAG}" >> "${GITHUB_OUTPUT}"
-          if [ -n "${PREVIOUS_TAG}" ]; then
-            echo "Previous release tag: ${PREVIOUS_TAG}"
-          else
-            echo "No previous full release tag found"
-          fi
+          github-release prepare \
+            --version "${{ inputs.version }}" \
+            --target-branch "${{ inputs.ref }}" \
+            --config ".github/release/nutrino.github-release.toml"
 
   check-ios-signing:
     name: Check iOS signing
@@ -345,7 +101,7 @@ jobs:
 
   build-desktop:
     name: Build desktop ${{ matrix.platform }}
-    needs: validate-release
+    needs: prepare-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -370,20 +126,17 @@ jobs:
       - name: Checkout release branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.validate-release.outputs.release_branch }}
+          ref: ${{ needs.prepare-release.outputs.release_branch }}
           fetch-depth: 0
+
+      - name: Install github-release
+        uses: verzly/github-release@latest
+        with:
+          install-only: true
 
       - name: Verify release branch commit
         shell: bash
-        env:
-          TARGET_SHA: ${{ needs.validate-release.outputs.target_sha }}
-        run: |
-          set -euo pipefail
-          ACTUAL_SHA="$(git rev-parse HEAD)"
-          if [ "${ACTUAL_SHA}" != "${TARGET_SHA}" ]; then
-            echo "::error::Release branch HEAD changed. Expected ${TARGET_SHA}, got ${ACTUAL_SHA}."
-            exit 1
-          fi
+        run: github-release assert-head --sha "${{ needs.prepare-release.outputs.release_sha }}"
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -443,31 +196,50 @@ jobs:
       - name: Upload desktop artifact bundle
         uses: actions/upload-artifact@v7
         with:
-          name: nutrino-${{ matrix.artifact }}
+          name: nutrino-desktop-${{ matrix.platform }}
           path: dist/release/${{ matrix.artifact }}/**/*
           if-no-files-found: error
           retention-days: 7
 
   build-android:
     name: Build Android
-    needs: validate-release
+    needs: prepare-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.validate-release.outputs.release_branch }}
+          ref: ${{ needs.prepare-release.outputs.release_branch }}
           fetch-depth: 0
+
+      - name: Install github-release
+        uses: verzly/github-release@latest
+        with:
+          install-only: true
 
       - name: Verify release branch commit
         shell: bash
+        run: github-release assert-head --sha "${{ needs.prepare-release.outputs.release_sha }}"
+
+      - name: Validate Android signing secrets
+        shell: bash
         env:
-          TARGET_SHA: ${{ needs.validate-release.outputs.target_sha }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          ACTUAL_SHA="$(git rev-parse HEAD)"
-          if [ "${ACTUAL_SHA}" != "${TARGET_SHA}" ]; then
-            echo "::error::Release branch HEAD changed. Expected ${TARGET_SHA}, got ${ACTUAL_SHA}."
+
+          missing=0
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing Android signing secret: ${name}"
+              missing=1
+            fi
+          done
+
+          if [ "${missing}" -ne 0 ]; then
             exit 1
           fi
 
@@ -556,7 +328,7 @@ jobs:
   build-ios:
     name: Build signed iOS
     needs:
-      - validate-release
+      - prepare-release
       - check-ios-signing
     if: needs.check-ios-signing.outputs.enabled == 'true'
     runs-on: macos-latest
@@ -564,20 +336,17 @@ jobs:
       - name: Checkout release branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.validate-release.outputs.release_branch }}
+          ref: ${{ needs.prepare-release.outputs.release_branch }}
           fetch-depth: 0
+
+      - name: Install github-release
+        uses: verzly/github-release@latest
+        with:
+          install-only: true
 
       - name: Verify release branch commit
         shell: bash
-        env:
-          TARGET_SHA: ${{ needs.validate-release.outputs.target_sha }}
-        run: |
-          set -euo pipefail
-          ACTUAL_SHA="$(git rev-parse HEAD)"
-          if [ "${ACTUAL_SHA}" != "${TARGET_SHA}" ]; then
-            echo "::error::Release branch HEAD changed. Expected ${TARGET_SHA}, got ${ACTUAL_SHA}."
-            exit 1
-          fi
+        run: github-release assert-head --sha "${{ needs.prepare-release.outputs.release_sha }}"
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -656,34 +425,43 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish-release:
-    name: Publish GitHub Release
+  finalize-release:
+    name: Finalize GitHub Release
     needs:
-      - validate-release
+      - prepare-release
       - check-ios-signing
       - build-desktop
       - build-android
       - build-ios
     if: >-
       always()
-      && needs.validate-release.result == 'success'
+      && needs.prepare-release.result == 'success'
       && needs.check-ios-signing.result == 'success'
       && needs.build-desktop.result == 'success'
       && needs.build-android.result == 'success'
-      && (needs.build-ios.result == 'success' || needs.build-ios.result == 'skipped')
+      && (
+        needs.check-ios-signing.outputs.enabled != 'true'
+        || needs.build-ios.result == 'success'
+      )
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ needs.validate-release.outputs.version }}
-      TAG: ${{ needs.validate-release.outputs.tag }}
-      TARGET_SHA: ${{ needs.validate-release.outputs.target_sha }}
-      PREVIOUS_TAG: ${{ needs.validate-release.outputs.previous_tag }}
+      VERSION: ${{ needs.prepare-release.outputs.version }}
       GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_branch }}
+          fetch-depth: 0
+          persist-credentials: true
+
       - name: Download release build artifacts
         uses: actions/download-artifact@v8
         with:
-          path: dist/release-artifacts
+          pattern: nutrino-*
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+          merge-multiple: false
 
       - name: Prepare clean release upload assets
         shell: bash
@@ -697,8 +475,8 @@ jobs:
           import shutil
           from pathlib import Path
 
-          source = Path('dist/release-artifacts')
-          target = Path('dist/release-upload')
+          source = Path(os.environ['RELEASE_ARTIFACT_DIR'])
+          target = Path(os.environ['RELEASE_UPLOAD_DIR'])
           version = os.environ['VERSION']
           target.mkdir(parents=True, exist_ok=True)
 
@@ -782,139 +560,42 @@ jobs:
           print(f'Staged {copied} release asset(s) with clean release filenames')
           PY
 
-          find dist/release-upload -maxdepth 1 -type f -print | sort
+          find "${RELEASE_UPLOAD_DIR}" -maxdepth 1 -type f -print | sort
 
-      - name: Generate GitHub release notes
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ARGS=(
-            --method POST
-            -F "tag_name=${TAG}"
-            -F "target_commitish=${TARGET_SHA}"
-          )
-
-          if [ -n "${PREVIOUS_TAG}" ]; then
-            ARGS+=( -F "previous_tag_name=${PREVIOUS_TAG}" )
-          fi
-
-          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" "${ARGS[@]}" --jq '.body' > release-notes.md
-
-      - name: Create or update GitHub release
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release edit "${TAG}" \
-              --title "Nutrino v${VERSION}" \
-              --notes-file release-notes.md
-          else
-            gh release create "${TAG}" \
-              --target "${TARGET_SHA}" \
-              --title "Nutrino v${VERSION}" \
-              --notes-file release-notes.md
-          fi
-
-      - name: Upload release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release upload "${TAG}" dist/release-upload/* --clobber
-
-  merge-release-branch:
-    name: Merge release branch
-    needs:
-      - validate-release
-      - publish-release
-    if: >-
-      always()
-      && needs.validate-release.result == 'success'
-      && needs.publish-release.result == 'success'
-    runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.validate-release.outputs.version }}
-      RELEASE_BRANCH: ${{ needs.validate-release.outputs.release_branch }}
-      BASE_BRANCH: ${{ needs.validate-release.outputs.base_branch }}
-    steps:
-      - name: Checkout base branch
-        uses: actions/checkout@v6
+      - name: Install github-release
+        uses: verzly/github-release@latest
         with:
-          ref: ${{ needs.validate-release.outputs.base_branch }}
-          fetch-depth: 0
-          persist-credentials: true
+          install-only: true
 
-      - name: Merge release branch into base branch
+      - name: Finalize release
         shell: bash
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git fetch origin "${BASE_BRANCH}" "${RELEASE_BRANCH}"
-          git checkout -B "${BASE_BRANCH}" "origin/${BASE_BRANCH}"
-          git merge --no-ff --no-edit "origin/${RELEASE_BRANCH}" -m "chore: merge release v${VERSION}"
-          git push origin "HEAD:${BASE_BRANCH}"
-
-  cleanup-successful-release-branch:
-    name: Delete release branch
-    needs:
-      - validate-release
-      - merge-release-branch
-    if: >-
-      always()
-      && needs.validate-release.outputs.release_branch != ''
-      && needs.merge-release-branch.result == 'success'
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_BRANCH: ${{ needs.validate-release.outputs.release_branch }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Delete release branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          git push origin --delete "${RELEASE_BRANCH}" || echo "Release branch was already deleted: ${RELEASE_BRANCH}"
+          github-release finalize \
+            --version "${{ needs.prepare-release.outputs.version }}" \
+            --release-branch "${{ needs.prepare-release.outputs.release_branch }}" \
+            --target-branch "${{ needs.prepare-release.outputs.target_branch }}" \
+            --expected-sha "${{ needs.prepare-release.outputs.release_sha }}" \
+            --release-name-prefix "${{ inputs.release_name_prefix }}" \
+            --release-name-suffix "${{ inputs.release_name_suffix }}" \
+            --assets "${RELEASE_UPLOAD_DIR}" \
+            --config ".github/release/nutrino.github-release.toml"
 
   cleanup-failed-release-branch:
     name: Delete failed release branch
     needs:
-      - validate-release
+      - prepare-release
       - check-ios-signing
       - build-desktop
       - build-android
       - build-ios
-      - publish-release
-      - merge-release-branch
+      - finalize-release
     if: >-
       always()
-      && needs.validate-release.outputs.release_branch != ''
-      && (
-        needs.validate-release.result == 'failure'
-        || needs.validate-release.result == 'cancelled'
-        || needs.check-ios-signing.result == 'failure'
-        || needs.build-desktop.result == 'failure'
-        || needs.build-desktop.result == 'cancelled'
-        || needs.build-android.result == 'failure'
-        || needs.build-android.result == 'cancelled'
-        || needs.build-ios.result == 'failure'
-        || needs.build-ios.result == 'cancelled'
-        || needs.publish-release.result == 'failure'
-        || needs.publish-release.result == 'cancelled'
-        || needs.merge-release-branch.result == 'failure'
-        || needs.merge-release-branch.result == 'cancelled'
-        || (needs.publish-release.result == 'success' && needs.merge-release-branch.result != 'success')
-      )
+      && needs.prepare-release.result == 'success'
+      && needs.finalize-release.result != 'success'
     runs-on: ubuntu-latest
-    env:
-      RELEASE_BRANCH: ${{ needs.validate-release.outputs.release_branch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -922,8 +603,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Delete release branch
+      - name: Install github-release
+        uses: verzly/github-release@latest
+        with:
+          install-only: true
+
+      - name: Cleanup release branch
         shell: bash
         run: |
           set -euo pipefail
-          git push origin --delete "${RELEASE_BRANCH}" || echo "Release branch was already deleted: ${RELEASE_BRANCH}"
+
+          github-release cleanup \
+            --release-branch "${{ needs.prepare-release.outputs.release_branch }}"
