@@ -54,16 +54,24 @@ expectContains(
   'export const FLUID_QUICK_AMOUNTS_DL = [1, 2, 3]',
   'Fluid quick amount buttons should be configured.',
 );
-expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'beer',[\s\S]*?kcal:\s*45/, 'Beer preset should be available.');
-expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'wine',[\s\S]*?kcal:\s*85/, 'Wine preset should be available.');
 expectMatches(
   'apps/mobile/src/lib/fluid.ts',
-  /kind:\s*'spirits',[\s\S]*?kcal:\s*230/,
+  /kind:\s*'beer',[\s\S]*?kcalPerDl:\s*45/,
+  'Beer preset should be available.',
+);
+expectMatches(
+  'apps/mobile/src/lib/fluid.ts',
+  /kind:\s*'wine',[\s\S]*?kcalPerDl:\s*85/,
+  'Wine preset should be available.',
+);
+expectMatches(
+  'apps/mobile/src/lib/fluid.ts',
+  /kind:\s*'spirits',[\s\S]*?kcalPerDl:\s*230/,
   'Spirits preset should be available.',
 );
 expectMatches(
   'apps/mobile/src/lib/fluid.ts',
-  /kind:\s*'cocktail',[\s\S]*?kcal:\s*160/,
+  /kind:\s*'cocktail',[\s\S]*?kcalPerDl:\s*160/,
   'Cocktail preset should be available.',
 );
 expectContains('apps/mobile/src/App.vue', 'function addFluidLog()', 'Fluid logging action should exist.');
