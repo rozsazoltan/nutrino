@@ -4910,10 +4910,19 @@ fn db_query_activities(path: &Path, since: i64, active_only: bool) -> Result<Vec
 fn db_catalog_revision(path: &Path) -> Result<i64> {
     let conn = open_conn(path)?;
     let mut max_value = 0_i64;
-    for table in ["foods", "ingredients", "recipes", "recipe_items", "activities", "item_aliases"] {
+    for table in [
+        "foods",
+        "ingredients",
+        "recipes",
+        "recipe_items",
+        "activities",
+        "item_aliases",
+    ] {
         let sql = format!("SELECT COALESCE(MAX(updated_at), 0) FROM {table}");
         let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap_or(0);
-        if value > max_value { max_value = value; }
+        if value > max_value {
+            max_value = value;
+        }
     }
     Ok(max_value)
 }
