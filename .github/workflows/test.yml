@@ -32,12 +32,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up mise tools
-        uses: jdx/mise-action@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
-          cache: true
-          install: true
-          github_token: ${{ github.token }}
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Restore aube cache
         uses: actions/cache@v5
@@ -54,11 +52,9 @@ jobs:
         with:
           run_install: true
 
-      - name: Run JavaScript format hook
+      - name: Format JavaScript sources
         shell: bash
-        env:
-          HK_MISE: "1"
-        run: hk run fix-js
+        run: aube run format:js
 
       - name: Run JavaScript quality gate
         shell: bash
@@ -90,17 +86,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up mise tools
-        uses: jdx/mise-action@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
-          cache: true
-          install: true
-          github_token: ${{ github.token }}
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Show Rust toolchain
+      - name: Set up Rust
         shell: bash
         run: |
           set -euo pipefail
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
           rustc --version
           cargo --version
 
@@ -132,11 +129,11 @@ jobs:
         shell: bash
         run: node scripts/check-rust-tauri-config.mjs
 
-      - name: Run Rust format hook
+      - name: Format Rust sources
         shell: bash
-        env:
-          HK_MISE: "1"
-        run: hk run fix-rust
+        run: >-
+          cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml
+          && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml
 
       - name: Check Rust formatting
         shell: bash

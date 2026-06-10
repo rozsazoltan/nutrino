@@ -42,16 +42,16 @@ expectContains(
   'verzly/setup-aube',
   'Release workflow should install JavaScript dependencies through setup-aube.',
 );
-expectContains('.github/workflows/test.yml', 'jdx/mise-action@v4', 'Test workflow should install mise-managed tools.');
+expectContains('.github/workflows/test.yml', 'actions/setup-node@v6', 'Test workflow should install Node directly instead of failing during mise install.');
 expectContains(
   '.github/workflows/test.yml',
-  'hk run fix-js',
-  'Test workflow should run the JavaScript format hook before checks.',
+  'aube run format:js',
+  'Test workflow should format JavaScript before checks.',
 );
 expectContains(
   '.github/workflows/test.yml',
-  'hk run fix-rust',
-  'Test workflow should run the Rust format hook before checks.',
+  'cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml',
+  'Test workflow should format Rust before checks.',
 );
 expectContains('.github/workflows/test.yml', 'aube run test:js', 'Test workflow should run JavaScript tooling checks.');
 expectContains(
@@ -82,7 +82,7 @@ expectContains(
 expectContains(
   '.github/workflows/test.yml',
   'cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check',
-  'Test workflow should check Rust formatting.',
+  'Test workflow should still verify Rust formatting after auto-formatting.',
 );
 expectContains(
   '.github/workflows/test.yml',
