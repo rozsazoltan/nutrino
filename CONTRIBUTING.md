@@ -4,6 +4,7 @@ This file contains the development, testing, and release-maintenance notes for N
 
 - [Development setup](#development-setup)
 - [Repository commands](#repository-commands)
+- [WIP commits](#wip-commits)
 - [Quality gates](#quality-gates)
 - [Testing expectations](#testing-expectations)
 - [Tooling conventions](#tooling-conventions)
@@ -22,10 +23,10 @@ aube install
 Install hooks once per clone:
 
 ```bash
-aube run hooks:install
+hk install
 ```
 
-The hook setup uses `hk` through `mise`, installs a fast `pre-commit` formatter hook, and installs a stricter `pre-push` quality hook. Re-run the install command after changing `hk.pkl` or `scripts/install-hk-hooks.mjs`.
+The repository uses `hk` directly for Git hooks. `pre-commit` formats JavaScript and Rust files, while `pre-push` runs the stricter quality gate. Re-run `hk install` after changing `hk.pkl`. If an older local hook path is still configured, clear it once with `git config --local --unset-all core.hooksPath`.
 
 Run the apps locally:
 
@@ -49,13 +50,19 @@ Android and iOS builds require the native platform toolchains to be installed an
 
 ## Repository commands
 
-Run the full check suite:
+Run the same full gate that `pre-push` uses:
 
 ```bash
-aube run check
+aube run quality:push
 ```
 
-Run focused gates:
+Run the faster gate that `pre-commit` uses after formatting:
+
+```bash
+aube run quality:commit
+```
+
+Run focused gates when narrowing down a failure:
 
 ```bash
 aube run test:js
@@ -75,12 +82,27 @@ aube run format:check
 Run hook checks manually:
 
 ```bash
-aube run pre-commit
-aube run pre-push
-aube run hooks:check
+hk run pre-commit
+hk run pre-push
+hk check
 ```
 
-`pre-commit` only formats changed JavaScript and Rust sources. `pre-push` runs the slower JavaScript, app-domain, repository, and Rust quality gates before code is pushed.
+Run hook formatters manually:
+
+```bash
+hk fix
+```
+
+`pre-commit` formats changed JavaScript and Rust sources first, then runs the JavaScript, app-domain, i18n, Android bridge, and release workflow checks. The quality step depends on the formatter steps, so tests do not race against auto-formatting. `pre-push` runs the full push gate, including Rust/Tauri checks and web builds, before code is pushed.
+
+
+## WIP commits
+
+Commits whose subject starts with `wip`, `wip:`, `wip -`, or a similar WIP prefix are treated as intentionally incomplete.
+
+The Test workflow checks the HEAD commit subject before starting expensive jobs. For WIP commits, the workflow blocks in the small WIP guard job and skips the JavaScript and Rust quality jobs. This prevents a WIP push from looking like a valid green run while avoiding wasted CI time.
+
+Rename the commit to a normal Conventional Commit subject before expecting CI to pass.
 
 ## Quality gates
 

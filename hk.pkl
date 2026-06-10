@@ -29,45 +29,37 @@ local formatSteps = new Mapping<String, Step> {
 }
 
 local qualitySteps = new Mapping<String, Step> {
-  ["test-js"] {
+  ["quality-commit"] {
     shell = defaultShell
-    check = "aube run test:js"
+    depends = List("format-js", "format-rust")
+    exclusive = true
+    check = "aube run quality:commit"
   }
 
-  ["test-app"] {
+  ["quality-push"] {
     shell = defaultShell
-    check = "aube run test:app"
-  }
-
-  ["test-rust"] {
-    shell = defaultShell
-    check = "aube run test:rust"
-  }
-
-  ["check-i18n"] {
-    shell = defaultShell
-    check = "aube run check:i18n"
-  }
-
-  ["check-android-bridge"] {
-    shell = defaultShell
-    check = "aube run check:android-mainactivity-bridge"
-  }
-
-  ["check-release-workflows"] {
-    shell = defaultShell
-    check = "aube run check:release-workflows"
+    depends = List("format-js", "format-rust")
+    exclusive = true
+    check = "aube run quality:push"
   }
 }
 
 hooks {
   ["pre-commit"] {
     fix = true
-    steps = formatSteps
+    steps = new Mapping<String, Step> {
+      ["format-js"] = formatSteps["format-js"]
+      ["format-rust"] = formatSteps["format-rust"]
+      ["quality-commit"] = qualitySteps["quality-commit"]
+    }
   }
 
   ["pre-push"] {
-    steps = qualitySteps
+    steps = new Mapping<String, Step> {
+      ["format-js"] = formatSteps["format-js"]
+      ["format-rust"] = formatSteps["format-rust"]
+      ["quality-push"] = qualitySteps["quality-push"]
+    }
   }
 
   ["fix"] {
@@ -79,12 +71,7 @@ hooks {
     steps = new Mapping<String, Step> {
       ["format-js"] = formatSteps["format-js"]
       ["format-rust"] = formatSteps["format-rust"]
-      ["test-js"] = qualitySteps["test-js"]
-      ["test-app"] = qualitySteps["test-app"]
-      ["test-rust"] = qualitySteps["test-rust"]
-      ["check-i18n"] = qualitySteps["check-i18n"]
-      ["check-android-bridge"] = qualitySteps["check-android-bridge"]
-      ["check-release-workflows"] = qualitySteps["check-release-workflows"]
+      ["quality-push"] = qualitySteps["quality-push"]
     }
   }
 }

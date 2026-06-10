@@ -31,14 +31,23 @@ function expectNotExists(file, message) {
 }
 
 function hasGitRepository() {
-  return exists('.git');
+  try {
+    const output = execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return output.trim() === 'true';
+  } catch {
+    return false;
+  }
 }
 
 function isTrackedByGit(file) {
-  if (!hasGitRepository()) return exists(file);
+  if (!hasGitRepository()) return false;
 
   try {
-    execFileSync('git', ['ls-files', '--error-unmatch', file], {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', file], {
       cwd: root,
       stdio: 'ignore',
     });
@@ -92,8 +101,8 @@ expect(exists('.oxlintrc.json'), '.oxlintrc.json should exist.');
 expect(exists('.oxfmtrc.json'), '.oxfmtrc.json should exist.');
 expect(exists('vitest.config.ts'), 'vitest.config.ts should exist.');
 expect(exists('hk.pkl'), 'hk.pkl should exist.');
-expect(exists('scripts/install-hk-hooks.mjs'), 'scripts/install-hk-hooks.mjs should exist.');
 expect(exists('CONTRIBUTING.md'), 'CONTRIBUTING.md should contain development and contribution instructions.');
+expect(exists('scripts/check-wip-ci.mjs'), 'WIP CI guard script should exist.');
 
 expectContains('aube-workspace.yaml', 'catalog:', 'aube-workspace.yaml should define a dependency catalog.');
 expectContains(
@@ -137,6 +146,18 @@ expectContains('mise.toml', 'pkl = "0.31.1"', 'mise should install pkl for hk co
 expectContains('hk.pkl', 'windows = "cmd /d /s /c"', 'hk should use cmd.exe instead of sh on Windows.');
 expectContains('hk.pkl', 'aube run format:js', 'hk should run JavaScript formatting.');
 expectContains('hk.pkl', 'aube run format:rust', 'hk should run Rust formatting.');
+expectContains('hk.pkl', 'aube run quality:commit', 'hk pre-commit should run local lint and test checks.');
+expectContains('hk.pkl', 'aube run quality:push', 'hk pre-push should run the full local quality gate.');
+expectContains(
+  'hk.pkl',
+  'depends = List("format-js", "format-rust")',
+  'hk quality steps should wait for formatter steps before running tests.',
+);
+expectContains(
+  'hk.pkl',
+  'exclusive = true',
+  'hk quality steps should run exclusively after formatters to avoid race conditions.',
+);
 expectContains('hk.pkl', '["pre-push"]', 'hk should define a pre-push quality hook.');
 
 for (const file of [
@@ -158,16 +179,12 @@ for (const file of [
 
 expectContains('README.md', '## Installation', 'README should focus on user installation.');
 expectContains('README.md', '## Features', 'README should describe app features for users.');
-expectContains('CONTRIBUTING.md', 'aube run check', 'CONTRIBUTING.md should document repository checks.');
+expectContains('CONTRIBUTING.md', 'aube run quality:commit', 'CONTRIBUTING.md should document commit quality checks.');
+expectContains('CONTRIBUTING.md', 'aube run quality:push', 'CONTRIBUTING.md should document push quality checks.');
 expectContains('CONTRIBUTING.md', 'Rector', 'CONTRIBUTING.md should document PHP tooling convention.');
 expectContains('CONTRIBUTING.md', 'Oxlint', 'CONTRIBUTING.md should document JavaScript tooling convention.');
 expectContains('CONTRIBUTING.md', 'clippy', 'CONTRIBUTING.md should document Rust tooling convention.');
 expectContains('.gitignore', 'aube-lock.yaml', 'Aube YAML lock files should be ignored.');
-expectContains(
-  'scripts/install-hk-hooks.mjs',
-  'mise exec -- hk install',
-  'Hook installer should run hk through mise so hk and pkl are on PATH.',
-);
 
 packageUsesCatalog('apps/mobile/package.json');
 packageUsesCatalog('apps/desktop/package.json');
@@ -181,8 +198,27 @@ expect(
 );
 
 const rootPackage = readJson('package.json');
-expect(rootPackage.scripts.check.includes('aube run test:js'), 'Root check should include JavaScript tooling checks.');
-expect(rootPackage.scripts.check.includes('aube run test:rust'), 'Root check should include Rust/Tauri checks.');
+expect(rootPackage.scripts.check === 'aube run quality:push', 'Root check should run the full push quality gate.');
+expect(
+  rootPackage.scripts['quality:commit']?.includes('aube run test:js'),
+  'Commit quality should include JavaScript tooling checks.',
+);
+expect(
+  rootPackage.scripts['quality:commit']?.includes('aube run test:app'),
+  'Commit quality should include app-domain checks.',
+);
+expect(
+  rootPackage.scripts['quality:push']?.includes('aube run test:rust'),
+  'Push quality should include Rust/Tauri checks.',
+);
+expect(
+  rootPackage.scripts['quality:push']?.includes('aube run build --filter nutrino-mobile'),
+  'Push quality should include the mobile web build.',
+);
+expect(
+  rootPackage.scripts['quality:push']?.includes('aube run build --filter nutrino-desktop'),
+  'Push quality should include the desktop web build.',
+);
 expect(rootPackage.scripts['lint:js']?.startsWith('oxlint '), 'Root package should expose oxlint.');
 expect(rootPackage.scripts['format:js:check']?.startsWith('oxfmt --check '), 'Root package should expose oxfmt check.');
 expect(rootPackage.scripts['test:unit'] === 'vitest run', 'Root package should expose vitest unit tests.');
@@ -198,16 +234,20 @@ expect(
   'Root package should expose combined formatting.',
 );
 expect(
-  rootPackage.scripts['hooks:install'] === 'node scripts/install-hk-hooks.mjs',
-  'Root package should expose hk Git hook installation.',
+  !Object.prototype.hasOwnProperty.call(rootPackage.scripts, 'hooks:install'),
+  'Root package should not wrap hk install through aube scripts.',
 );
 expect(
-  rootPackage.scripts['pre-commit'] === 'mise exec -- hk run pre-commit',
-  'Root package should expose the hk-backed pre-commit hook.',
+  !Object.prototype.hasOwnProperty.call(rootPackage.scripts, 'hooks:check'),
+  'Root package should not wrap hk check through aube scripts.',
 );
 expect(
-  rootPackage.scripts['hooks:check'] === 'mise exec -- hk check',
-  'Root package should expose hk-backed quality checks.',
+  !Object.prototype.hasOwnProperty.call(rootPackage.scripts, 'pre-commit'),
+  'Root package should let hk own pre-commit directly.',
+);
+expect(
+  !Object.prototype.hasOwnProperty.call(rootPackage.scripts, 'pre-push'),
+  'Root package should let hk own pre-push directly.',
 );
 for (const dependency of ['esbuild', 'oxlint', 'oxfmt', 'vitest']) {
   expect(
