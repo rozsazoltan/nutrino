@@ -25,7 +25,7 @@ Install hooks once per clone:
 aube run hooks:install
 ```
 
-The hook setup installs a fast `pre-commit` formatter hook and a stricter `pre-push` quality hook. Re-run the install command after changing `hk.pkl`.
+The hook setup installs a fast `pre-commit` formatter hook and a stricter `pre-push` quality hook. Re-run the install command after changing `.githooks` or `scripts/install-git-hooks.mjs`.
 
 Run the apps locally:
 
@@ -75,8 +75,8 @@ aube run format:check
 Run hook checks manually:
 
 ```bash
-HK_MISE=1 hk run pre-commit
-HK_MISE=1 hk run pre-push
+aube run pre-commit
+aube run pre-push
 aube run hooks:check
 ```
 

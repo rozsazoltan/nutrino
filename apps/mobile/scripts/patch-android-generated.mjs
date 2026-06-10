@@ -1400,7 +1400,7 @@ const tauriConfigPatched = patchTauriConfig(projectRoot, config.channel).changed
 
 if (!fs.existsSync(androidDir)) {
   console.log(`Android channel configured before generation: channel=${config.channel}, identifier=${config.applicationId}, label="${config.label}"`);
-  console.log('Android project not generated yet. Run pnpm android:init first.');
+  console.log('Android project not generated yet. Run aube init:android first.');
   process.exit(0);
 }
 

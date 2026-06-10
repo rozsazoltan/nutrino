@@ -2,5 +2,3 @@
 node = "24"
 aube = "latest"
 rust = "stable"
-hk = "latest"
-pkl = "latest"

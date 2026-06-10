@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+set -eu
+exec aube run pre-commit

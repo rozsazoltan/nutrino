@@ -145,14 +145,10 @@ expect(
 expectContains('mise.toml', 'rust = "stable"', 'mise should install stable Rust.');
 expect(
   !read('mise.toml').includes('[tasks.'),
-  'mise.toml should not contain task shortcuts; package scripts and hk own repository automation.',
+  'mise.toml should not contain task shortcuts; package scripts own repository automation.',
 );
-expectContains(
-  'hk.pkl',
-  'cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml',
-  'hk should run desktop rustfmt.',
-);
-expectContains('hk.pkl', 'cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml', 'hk should run mobile rustfmt.');
+expectContains('scripts/run-quality.mjs', 'format:rust', 'Quality runner should run Rust formatting.');
+expectContains('package.json', 'format:rust:check', 'Package scripts should expose Rust formatting checks.');
 
 if (failures.length > 0) {
   console.error('Rust/Tauri config check failed:');

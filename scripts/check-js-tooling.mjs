@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -27,6 +28,28 @@ function expectContains(file, needle, message) {
 
 function expectNotExists(file, message) {
   expect(!exists(file), message);
+}
+
+function hasGitRepository() {
+  return exists('.git');
+}
+
+function isTrackedByGit(file) {
+  if (!hasGitRepository()) return exists(file);
+
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', file], {
+      cwd: root,
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function expectNotTracked(file, message) {
+  expect(!isTrackedByGit(file), message);
 }
 
 function expectNoPackageManagerReferences(file) {
@@ -59,16 +82,17 @@ function packageUsesCatalog(relativePath) {
 
 expect(exists('aube-workspace.yaml'), 'aube-workspace.yaml should exist.');
 expectNotExists('pnpm-workspace.yaml', 'pnpm-workspace.yaml should not exist after moving to aube.');
-expectNotExists('pnpm-lock.yaml', 'pnpm-lock.yaml should not be committed.');
-expectNotExists('package-lock.json', 'package-lock.json should not be committed.');
-expectNotExists('yarn.lock', 'yarn.lock should not be committed.');
-expectNotExists('bun.lockb', 'bun.lockb should not be committed.');
-expectNotExists('aube.lock', 'aube.lock should not be committed.');
-expectNotExists('aube-lock.yaml', 'aube-lock.yaml should not be committed.');
+expectNotTracked('pnpm-lock.yaml', 'pnpm-lock.yaml should not be committed.');
+expectNotTracked('package-lock.json', 'package-lock.json should not be committed.');
+expectNotTracked('yarn.lock', 'yarn.lock should not be committed.');
+expectNotTracked('bun.lockb', 'bun.lockb should not be committed.');
+expectNotTracked('aube.lock', 'aube.lock should not be committed.');
+expectNotTracked('aube-lock.yaml', 'aube-lock.yaml should not be committed.');
 expect(exists('.oxlintrc.json'), '.oxlintrc.json should exist.');
 expect(exists('.oxfmtrc.json'), '.oxfmtrc.json should exist.');
 expect(exists('vitest.config.ts'), 'vitest.config.ts should exist.');
-expect(exists('hk.pkl'), 'hk.pkl should exist.');
+expect(exists('scripts/run-quality.mjs'), 'scripts/run-quality.mjs should exist.');
+expect(exists('scripts/install-git-hooks.mjs'), 'scripts/install-git-hooks.mjs should exist.');
 expect(exists('CONTRIBUTING.md'), 'CONTRIBUTING.md should contain development and contribution instructions.');
 
 expectContains('aube-workspace.yaml', 'catalog:', 'aube-workspace.yaml should define a dependency catalog.');
@@ -107,16 +131,23 @@ expectContains('aube-workspace.yaml', 'typescript: ^6.', 'TypeScript catalog sho
 expectContains('mise.toml', 'node = "24"', 'mise should pin Node 24.');
 expectContains('mise.toml', 'aube = "latest"', 'mise should install aube.');
 expectContains('mise.toml', 'rust = "stable"', 'mise should install stable Rust.');
-expectContains('mise.toml', 'hk = "latest"', 'mise should install hk for Git hooks.');
-expectContains('mise.toml', 'pkl = "latest"', 'mise should install pkl for hook configuration.');
 expect(!read('mise.toml').includes('[tasks.'), 'mise.toml should only define tool dependencies, not task shortcuts.');
-expectContains('hk.pkl', '["pre-commit"]', 'hk should define a pre-commit hook.');
-expectContains('hk.pkl', 'hk@1.18.1', 'hk.pkl should pin the hk configuration schema.');
-expectContains('hk.pkl', 'oxfmt', 'hk should run oxfmt for JavaScript formatting.');
-expectContains('hk.pkl', 'rustfmt', 'hk should run rustfmt for Rust formatting.');
+expect(!read('mise.toml').includes('hk ='), 'mise should not require hk for cross-platform hooks.');
+expect(!read('mise.toml').includes('pkl ='), 'mise should not require pkl for cross-platform hooks.');
+expectContains('scripts/run-quality.mjs', 'pre-commit', 'Quality runner should define a pre-commit mode.');
+expectContains('scripts/run-quality.mjs', 'pre-push', 'Quality runner should define a pre-push mode.');
+expectContains('scripts/run-quality.mjs', 'format:js', 'Quality runner should run JavaScript formatting.');
+expectContains('scripts/run-quality.mjs', 'format:rust', 'Quality runner should run Rust formatting.');
 
 for (const file of [
   'README.md',
+  'apps/mobile/src-tauri/tauri.conf.json',
+  'apps/desktop/src-tauri/tauri.conf.json',
+  'apps/mobile/scripts/android-dev-host.mjs',
+  'apps/mobile/scripts/android-build.mjs',
+  'apps/mobile/scripts/android-init.mjs',
+  'apps/mobile/scripts/android-doctor.mjs',
+  'apps/mobile/scripts/patch-android-generated.mjs',
   '.github/workflows/test.yml',
   '.github/workflows/release.yml',
   '.github/release/nutrino-desktop.tauri-release.toml',
@@ -132,6 +163,7 @@ expectContains('CONTRIBUTING.md', 'Rector', 'CONTRIBUTING.md should document PHP
 expectContains('CONTRIBUTING.md', 'Oxlint', 'CONTRIBUTING.md should document JavaScript tooling convention.');
 expectContains('CONTRIBUTING.md', 'clippy', 'CONTRIBUTING.md should document Rust tooling convention.');
 expectContains('.gitignore', 'aube-lock.yaml', 'Aube YAML lock files should be ignored.');
+expect(!exists('hk.pkl'), 'hk.pkl should not be used because hk requires sh on Windows.');
 
 packageUsesCatalog('apps/mobile/package.json');
 packageUsesCatalog('apps/desktop/package.json');
@@ -162,10 +194,17 @@ expect(
   'Root package should expose combined formatting.',
 );
 expect(
-  rootPackage.scripts['hooks:install'] === 'HK_MISE=1 hk install --mise',
-  'Root package should expose hk installation.',
+  rootPackage.scripts['hooks:install'] === 'node scripts/install-git-hooks.mjs',
+  'Root package should expose cross-platform Git hook installation.',
 );
-expect(rootPackage.scripts['pre-commit'] === 'hk run pre-commit', 'Root package should expose the hk pre-commit hook.');
+expect(
+  rootPackage.scripts['pre-commit'] === 'node scripts/run-quality.mjs pre-commit',
+  'Root package should expose the Node-backed pre-commit hook.',
+);
+expect(
+  rootPackage.scripts['hooks:check'] === 'node scripts/run-quality.mjs check',
+  'Root package should expose Node-backed quality checks.',
+);
 for (const dependency of ['esbuild', 'oxlint', 'oxfmt', 'vitest']) {
   expect(
     rootPackage.devDependencies?.[dependency] === 'catalog:',

@@ -123,9 +123,12 @@ expectContains(
   'Aube workspace should install dependencies before running scripts.',
 );
 expectContains('mise.toml', 'aube = "latest"', 'Mise should install aube for local development.');
-expectContains('mise.toml', 'hk = "latest"', 'Mise should install hk for Git hooks.');
-expectContains('mise.toml', 'pkl = "latest"', 'Mise should install pkl for hook configuration.');
-expectContains('hk.pkl', '["pre-commit"]', 'hk should define a pre-commit hook.');
+expectContains(
+  'package.json',
+  '"hooks:install": "node scripts/install-git-hooks.mjs"',
+  'Package scripts should install cross-platform Git hooks.',
+);
+expectContains('scripts/run-quality.mjs', 'pre-push', 'Quality runner should define pre-push checks.');
 expectContains(
   '.github/workflows/release.yml',
   'release_name_prefix',

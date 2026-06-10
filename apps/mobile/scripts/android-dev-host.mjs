@@ -166,7 +166,7 @@ for (const item of list) {
 
 if (!host) {
   console.error('\nNo usable LAN IPv4 address was detected.');
-  console.error('Run: pnpm android:dev -- --host 192.168.1.50');
+  console.error('Run: aube dev:android -- --host 192.168.1.50');
   process.exit(1);
 }
 
@@ -181,14 +181,11 @@ console.log(`Dev package: ${DEV_APPLICATION_ID}`);
 console.log(`Cargo target cache: ${androidEnv.CARGO_TARGET_DIR}`);
 console.log(`Gradle user cache: ${androidEnv.GRADLE_USER_HOME}`);
 console.log('If this is not your Wi-Fi/LAN IP, stop it and run:');
-console.log('  pnpm android:dev -- --host <your-desktop-lan-ip>\n');
+console.log('  aube dev:android -- --host <your-desktop-lan-ip>\n');
 
-const command = process.platform === 'win32' ? 'cmd.exe' : 'pnpm';
-const args = process.platform === 'win32'
-  ? ['/d', '/s', '/c', `pnpm tauri android dev --host ${host}`]
-  : ['tauri', 'android', 'dev', '--host', host];
-
-const child = spawn(command, args, {
+const tauriEnvScript = path.resolve(projectRoot, '..', '..', 'scripts', 'tauri-env.mjs');
+const child = spawn(process.execPath, [tauriEnvScript, 'android', 'dev', '--host', host], {
+  cwd: projectRoot,
   stdio: 'inherit',
   env: androidEnv,
 });
