@@ -1,115 +1,90 @@
-amends "package://github.com/jdx/hk/releases/download/v1.18.1/hk@1.18.1#/Config.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.47.0/hk@1.47.0#/Config.pkl"
 
-local jsFormatters = new Mapping<String, Step> {
-  ["oxfmt"] {
-    glob = List(
-      "apps/mobile/src/lib/**/*.ts",
-      "apps/desktop/src/lib/**/*.ts",
-      "vitest.config.ts",
-      "scripts/**/*.mjs",
-    )
+local defaultShell = new Script {
+  linux = "sh -o errexit -c"
+  macos = "sh -o errexit -c"
+  windows = "cmd /d /s /c"
+  other = "sh -o errexit -c"
+}
+
+local formatSteps = new Mapping<String, Step> {
+  ["format-js"] {
+    shell = defaultShell
     check = "aube run format:js:check"
     fix = "aube run format:js"
-  }
-}
-
-local rustFormatters = new Mapping<String, Step> {
-  ["rustfmt"] {
-    glob = List(
-      "apps/desktop/src-tauri/**/*.rs",
-      "apps/mobile/src-tauri/**/*.rs",
-    )
-    check = "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml -- --check"
-    fix = "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml"
-  }
-}
-
-local qualityChecks = new Mapping<String, Step> {
-  ["js-quality"] {
-    glob = List(
-      "apps/mobile/src/lib/**/*.ts",
-      "apps/desktop/src/lib/**/*.ts",
-      "scripts/**/*.mjs",
-      "vitest.config.ts",
+    stage = List(
       "package.json",
-      "aube-workspace.yaml",
+      "vitest.config.ts",
+      "apps/mobile/src/lib/*.ts",
+      "scripts/*.mjs",
     )
-    check = "aube run test:js && aube run test:app && aube run check:i18n && aube run check:android-mainactivity-bridge && aube run check:release-workflows"
   }
 
-  ["rust-quality"] {
-    glob = List(
-      "apps/desktop/src-tauri/**/*.rs",
-      "apps/desktop/src-tauri/Cargo.toml",
-      "apps/mobile/src-tauri/**/*.rs",
-      "apps/mobile/src-tauri/Cargo.toml",
-      "scripts/check-rust-tauri-config.mjs",
-    )
+  ["format-rust"] {
+    shell = defaultShell
+    check = "aube run format:rust:check"
+    fix = "aube run format:rust"
+    stage = List("apps/*/src-tauri/**/*.rs")
+  }
+}
+
+local qualitySteps = new Mapping<String, Step> {
+  ["test-js"] {
+    shell = defaultShell
+    check = "aube run test:js"
+  }
+
+  ["test-app"] {
+    shell = defaultShell
+    check = "aube run test:app"
+  }
+
+  ["test-rust"] {
+    shell = defaultShell
     check = "aube run test:rust"
   }
-}
 
-local formatters = new Mapping<String, Step> {
-  ["oxfmt"] {
-    glob = List(
-      "apps/mobile/src/lib/**/*.ts",
-      "apps/desktop/src/lib/**/*.ts",
-      "vitest.config.ts",
-      "scripts/**/*.mjs",
-    )
-    check = "aube run format:js:check"
-    fix = "aube run format:js"
+  ["check-i18n"] {
+    shell = defaultShell
+    check = "aube run check:i18n"
   }
 
-  ["rustfmt"] {
-    glob = List(
-      "apps/desktop/src-tauri/**/*.rs",
-      "apps/mobile/src-tauri/**/*.rs",
-    )
-    check = "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml -- --check"
-    fix = "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml"
+  ["check-android-bridge"] {
+    shell = defaultShell
+    check = "aube run check:android-mainactivity-bridge"
+  }
+
+  ["check-release-workflows"] {
+    shell = defaultShell
+    check = "aube run check:release-workflows"
   }
 }
 
 hooks {
   ["pre-commit"] {
     fix = true
-    stash = "git"
-    steps = formatters
+    steps = formatSteps
+  }
+
+  ["pre-push"] {
+    steps = qualitySteps
   }
 
   ["fix"] {
     fix = true
-    steps = formatters
+    steps = formatSteps
   }
 
   ["check"] {
-    steps = formatters
-  }
-
-  ["pre-push"] {
-    steps = qualityChecks
-  }
-
-  ["quality"] {
-    steps = qualityChecks
-  }
-
-  ["fix-js"] {
-    fix = true
-    steps = jsFormatters
-  }
-
-  ["check-js"] {
-    steps = jsFormatters
-  }
-
-  ["fix-rust"] {
-    fix = true
-    steps = rustFormatters
-  }
-
-  ["check-rust"] {
-    steps = rustFormatters
+    steps = new Mapping<String, Step> {
+      ["format-js"] = formatSteps["format-js"]
+      ["format-rust"] = formatSteps["format-rust"]
+      ["test-js"] = qualitySteps["test-js"]
+      ["test-app"] = qualitySteps["test-app"]
+      ["test-rust"] = qualitySteps["test-rust"]
+      ["check-i18n"] = qualitySteps["check-i18n"]
+      ["check-android-bridge"] = qualitySteps["check-android-bridge"]
+      ["check-release-workflows"] = qualitySteps["check-release-workflows"]
+    }
   }
 }

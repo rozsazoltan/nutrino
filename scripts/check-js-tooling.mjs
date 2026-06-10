@@ -91,8 +91,8 @@ expectNotTracked('aube-lock.yaml', 'aube-lock.yaml should not be committed.');
 expect(exists('.oxlintrc.json'), '.oxlintrc.json should exist.');
 expect(exists('.oxfmtrc.json'), '.oxfmtrc.json should exist.');
 expect(exists('vitest.config.ts'), 'vitest.config.ts should exist.');
-expect(exists('scripts/run-quality.mjs'), 'scripts/run-quality.mjs should exist.');
-expect(exists('scripts/install-git-hooks.mjs'), 'scripts/install-git-hooks.mjs should exist.');
+expect(exists('hk.pkl'), 'hk.pkl should exist.');
+expect(exists('scripts/install-hk-hooks.mjs'), 'scripts/install-hk-hooks.mjs should exist.');
 expect(exists('CONTRIBUTING.md'), 'CONTRIBUTING.md should contain development and contribution instructions.');
 
 expectContains('aube-workspace.yaml', 'catalog:', 'aube-workspace.yaml should define a dependency catalog.');
@@ -132,12 +132,12 @@ expectContains('mise.toml', 'node = "24"', 'mise should pin Node 24.');
 expectContains('mise.toml', 'aube = "latest"', 'mise should install aube.');
 expectContains('mise.toml', 'rust = "stable"', 'mise should install stable Rust.');
 expect(!read('mise.toml').includes('[tasks.'), 'mise.toml should only define tool dependencies, not task shortcuts.');
-expect(!read('mise.toml').includes('hk ='), 'mise should not require hk for cross-platform hooks.');
-expect(!read('mise.toml').includes('pkl ='), 'mise should not require pkl for cross-platform hooks.');
-expectContains('scripts/run-quality.mjs', 'pre-commit', 'Quality runner should define a pre-commit mode.');
-expectContains('scripts/run-quality.mjs', 'pre-push', 'Quality runner should define a pre-push mode.');
-expectContains('scripts/run-quality.mjs', 'format:js', 'Quality runner should run JavaScript formatting.');
-expectContains('scripts/run-quality.mjs', 'format:rust', 'Quality runner should run Rust formatting.');
+expectContains('mise.toml', 'hk = "1.47.0"', 'mise should install a pinned hk version.');
+expectContains('mise.toml', 'pkl = "0.31.1"', 'mise should install pkl for hk configuration compatibility.');
+expectContains('hk.pkl', 'windows = "cmd /d /s /c"', 'hk should use cmd.exe instead of sh on Windows.');
+expectContains('hk.pkl', 'aube run format:js', 'hk should run JavaScript formatting.');
+expectContains('hk.pkl', 'aube run format:rust', 'hk should run Rust formatting.');
+expectContains('hk.pkl', '["pre-push"]', 'hk should define a pre-push quality hook.');
 
 for (const file of [
   'README.md',
@@ -163,7 +163,11 @@ expectContains('CONTRIBUTING.md', 'Rector', 'CONTRIBUTING.md should document PHP
 expectContains('CONTRIBUTING.md', 'Oxlint', 'CONTRIBUTING.md should document JavaScript tooling convention.');
 expectContains('CONTRIBUTING.md', 'clippy', 'CONTRIBUTING.md should document Rust tooling convention.');
 expectContains('.gitignore', 'aube-lock.yaml', 'Aube YAML lock files should be ignored.');
-expect(!exists('hk.pkl'), 'hk.pkl should not be used because hk requires sh on Windows.');
+expectContains(
+  'scripts/install-hk-hooks.mjs',
+  'mise exec -- hk install',
+  'Hook installer should run hk through mise so hk and pkl are on PATH.',
+);
 
 packageUsesCatalog('apps/mobile/package.json');
 packageUsesCatalog('apps/desktop/package.json');
@@ -194,16 +198,16 @@ expect(
   'Root package should expose combined formatting.',
 );
 expect(
-  rootPackage.scripts['hooks:install'] === 'node scripts/install-git-hooks.mjs',
-  'Root package should expose cross-platform Git hook installation.',
+  rootPackage.scripts['hooks:install'] === 'node scripts/install-hk-hooks.mjs',
+  'Root package should expose hk Git hook installation.',
 );
 expect(
-  rootPackage.scripts['pre-commit'] === 'node scripts/run-quality.mjs pre-commit',
-  'Root package should expose the Node-backed pre-commit hook.',
+  rootPackage.scripts['pre-commit'] === 'mise exec -- hk run pre-commit',
+  'Root package should expose the hk-backed pre-commit hook.',
 );
 expect(
-  rootPackage.scripts['hooks:check'] === 'node scripts/run-quality.mjs check',
-  'Root package should expose Node-backed quality checks.',
+  rootPackage.scripts['hooks:check'] === 'mise exec -- hk check',
+  'Root package should expose hk-backed quality checks.',
 );
 for (const dependency of ['esbuild', 'oxlint', 'oxfmt', 'vitest']) {
   expect(

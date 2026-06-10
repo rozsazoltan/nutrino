@@ -147,7 +147,7 @@ expect(
   !read('mise.toml').includes('[tasks.'),
   'mise.toml should not contain task shortcuts; package scripts own repository automation.',
 );
-expectContains('scripts/run-quality.mjs', 'format:rust', 'Quality runner should run Rust formatting.');
+expectContains('hk.pkl', 'aube run format:rust', 'hk should run Rust formatting.');
 expectContains('package.json', 'format:rust:check', 'Package scripts should expose Rust formatting checks.');
 
 if (failures.length > 0) {
