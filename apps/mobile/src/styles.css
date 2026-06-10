@@ -9741,12 +9741,13 @@ select:focus {
 }
 
 .fluid-kcal-preview {
-  margin: 0;
-  padding: 10px 12px;
+  margin: 6px 0 2px;
+  padding: 12px 13px;
   border-radius: 14px;
   background: var(--surface-container-high);
   color: var(--on-surface-variant);
   font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .fluid-entry-row b {
@@ -9863,11 +9864,19 @@ select:focus {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 0 14px 12px;
+  padding: 2px 14px 12px;
 }
 .fluid-kind-tabs {
   width: 100%;
-  margin: 0;
+  margin: 4px 0 2px;
+}
+.fluid-entry-sheet > .field-label + .fluid-kind-tabs,
+.fluid-entry-sheet > .fluid-kind-grid + .field-label,
+.fluid-entry-sheet > .fluid-kcal-preview + .note-textarea {
+  margin-top: 6px;
+}
+.fluid-entry-sheet .helper.big {
+  margin-bottom: 2px;
 }
 .fluid-kind-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
@@ -9941,10 +9950,15 @@ select:focus {
 .catalog-freshness-dialog {
   width: min(560px, calc(100vw - 24px));
 }
+.fluid-analysis-dialog > .helper.big {
+  margin: 0.35rem 0 1rem;
+  line-height: 1.5;
+}
 .fluid-analysis-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  margin-top: 2px;
 }
 .fluid-analysis-summary div {
   display: grid;
@@ -9964,14 +9978,16 @@ select:focus {
 }
 .fluid-alert-list {
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  margin: 14px 0 16px;
 }
 .fluid-alert-list p {
   margin: 0;
-  padding: 9px 11px;
+  padding: 11px 12px;
   border-radius: 14px;
   font-size: 0.84rem;
   font-weight: 850;
+  line-height: 1.4;
   background: var(--surface-container-high);
 }
 .fluid-alert-ok {
@@ -9988,10 +10004,13 @@ select:focus {
 }
 .fluid-distribution-card {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--outline) 12%, transparent);
 }
 .fluid-distribution-card h3 {
-  margin: 0;
+  margin: 0 0 2px;
   font-size: 1rem;
 }
 .fluid-distribution-list {
