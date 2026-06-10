@@ -68,6 +68,9 @@ expectContains('apps/mobile/src-tauri/Cargo.toml', 'panic = "abort"', 'Mobile re
 expectContains('apps/mobile/src-tauri/Cargo.toml', 'lto = "thin"', 'Mobile release profile should enable thin LTO.');
 expectContains('apps/mobile/src-tauri/Cargo.toml', 'strip = "symbols"', 'Mobile release profile should strip symbols.');
 expectContains('apps/mobile/src-tauri/Cargo.toml', 'tauri-plugin-notification', 'Mobile app should include notification plugin for Android handoff actions.');
+expectContains('apps/mobile/src-tauri/Cargo.toml', '[target.\"cfg(any(target_os = \\\"android\\\", target_os = \\\"ios\\\"))\".dependencies]', 'Mobile-only plugins should stay behind mobile target dependencies.');
+expectContains('apps/mobile/src-tauri/Cargo.toml', 'tauri-plugin-share = "2"', 'Mobile app should keep native share plugin for backup exports.');
+expectContains('apps/mobile/src-tauri/capabilities/default.json', '"share:default"', 'Mobile capability should keep native share permission for backup exports.');
 expectContains('apps/desktop/src-tauri/Cargo.toml', 'axum = { version = "0.8", features = ["ws"] }', 'Desktop LAN API should keep websocket support enabled.');
 expectContains('apps/desktop/src-tauri/Cargo.toml', 'tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "time"] }', 'Desktop LAN API should keep tokio time support enabled.');
 expectContains('apps/desktop/src-tauri/Cargo.toml', 'base64 = "0.22"', 'Desktop should keep base64 support for mobile handoff chunks.');

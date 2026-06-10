@@ -28,7 +28,7 @@
     "test:rust": "node scripts/check-rust-tauri-config.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "typescript": "^6.0.3"
   },
   "license": "AGPL-3.0-only",
   "repository": {

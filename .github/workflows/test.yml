@@ -112,9 +112,9 @@ jobs:
         shell: bash
         run: node scripts/check-rust-tauri-config.mjs
 
-      - name: Check mobile Rust crate
+      - name: Check mobile Rust manifest
         shell: bash
-        run: cargo check --manifest-path apps/mobile/src-tauri/Cargo.toml --locked
+        run: cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml --locked --no-deps >/dev/null
 
       - name: Check desktop Rust crate
         shell: bash

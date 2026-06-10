@@ -67,6 +67,13 @@ expectNotExists('aube.lock', 'aube.lock should not be committed.');
 
 expectContains('aube-workspace.yaml', 'catalog:', 'aube-workspace.yaml should define a dependency catalog.');
 expectContains('aube-workspace.yaml', 'verifyDepsBeforeRun: install', 'aube should install dependencies before running scripts.');
+expectContains('aube-workspace.yaml', 'strictDepBuilds: true', 'aube should fail on unreviewed dependency build scripts.');
+expectContains('aube-workspace.yaml', 'allowBuilds:', 'aube-workspace.yaml should explicitly review dependency build scripts.');
+expectContains('aube-workspace.yaml', '  esbuild: true', 'esbuild install script should be explicitly approved for Vite builds.');
+expectContains('aube-workspace.yaml', "'@vitejs/plugin-vue': ^6.", 'Vue plugin catalog should use the current major version.');
+expectContains('aube-workspace.yaml', 'vite: ^8.', 'Vite catalog should use the current major version.');
+expectContains('aube-workspace.yaml', 'vue-tsc: ^3.', 'vue-tsc catalog should use the current major version.');
+expectContains('aube-workspace.yaml', 'typescript: ^6.', 'TypeScript catalog should use the current major version.');
 expectContains('mise.toml', 'node = "24"', 'mise should pin Node 24.');
 expectContains('mise.toml', 'aube = "latest"', 'mise should install aube.');
 expectContains('mise.toml', 'rust = "stable"', 'mise should install stable Rust.');
