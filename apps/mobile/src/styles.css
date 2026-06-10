@@ -7544,3 +7544,21 @@ select:focus {
     grid-template-columns: 1fr;
   }
 }
+
+.preparation-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--outline) 16%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-container) 82%, transparent);
+}
+
+.preparation-panel .field-label {
+  gap: 6px;
+}
+
+.preparation-kcal-preview {
+  font-weight: 850;
+  color: var(--primary);
+}

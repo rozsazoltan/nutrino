@@ -5,6 +5,7 @@ export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 export type Gender = 'female' | 'male' | 'non_binary';
 export type ActivityLevel = 'sedentary' | 'low_active' | 'active' | 'very_active';
 export type AppLanguage = 'system' | 'en' | 'hu' | 'de' | 'fr' | 'ru' | 'uk' | 'zh' | 'sk' | 'ro' | 'cs' | 'sl' | 'hr' | 'pl' | 'es' | 'pt';
+export type FoodPreparationMethod = 'none' | 'boiled' | 'air_fryer' | 'pan_light_oil' | 'pan_oil' | 'deep_fried' | 'custom_oil';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type AppChannel = 'dev' | 'stable';
 export type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
@@ -205,6 +206,9 @@ export interface Intake {
   note_title?: string | null;
   note_description?: string | null;
   note_final?: boolean;
+  preparation_method?: FoodPreparationMethod | null;
+  preparation_oil_ml?: number | null;
+  preparation_kcal?: number | null;
   pending_sync: boolean;
   created_at: number;
   updated_at: number;
