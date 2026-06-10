@@ -1,7 +1,7 @@
 [project]
 project_dir = "apps/mobile"
-package_manager = "pnpm"
-install_command = "corepack enable && corepack prepare pnpm@10.32.1 --activate && pnpm install --no-frozen-lockfile"
+package_manager = "aube"
+install_command = "aube install"
 
 [output]
 clean = true
@@ -33,10 +33,10 @@ apk = true
 aab = true
 split_per_abi = false
 targets = ["aarch64"]
-command = "node scripts/android-build.mjs --channel stable --apk --aab --target aarch64"
+command = "aube run android:build:release --filter nutrino-mobile"
 
 [ios]
 enabled = true
 strategy = "host-only"
 targets = []
-command = "pnpm ios:build"
+command = "aube run ios:build --filter nutrino-mobile"

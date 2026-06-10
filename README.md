@@ -89,9 +89,10 @@ Data flows:
 ### Requirements
 
 ```text
-Node.js 22
-pnpm 10.32.1
-Rust stable
+Node.js 24
+aube
+rust stable
+mise, recommended
 Tauri prerequisites for the target platform
 Android SDK + NDK for Android builds
 Xcode and Apple signing assets for signed iOS builds
@@ -100,9 +101,9 @@ Xcode and Apple signing assets for signed iOS builds
 ### Install dependencies
 
 ```bash
-corepack enable
-corepack prepare pnpm@10.32.1 --activate
-pnpm install
+mise trust
+mise install
+aube install
 ```
 
 ### Run locally
@@ -110,29 +111,29 @@ pnpm install
 Desktop:
 
 ```bash
-pnpm dev:desktop
+aube run dev:desktop
 ```
 
 Android:
 
 ```bash
-pnpm init:android
-pnpm dev:android
+aube run init:android
+aube run dev:android
 ```
 
 iOS:
 
 ```bash
-pnpm init:ios
-pnpm dev:ios
+aube run init:ios
+aube run dev:ios
 ```
 
 ### Build locally
 
 ```bash
-pnpm build:desktop
-pnpm build:android
-pnpm build:ios
+aube run build:desktop
+aube run build:android
+aube run build:ios
 ```
 
 Android and iOS builds require the native toolchains to be configured on the host machine.
@@ -142,13 +143,13 @@ Android and iOS builds require the native toolchains to be configured on the hos
 Run the repository checks:
 
 ```bash
-pnpm check
+aube run check
 ```
 
 Run only the app domain checks:
 
 ```bash
-pnpm test:app
+aube run test:app
 ```
 
 The app checks cover repository-level invariants that are easy to break during feature work, including fluid tracking domain behavior, release workflow wiring, i18n completeness, Vue SFC syntax, and Android bridge patch expectations.
@@ -231,6 +232,8 @@ The workflow can also delete moving tags such as `latest`, `vX`, and `vX.Y` when
 ```text
 .github/release      release tool configuration
 .github/workflows    CI, release, and delete-release workflows
+aube-workspace.yaml  JavaScript workspace and dependency catalog
+mise.toml            local toolchain and task shortcuts
 apps/desktop         Tauri desktop app
 apps/mobile          Tauri mobile app
 packages/shared      shared workspace package
@@ -247,7 +250,7 @@ Nutrino is designed around local data ownership. Backups, AI exports, and deskto
 Keep changes small and reviewable. For app changes, run:
 
 ```bash
-pnpm check
+aube run check
 ```
 
 For release workflow changes, verify the relevant workflow and release config files before opening a pull request.

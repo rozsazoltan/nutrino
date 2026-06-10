@@ -7,7 +7,7 @@ import { gitShortCommit } from './version-info.mjs';
 function findRepoRoot(startDir) {
   let current = path.resolve(startDir);
   while (true) {
-    if (fs.existsSync(path.join(current, 'pnpm-workspace.yaml'))) return current;
+    if (fs.existsSync(path.join(current, 'aube-workspace.yaml'))) return current;
     const parent = path.dirname(current);
     if (parent === current) return startDir;
     current = parent;
