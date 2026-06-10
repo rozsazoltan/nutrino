@@ -1254,6 +1254,10 @@ button {
   align-items: center;
   gap: 12px;
 }
+.dialog-title-row h2 {
+  min-width: 0;
+  margin: 0;
+}
 .dialog-option {
   display: block;
   width: 100%;
@@ -9702,7 +9706,16 @@ select:focus {
 
 .fluid-summary-card .meal-header {
   grid-template-columns: auto minmax(0, 1fr) auto auto auto;
-  align-items: center;
+  align-items: start;
+}
+.fluid-summary-card .section-summary-text,
+.fluid-summary-card .meal-micro-button,
+.fluid-summary-card .plus-button {
+  align-self: start;
+}
+.fluid-summary-card .meal-micro-button,
+.fluid-summary-card .plus-button {
+  margin-top: 0;
 }
 
 .fluid-quick-row {
