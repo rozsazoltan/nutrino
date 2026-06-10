@@ -1987,9 +1987,10 @@ function fluidTrackingSkippedForKey(key: string) {
 }
 const currentDayFluidSkipped = computed(() => fluidTrackingSkippedForKey(activeLogDateKey.value));
 const fluidTrackingActiveForDay = computed(() => fluidTrackingEnabled.value && !currentDayFluidSkipped.value);
-const currentDayFluidLogs = computed(() =>
-  fluidTrackingActiveForDay.value ? state.fluidLogs.filter((entry) => inSelectedDay(entry.consumed_at)) : [],
+const currentDayStoredFluidLogs = computed(() =>
+  fluidTrackingEnabled.value ? state.fluidLogs.filter((entry) => inSelectedDay(entry.consumed_at)) : [],
 );
+const currentDayFluidLogs = computed(() => (fluidTrackingActiveForDay.value ? currentDayStoredFluidLogs.value : []));
 const currentDayWeight = computed(() => latestWeightForDay(state.weightLogs, activeLogDateKey.value));
 const currentDayWeightKg = computed(() => currentDayWeight.value?.weight_kg ?? state.profile.current_weight_kg);
 const currentWeight = computed(() => currentDayWeightKg.value);
@@ -10758,6 +10759,7 @@ const fluidTrackingTranslations: Record<string, Partial<Record<string, string>>>
     fluidSkippedToday: 'Skipped today',
     fluidSkippedShort: 'Skipped',
     fluidSkippedTodayHint: 'This day is excluded from fluid tracking and drink reminders.',
+    fluidSkipHasEntries: 'Delete the drink entries before skipping this day.',
     fluidDiaryTracking: 'Record fluid intake data',
     fluidDiaryTrackingHint: 'Enables the fluid diary, drink goals and drink reminders.',
     catalogFreshness: 'Catalog sync details',
@@ -10841,6 +10843,7 @@ const fluidTrackingTranslations: Record<string, Partial<Record<string, string>>>
     fluidSkippedToday: 'Ma kihagyva',
     fluidSkippedShort: 'Kihagyva',
     fluidSkippedTodayHint: 'Ez a nap nincs beleszámítva a folyadékkövetésbe és az ivás emlékeztetőkbe.',
+    fluidSkipHasEntries: 'Előbb töröld a mai italbejegyzéseket, utána hagyható ki a nap.',
     fluidDiaryTracking: 'Folyadékbeviteli adatok vezetése',
     fluidDiaryTrackingHint: 'Bekapcsolja a folyadéknaplót, célokat és ivás emlékeztetőket.',
     catalogFreshness: 'Katalógus szinkron adatok',
@@ -16979,6 +16982,7 @@ function openFluidAnalysis() {
 function setFluidSkippedForCurrentDay(skipped: boolean) {
   const key = activeLogDateKey.value;
   const days = new Set(state.settings.fluid_skipped_day_keys || []);
+  if (skipped && currentDayStoredFluidLogs.value.length > 0) return showToast(t('fluidSkipHasEntries'));
   if (skipped) days.add(key);
   else days.delete(key);
   state.settings.fluid_skipped_day_keys = [...days].sort();
@@ -19974,10 +19978,44 @@ function setTab(tab: Tab) {
           ></span>
           <span v-if="!currentDayFluidSkipped" class="plus-button">+</span>
         </button>
-        <div class="fluid-card-actions">
+        <div v-if="currentDayFluidSkipped || !currentDayStoredFluidLogs.length" class="fluid-card-actions">
           <button class="text-button" type="button" @click="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)">
             {{ currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday') }}
           </button>
+        </div>
+        <div v-if="!currentDayFluidSkipped" class="entry-list home-fluid-entry-list">
+          <div
+            v-for="entry in currentDayFluidLogs"
+            :id="`home-fluid-entry-${entry.id}`"
+            :key="`home-fluid-${entry.id}`"
+            class="entry-row fluid-entry-row"
+            @pointerdown="startEntryLongPress('fluid', entry.id, $event)"
+            @pointerup="clearEntryLongPress"
+            @pointercancel="clearEntryLongPress"
+            @contextmenu.prevent="entryActionSheet = { kind: 'fluid', id: entry.id }"
+          >
+            <div>
+              <b>{{ fluidLogTitle(entry) }}</b
+              ><small>{{ fluidLogSubtitle(entry) }}</small>
+            </div>
+            <div class="entry-actions">
+              <button
+                class="entry-icon-button"
+                :aria-label="t('duplicate')"
+                :title="t('duplicate')"
+                @click.stop="duplicateFluidLog(entry.id)"
+                v-html="lucideSvg('refreshCw')"
+              ></button
+              ><button
+                class="entry-icon-button danger"
+                :aria-label="t('delete')"
+                :title="t('delete')"
+                @click.stop="removeFluidLog(entry.id)"
+                v-html="lucideSvg('trash2')"
+              ></button>
+            </div>
+          </div>
+          <p v-if="!currentDayFluidLogs.length" class="empty-line">{{ t('noFluids') }}</p>
         </div>
       </article>
       <article v-if="healthDiaryEnabled" class="card meal-card home-health-card">
@@ -20372,7 +20410,10 @@ function setTab(tab: Tab) {
             ></span>
             <span v-if="selectedDayUnlocked && !currentDayFluidSkipped" class="plus-button">+</span>
           </button>
-          <div v-if="selectedDayUnlocked" class="fluid-card-actions">
+          <div
+            v-if="selectedDayUnlocked && (currentDayFluidSkipped || !currentDayStoredFluidLogs.length)"
+            class="fluid-card-actions"
+          >
             <button class="text-button" type="button" @click="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)">
               {{ currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday') }}
             </button>
