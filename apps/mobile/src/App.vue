@@ -432,7 +432,8 @@ const activityMinutes = ref<number | null>(null);
 const activityKcal = ref<number | null>(null);
 const activitySource = ref<ActivityLog['source']>('activity_catalog');
 const fluidAmountDl = ref<number | null>(2);
-const fluidDrinkKind = ref<FluidDrinkKind>('water');
+const fluidDrinkKind = ref<FluidDrinkKind>('fluid');
+const fluidKindTab = ref<'normal' | 'alcohol'>('normal');
 const fluidCustomKcal = ref<number | null>(200);
 const fluidNote = ref('');
 const weightInput = ref<number | null>(null);
@@ -483,6 +484,7 @@ const noteDescription = ref('');
 const noteKcal = ref<number | null>(null);
 const catalogSearchScope = ref<CatalogSearchScope>('title');
 const catalogMenuOpen = ref(false);
+const catalogFreshnessOpen = ref(false);
 const localEditorOpen = ref(false);
 const localEditorKind = ref<LocalEditorKind>('food');
 const localEditorId = ref<string | null>(null);
@@ -540,6 +542,7 @@ const updateAvailable = computed(
 );
 const analysisOpen = ref(false);
 const activityAnalysisOpen = ref(false);
+const fluidAnalysisOpen = ref(false);
 const activityAnalysisRange = ref<ActivityAnalysisRangeKey>('14');
 const deficitInfoOpen = ref(false);
 const micronutrientInfoOpen = ref(false);
@@ -773,6 +776,7 @@ const settingsIconMap: Record<string, IconName> = {
   macros: 'chartPie',
   micros: 'flaskConical',
   health: 'heartPulse',
+  fluid: 'glassWater',
   catalogProtect: 'shield',
   catalogInactive: 'archiveRestore',
   language: 'languages',
@@ -952,6 +956,17 @@ const settingsModules = computed<SettingsModuleConfig[]>(() => [
           state.settings.health_diary_enabled = checked;
         },
         () => t('healthDiaryTrackingHint'),
+      ),
+      settingsToggle(
+        'fluid-diary',
+        'fluid',
+        'fluidDiaryTracking',
+        () => state.settings.fluid_tracking_enabled === true,
+        (checked) => {
+          state.settings.fluid_tracking_enabled = checked;
+          onFluidTrackingSettingChanged();
+        },
+        () => t('fluidDiaryTrackingHint'),
       ),
     ],
   },
@@ -1459,7 +1474,7 @@ function hasActiveMealSheetDraft(): boolean {
 
   if (addMode.value === 'fluid') {
     return Boolean(
-      Number(fluidAmountDl.value || 0) !== 2 || fluidDrinkKind.value !== 'water' || fluidNote.value.trim(),
+      Number(fluidAmountDl.value || 0) !== 2 || fluidDrinkKind.value !== 'fluid' || fluidNote.value.trim(),
     );
   }
 
@@ -1967,8 +1982,13 @@ const activeLogDateKey = computed(() => (activeTab.value === 'home' ? todayKey.v
 const currentDayIntakes = computed(() => state.intakes.filter((entry) => inSelectedDay(entry.consumed_at)));
 const currentDayActivities = computed(() => state.activityLogs.filter((entry) => inSelectedDay(entry.performed_at)));
 const fluidTrackingEnabled = computed(() => state.settings.fluid_tracking_enabled === true);
+function fluidTrackingSkippedForKey(key: string) {
+  return Array.isArray(state.settings.fluid_skipped_day_keys) && state.settings.fluid_skipped_day_keys.includes(key);
+}
+const currentDayFluidSkipped = computed(() => fluidTrackingSkippedForKey(activeLogDateKey.value));
+const fluidTrackingActiveForDay = computed(() => fluidTrackingEnabled.value && !currentDayFluidSkipped.value);
 const currentDayFluidLogs = computed(() =>
-  fluidTrackingEnabled.value ? state.fluidLogs.filter((entry) => inSelectedDay(entry.consumed_at)) : [],
+  fluidTrackingActiveForDay.value ? state.fluidLogs.filter((entry) => inSelectedDay(entry.consumed_at)) : [],
 );
 const currentDayWeight = computed(() => latestWeightForDay(state.weightLogs, activeLogDateKey.value));
 const currentDayWeightKg = computed(() => currentDayWeight.value?.weight_kg ?? state.profile.current_weight_kg);
@@ -2012,9 +2032,77 @@ const remainingWaterEquivalentDl = computed(() =>
   Math.max(0, Math.round((dailyFluidGoalDl.value - consumedWaterEquivalentDl.value) * 10) / 10),
 );
 const fluidProgress = computed(() => clamp(consumedWaterEquivalentDl.value / Math.max(1, dailyFluidGoalDl.value)));
-const fluidIndicatorText = computed(
-  () => `${formatFluidAmount(consumedWaterEquivalentDl.value)} / ${formatFluidAmount(dailyFluidGoalDl.value)}`,
+const fluidIndicatorText = computed(() =>
+  currentDayFluidSkipped.value
+    ? t('fluidSkippedShort')
+    : `${formatFluidAmount(consumedWaterEquivalentDl.value)} / ${formatFluidAmount(dailyFluidGoalDl.value)}`,
 );
+const fluidSummaryText = computed(() => {
+  if (currentDayFluidSkipped.value) return t('fluidSkippedToday');
+  const parts = [
+    `${formatFluidAmount(consumedFluidDl.value)} ${t('total')}`,
+    `${formatFluidAmount(consumedWaterEquivalentDl.value)} ${t('fluidCleanWaterEquivalent')}`,
+  ];
+  if (fluidKcal.value > 0) parts.push(`${fluidKcal.value} kcal`);
+  return parts.join(' · ');
+});
+
+const fluidNormalPresets = computed(() => fluidKindPresets.filter((preset) => preset.isAlcohol !== true));
+const fluidAlcoholPresets = computed(() => fluidKindPresets.filter((preset) => preset.isAlcohol === true));
+const visibleFluidKindPresets = computed(() =>
+  fluidKindTab.value === 'alcohol' ? fluidAlcoholPresets.value : fluidNormalPresets.value,
+);
+const fluidAnalysisRows = computed(() => {
+  const total = Math.max(1, consumedFluidDl.value);
+  const groups = new Map<FluidDrinkKind, { kind: FluidDrinkKind; amountDl: number; kcal: number; waterDl: number }>();
+  for (const entry of currentDayFluidLogs.value) {
+    const kind = entry.drink_kind || (entry.is_alcohol ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'fluid');
+    const row = groups.get(kind) || { kind, amountDl: 0, kcal: 0, waterDl: 0 };
+    row.amountDl += Number(entry.amount_dl || 0);
+    row.kcal += fluidLogKcal(entry);
+    row.waterDl += fluidLogWaterEquivalentDl(entry);
+    groups.set(kind, row);
+  }
+  return [...groups.values()]
+    .map((row) => ({
+      ...row,
+      amountDl: Math.round(row.amountDl * 10) / 10,
+      waterDl: Math.round(row.waterDl * 10) / 10,
+      kcal: Math.round(row.kcal),
+      percent: Math.round((row.amountDl / total) * 100),
+      preset: fluidPreset(row.kind),
+    }))
+    .sort((a, b) => b.amountDl - a.amountDl);
+});
+const fluidCoffeeDl = computed(
+  () =>
+    Math.round(
+      currentDayFluidLogs.value
+        .filter((entry) => entry.drink_kind === 'coffee')
+        .reduce((sum, entry) => sum + Number(entry.amount_dl || 0), 0) * 10,
+    ) / 10,
+);
+const fluidAlcoholDl = computed(
+  () =>
+    Math.round(
+      currentDayFluidLogs.value
+        .filter((entry) => fluidPreset(entry.drink_kind).isAlcohol)
+        .reduce((sum, entry) => sum + Number(entry.amount_dl || 0), 0) * 10,
+    ) / 10,
+);
+const fluidAnalysisAlerts = computed(() => {
+  if (currentDayFluidSkipped.value) return [{ tone: 'neutral', text: t('fluidAnalysisSkipped') }];
+  const alerts: Array<{ tone: string; text: string }> = [];
+  if (consumedWaterEquivalentDl.value < dailyFluidGoalDl.value * 0.8)
+    alerts.push({ tone: 'warn', text: t('fluidAnalysisTooLittle') });
+  if (consumedFluidDl.value > Math.max(dailyFluidGoalDl.value * 1.6, 50))
+    alerts.push({ tone: 'warn', text: t('fluidAnalysisTooMuch') });
+  if (fluidCoffeeDl.value > 4) alerts.push({ tone: 'warn', text: t('fluidAnalysisTooMuchCoffee') });
+  if (fluidAlcoholDl.value > 3) alerts.push({ tone: 'danger', text: t('fluidAnalysisTooMuchAlcohol') });
+  if (!alerts.length && currentDayFluidLogs.value.length) alerts.push({ tone: 'ok', text: t('fluidAnalysisOk') });
+  if (!alerts.length) alerts.push({ tone: 'neutral', text: t('noFluids') });
+  return alerts;
+});
 const calorieDeficitEnabled = computed(() => state.settings.calorie_deficit_enabled === true);
 const targetDeficitKcal = computed(() =>
   calorieDeficitEnabled.value ? Math.max(0, Math.round(Number(state.settings.target_deficit_kcal || 0))) : 0,
@@ -10607,6 +10695,8 @@ const fluidTrackingTranslations: Record<string, Partial<Record<string, string>>>
     fluidSheetHint:
       'Enter the amount in dl. Soft drinks and alcohol add estimated kcal; water counts fully toward the daily target.',
     fluidAmountDl: 'Amount (dl)',
+    fluidGeneric: 'Fluid',
+    fluidGenericHint: 'Unspecified drink; counts only partly as clean water.',
     fluidWater: 'Water',
     fluidAlcohol: 'Alcohol',
     fluidAlcoholHint: 'Adds estimated alcohol calories to the day.',
@@ -10656,6 +10746,27 @@ const fluidTrackingTranslations: Record<string, Partial<Record<string, string>>>
     fluidSportsDrink: 'Sports drink',
     fluidSportsDrinkHint: 'Adds kcal and partial water credit.',
     fluidKcalPreview: 'Estimated drink kcal',
+    fluidKindGroup: 'Drink type group',
+    fluidNormalTab: 'Normal',
+    fluidAlcoholTab: 'Alcohol',
+    fluidAnalysis: 'Fluid analysis',
+    fluidAnalysisHint: 'Review drink distribution, clean-water equivalent and warning signals for the selected day.',
+    fluidDistribution: 'Drink distribution',
+    fluidAnalysisTooLittle: 'Too little clean-water equivalent for the daily target.',
+    fluidAnalysisTooMuch: 'The total fluid amount is unusually high for this day.',
+    fluidAnalysisTooMuchCoffee: 'Coffee intake is high today.',
+    fluidAnalysisTooMuchAlcohol: 'Alcohol intake is high today.',
+    fluidAnalysisOk: 'Fluid intake looks balanced for this day.',
+    fluidAnalysisSkipped: 'Fluid tracking is inactive for this day.',
+    fluidSkipToday: 'Do not track fluids today',
+    fluidResumeToday: 'Track fluids today',
+    fluidSkippedToday: 'Fluid tracking skipped today',
+    fluidSkippedShort: 'Skipped',
+    fluidSkippedTodayHint: 'This day is excluded from fluid tracking and drink reminders.',
+    fluidDiaryTracking: 'Record fluid intake data',
+    fluidDiaryTrackingHint: 'Enables the fluid diary, drink goals and drink reminders.',
+    catalogFreshness: 'Catalog sync details',
+    catalogFreshnessHint: 'Last update timestamps for synchronized catalog groups.',
     purposeFluidTracking: 'Fluid intake',
     purposeFluidTrackingHint: 'Track water, soft drinks and alcohol.',
   },
@@ -10667,6 +10778,8 @@ const fluidTrackingTranslations: Record<string, Partial<Record<string, string>>>
     fluidSheetHint:
       'Add meg a mennyiséget dl-ben. Üdítő és alkohol esetén becsült kcal is bekerül; a víz teljesen számít a napi célba.',
     fluidAmountDl: 'Mennyiség (dl)',
+    fluidGeneric: 'Folyadék',
+    fluidGenericHint: 'Nem meghatározott ital; csak részben számít tiszta víznek.',
     fluidWater: 'Víz',
     fluidAlcohol: 'Alkohol',
     fluidAlcoholHint: 'Becsült alkohol kalóriát ad a naphoz.',
@@ -10716,6 +10829,27 @@ const fluidTrackingTranslations: Record<string, Partial<Record<string, string>>>
     fluidSportsDrink: 'Sportital',
     fluidSportsDrinkHint: 'Kcal-t ad és részben számít víznek.',
     fluidKcalPreview: 'Becsült ital kcal',
+    fluidKindGroup: 'Italcsoport',
+    fluidNormalTab: 'Normál',
+    fluidAlcoholTab: 'Alkoholtartalmú',
+    fluidAnalysis: 'Folyadék kiértékelés',
+    fluidAnalysisHint: 'Italok megoszlása, tiszta víz egyenérték és figyelmeztető jelek a kiválasztott napra.',
+    fluidDistribution: 'Italok megoszlása',
+    fluidAnalysisTooLittle: 'Kevés a tiszta víz egyenérték a napi célhoz képest.',
+    fluidAnalysisTooMuch: 'Szokatlanul magas a napi összes folyadékmennyiség.',
+    fluidAnalysisTooMuchCoffee: 'Magas a mai kávébevitel.',
+    fluidAnalysisTooMuchAlcohol: 'Magas a mai alkoholbevitel.',
+    fluidAnalysisOk: 'A mai folyadékbevitel kiegyensúlyozottnak tűnik.',
+    fluidAnalysisSkipped: 'Erre a napra ki van kapcsolva a folyadékkövetés.',
+    fluidSkipToday: 'Ma nem rögzítem a folyadékot',
+    fluidResumeToday: 'Ma mégis követem a folyadékot',
+    fluidSkippedToday: 'A mai folyadékkövetés kihagyva',
+    fluidSkippedShort: 'Kihagyva',
+    fluidSkippedTodayHint: 'Ez a nap nincs beleszámítva a folyadékkövetésbe és az ivás emlékeztetőkbe.',
+    fluidDiaryTracking: 'Folyadékbeviteli adatok vezetése',
+    fluidDiaryTrackingHint: 'Bekapcsolja a folyadéknaplót, célokat és ivás emlékeztetőket.',
+    catalogFreshness: 'Katalógus szinkron adatok',
+    catalogFreshnessHint: 'A szinkronizált katalóguscsoportok utolsó frissítési időpontjai.',
     purposeFluidTracking: 'Folyadékbevitel',
     purposeFluidTrackingHint: 'Víz, üdítő és alkohol követése.',
   },
@@ -14093,7 +14227,7 @@ function aiActivityMarkdown(entry: ActivityLog) {
 
 function aiFluidMarkdown(entry: FluidLog) {
   const alcoholKind = entry.is_alcohol ? entry.alcohol_kind || 'other' : 'none';
-  const drinkKind = entry.drink_kind || (entry.is_alcohol ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'water');
+  const drinkKind = entry.drink_kind || (entry.is_alcohol ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'fluid');
   return `- time=${new Date(entry.consumed_at).toISOString()} amount_dl=${aiMetricNumber(Number(entry.amount_dl || 0))} clean_water_dl=${aiMetricNumber(fluidLogWaterEquivalentDl(entry))} drink_kind=${drinkKind} alcohol=${entry.is_alcohol ? 'true' : 'false'} alcohol_kind=${alcoholKind} kcal=${fluidLogKcal(entry)}${entry.note ? ` note="${markdownInline(entry.note)}"` : ''}`;
 }
 
@@ -14947,7 +15081,7 @@ function dayEffectiveKcalGoal(key: string) {
 }
 
 function dayFluidLogs(key: string) {
-  if (!fluidTrackingEnabled.value) return [];
+  if (!fluidTrackingEnabled.value || fluidTrackingSkippedForKey(key)) return [];
   return state.fluidLogs.filter((entry) => entry.consumed_at >= dayStartMs(key) && entry.consumed_at < dayEndMs(key));
 }
 
@@ -16312,6 +16446,7 @@ function fluidReminderBody() {
 
 function fluidReminderDue(now = new Date()): boolean {
   if (!state.settings.fluid_tracking_enabled || !state.settings.fluid_reminders_enabled) return false;
+  if (fluidTrackingSkippedForKey(todayKey.value)) return false;
   if (remainingWaterEquivalentDl.value <= 0) return false;
   const interval = Math.max(30, Math.round(Number(state.settings.fluid_reminder_interval_min || 0)));
   const minutes = now.getHours() * 60 + now.getMinutes();
@@ -16785,7 +16920,8 @@ function closeSheet() {
 
 function resetFluidForm() {
   fluidAmountDl.value = 2;
-  fluidDrinkKind.value = 'water';
+  fluidDrinkKind.value = 'fluid';
+  fluidKindTab.value = 'normal';
   fluidCustomKcal.value = 200;
   fluidNote.value = '';
 }
@@ -16803,7 +16939,7 @@ const fluidWaterPreview = computed(() =>
 );
 
 function fluidLogTitle(entry: FluidLog) {
-  const kind = entry.drink_kind || (entry.is_alcohol ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'water');
+  const kind = entry.drink_kind || (entry.is_alcohol ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'fluid');
   return t(fluidPreset(kind).labelKey);
 }
 
@@ -16819,8 +16955,45 @@ function formatFluidAmount(amountDl: number) {
   return formatFluidAmountValue(amountDl);
 }
 
+function fluidKindIcon(kind: FluidDrinkKind) {
+  if (kind === 'coffee') return 'coffee';
+  if (kind === 'tea') return 'soup';
+  if (kind === 'soft_drink' || kind === 'sports_drink') return 'sparkles';
+  if (kind === 'juice') return 'apple';
+  if (kind === 'milk') return 'snowflake';
+  if (kind === 'beer' || kind === 'wine' || kind === 'spirits' || kind === 'cocktail' || kind === 'other_alcohol')
+    return 'flame';
+  if (kind === 'sparkling_water') return 'wavesHorizontal';
+  return 'glassWater';
+}
+
+function fluidKindTone(kind: FluidDrinkKind) {
+  if (kind === 'water' || kind === 'sparkling_water') return 'water';
+  if (kind === 'tea' || kind === 'coffee') return 'caffeine';
+  if (kind === 'soft_drink' || kind === 'juice' || kind === 'sports_drink') return 'sweet';
+  if (kind === 'milk') return 'milk';
+  if (fluidPreset(kind).isAlcohol) return 'alcohol';
+  return 'neutral';
+}
+
+function openFluidAnalysis() {
+  if (!fluidTrackingEnabled.value) return showToast(t('fluidTrackingDisabled'));
+  fluidAnalysisOpen.value = true;
+}
+
+function setFluidSkippedForCurrentDay(skipped: boolean) {
+  const key = activeLogDateKey.value;
+  const days = new Set(state.settings.fluid_skipped_day_keys || []);
+  if (skipped) days.add(key);
+  else days.delete(key);
+  state.settings.fluid_skipped_day_keys = [...days].sort();
+  if (skipped) showToast(t('fluidSkippedToday'));
+  queueReminderScheduleRefresh();
+}
+
 function openFluidAdd() {
   if (!fluidTrackingEnabled.value) return showToast(t('fluidTrackingDisabled'));
+  if (currentDayFluidSkipped.value) return showToast(t('fluidSkippedToday'));
   if (!confirmFutureDateAccess()) return;
   addMode.value = 'fluid';
   resetFluidForm();
@@ -16828,6 +17001,13 @@ function openFluidAdd() {
 
 function setFluidAmount(amountDl: number) {
   fluidAmountDl.value = amountDl;
+}
+
+function selectFluidKindTab(tab: 'normal' | 'alcohol') {
+  fluidKindTab.value = tab;
+  const presets = tab === 'alcohol' ? fluidAlcoholPresets.value : fluidNormalPresets.value;
+  if (!presets.some((preset) => preset.kind === fluidDrinkKind.value))
+    fluidDrinkKind.value = presets[0]?.kind || 'fluid';
 }
 
 function addFluidLog() {
@@ -19652,20 +19832,6 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
-      <article v-if="false" class="card meal-card fluid-summary-card">
-        <button class="meal-header" type="button" @click="openFluidAdd">
-          <span class="material-icon" v-html="lucideSvg('glassWater')"></span>
-          <span
-            ><b>{{ t('fluids') }}</b
-            ><small>{{ t('fluidHomeHint') }}</small></span
-          >
-          <span class="section-summary-text"
-            >{{ formatFluidAmount(consumedFluidDl) }}<template v-if="fluidKcal"> · {{ fluidKcal }} kcal</template></span
-          >
-          <span class="plus-button">+</span>
-        </button>
-      </article>
-
       <article
         v-for="section in sections"
         :key="section.key"
@@ -19788,6 +19954,35 @@ function setTab(tab: Tab) {
             </div>
           </div>
           <p v-if="!entriesForSection(section).length" class="empty-line">{{ t('noEntries') }}</p>
+        </div>
+      </article>
+
+      <article v-if="fluidTrackingEnabled" class="card meal-card fluid-summary-card home-fluid-summary-card">
+        <button
+          class="meal-header"
+          type="button"
+          @click="currentDayFluidSkipped ? setFluidSkippedForCurrentDay(false) : openFluidAdd()"
+        >
+          <span class="material-icon" v-html="lucideSvg('glassWater')"></span>
+          <span
+            ><b>{{ t('fluids') }}</b
+            ><small>{{ currentDayFluidSkipped ? t('fluidSkippedToday') : t('fluidHomeHint') }}</small></span
+          >
+          <span class="section-summary-text">{{ fluidSummaryText }}</span>
+          <span
+            class="meal-micro-button"
+            role="button"
+            :aria-label="t('fluidAnalysis')"
+            :title="t('fluidAnalysis')"
+            @click.stop.prevent="openFluidAnalysis"
+            v-html="lucideSvg('chartPie')"
+          ></span>
+          <span v-if="!currentDayFluidSkipped" class="plus-button">+</span>
+        </button>
+        <div class="fluid-card-actions">
+          <button class="text-button" type="button" @click="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)">
+            {{ currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday') }}
+          </button>
         </div>
       </article>
       <article v-if="healthDiaryEnabled" class="card meal-card home-health-card">
@@ -20160,22 +20355,35 @@ function setTab(tab: Tab) {
         <article v-if="fluidTrackingEnabled" class="card meal-card fluid-summary-card">
           <button
             class="meal-header"
-            :class="{ locked: !selectedDayUnlocked }"
+            :class="{ locked: !selectedDayUnlocked || currentDayFluidSkipped }"
             type="button"
-            @click="selectedDayUnlocked && openFluidAdd()"
+            @click="selectedDayUnlocked && !currentDayFluidSkipped && openFluidAdd()"
           >
             <span class="material-icon" v-html="lucideSvg('glassWater')"></span>
             <span
               ><b>{{ t('fluids') }}</b
-              ><small>{{ currentDayFluidLogs.length }} {{ t('entries') }}</small></span
+              ><small>{{
+                currentDayFluidSkipped ? t('fluidSkippedToday') : `${currentDayFluidLogs.length} ${t('entries')}`
+              }}</small></span
             >
-            <span class="section-summary-text"
-              >{{ formatFluidAmount(consumedFluidDl)
-              }}<template v-if="fluidKcal"> · {{ fluidKcal }} kcal</template></span
-            >
-            <span v-if="selectedDayUnlocked" class="plus-button">+</span>
+            <span class="section-summary-text">{{ fluidSummaryText }}</span>
+            <span
+              class="meal-micro-button"
+              role="button"
+              :aria-label="t('fluidAnalysis')"
+              :title="t('fluidAnalysis')"
+              @click.stop.prevent="openFluidAnalysis"
+              v-html="lucideSvg('chartPie')"
+            ></span>
+            <span v-if="selectedDayUnlocked && !currentDayFluidSkipped" class="plus-button">+</span>
           </button>
+          <div v-if="selectedDayUnlocked" class="fluid-card-actions">
+            <button class="text-button" type="button" @click="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)">
+              {{ currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday') }}
+            </button>
+          </div>
           <div class="entry-list">
+            <p v-if="currentDayFluidSkipped" class="empty-line">{{ t('fluidSkippedTodayHint') }}</p>
             <div
               v-for="entry in currentDayFluidLogs"
               :id="`fluid-entry-${entry.id}`"
@@ -20207,7 +20415,7 @@ function setTab(tab: Tab) {
                 ></button>
               </div>
             </div>
-            <p v-if="!currentDayFluidLogs.length" class="empty-line">{{ t('noFluids') }}</p>
+            <p v-if="!currentDayFluidSkipped && !currentDayFluidLogs.length" class="empty-line">{{ t('noFluids') }}</p>
           </div>
         </article>
 
@@ -20475,6 +20683,23 @@ function setTab(tab: Tab) {
         <div class="catalog-search-header">
           <h2>{{ t('catalog') }}</h2>
           <div class="catalog-header-actions">
+            <select
+              v-model="catalogSearchScope"
+              class="search-scope-select catalog-header-scope"
+              :aria-label="t('searchIn')"
+            >
+              <option v-for="scope in catalogSearchScopeOptions" :key="`catalog-scope-${scope}`" :value="scope">
+                {{ t(`searchScope${scope.charAt(0).toUpperCase()}${scope.slice(1)}`) }}
+              </option>
+            </select>
+            <button
+              class="icon-button"
+              type="button"
+              :aria-label="t('catalogFreshness')"
+              :title="t('catalogFreshness')"
+              @click="catalogFreshnessOpen = true"
+              v-html="lucideSvg('info')"
+            ></button>
             <button
               class="scan-button"
               type="button"
@@ -20511,20 +20736,6 @@ function setTab(tab: Tab) {
           :placeholder="t('syncedCatalogSearch')"
           @keydown.enter.prevent="hideKeyboard"
         />
-        <label class="search-scope-control">
-          <span>{{ t('searchIn') }}</span>
-          <select v-model="catalogSearchScope" class="search-scope-select">
-            <option v-for="scope in catalogSearchScopeOptions" :key="`catalog-scope-${scope}`" :value="scope">
-              {{ t(`searchScope${scope.charAt(0).toUpperCase()}${scope.slice(1)}`) }}
-            </option>
-          </select>
-        </label>
-        <div class="catalog-freshness-row">
-          <span>{{ t('ingredients') }}: {{ formatFreshness(latestIngredientUpdatedAt) }}</span>
-          <span>{{ t('foods') }}: {{ formatFreshness(latestFoodUpdatedAt) }}</span>
-          <span>{{ t('recipes') }}: {{ formatFreshness(latestRecipeUpdatedAt) }}</span>
-          <span>{{ t('activities') }}: {{ formatFreshness(latestActivityUpdatedAt) }}</span>
-        </div>
       </article>
       <template v-if="catalogSearchActive">
         <div v-if="catalogExactItems.length" class="search-result-heading">{{ t('exactMatches') }}</div>
@@ -21073,16 +21284,36 @@ function setTab(tab: Tab) {
                 @pointerdown="clearNumberInputOnDoubleTap"
               />
             </label>
+            <div class="trend-mode-toggle fluid-kind-tabs" role="tablist" :aria-label="t('fluidKindGroup')">
+              <button
+                type="button"
+                :class="{ active: fluidKindTab === 'normal' }"
+                @click="selectFluidKindTab('normal')"
+              >
+                {{ t('fluidNormalTab') }}
+              </button>
+              <button
+                type="button"
+                :class="{ active: fluidKindTab === 'alcohol' }"
+                @click="selectFluidKindTab('alcohol')"
+              >
+                {{ t('fluidAlcoholTab') }}
+              </button>
+            </div>
             <div class="fluid-kind-grid">
               <button
-                v-for="preset in fluidKindPresets"
+                v-for="preset in visibleFluidKindPresets"
                 :key="preset.kind"
                 class="dialog-option fluid-kind-button"
                 type="button"
-                :class="{ active: fluidDrinkKind === preset.kind, alcohol: preset.isAlcohol }"
+                :class="[
+                  `tone-${fluidKindTone(preset.kind)}`,
+                  { active: fluidDrinkKind === preset.kind, alcohol: preset.isAlcohol },
+                ]"
                 @click="fluidDrinkKind = preset.kind"
               >
-                <span>{{ t(preset.labelKey) }}</span>
+                <span class="fluid-kind-icon" v-html="lucideSvg(fluidKindIcon(preset.kind))"></span>
+                <b>{{ t(preset.labelKey) }}</b>
                 <small>{{ t(preset.hintKey) }}</small>
               </button>
             </div>
@@ -22051,6 +22282,31 @@ function setTab(tab: Tab) {
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="catalogFreshnessOpen" class="dialog-backdrop app-overlay" @click.self="catalogFreshnessOpen = false">
+        <article class="settings-dialog catalog-freshness-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ t('catalogFreshness') }}</h2>
+            <button
+              class="icon-button dialog-close-icon"
+              type="button"
+              :aria-label="t('close')"
+              :title="t('close')"
+              @click="catalogFreshnessOpen = false"
+              v-html="lucideSvg('x')"
+            ></button>
+          </div>
+          <p class="helper big">{{ t('catalogFreshnessHint') }}</p>
+          <div class="catalog-freshness-row catalog-freshness-dialog-row">
+            <span>{{ t('ingredients') }}: {{ formatFreshness(latestIngredientUpdatedAt) }}</span>
+            <span>{{ t('foods') }}: {{ formatFreshness(latestFoodUpdatedAt) }}</span>
+            <span>{{ t('recipes') }}: {{ formatFreshness(latestRecipeUpdatedAt) }}</span>
+            <span>{{ t('activities') }}: {{ formatFreshness(latestActivityUpdatedAt) }}</span>
+          </div>
+        </article>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <section v-if="analysisOpen" class="analysis-screen app-overlay">
         <header class="settings-header">
           <button class="back-button" @click="analysisOpen = false" v-html="lucideSvg('chevronLeft')"></button>
@@ -22194,6 +22450,70 @@ function setTab(tab: Tab) {
           </article>
         </div>
       </section>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="fluidAnalysisOpen" class="dialog-backdrop app-overlay" @click.self="fluidAnalysisOpen = false">
+        <article class="settings-dialog fluid-analysis-dialog">
+          <div class="dialog-title-row">
+            <h2>{{ t('fluidAnalysis') }}</h2>
+            <button
+              class="icon-button dialog-close-icon"
+              type="button"
+              :aria-label="t('close')"
+              :title="t('close')"
+              @click="fluidAnalysisOpen = false"
+              v-html="lucideSvg('x')"
+            ></button>
+          </div>
+          <p class="helper big">{{ t('fluidAnalysisHint') }}</p>
+          <div class="fluid-analysis-summary">
+            <div>
+              <span>{{ t('fluids') }}</span>
+              <b>{{ formatFluidAmount(consumedFluidDl) }}</b>
+            </div>
+            <div>
+              <span>{{ t('fluidCleanWaterEquivalent') }}</span>
+              <b>{{ formatFluidAmount(consumedWaterEquivalentDl) }}</b>
+            </div>
+            <div>
+              <span>{{ t('fluidDailyGoal') }}</span>
+              <b>{{ formatFluidAmount(dailyFluidGoalDl) }}</b>
+            </div>
+            <div>
+              <span>kcal</span>
+              <b>{{ fluidKcal }} kcal</b>
+            </div>
+          </div>
+          <div class="fluid-alert-list">
+            <p v-for="alert in fluidAnalysisAlerts" :key="alert.text" :class="[`fluid-alert-${alert.tone}`]">
+              {{ alert.text }}
+            </p>
+          </div>
+          <section class="fluid-distribution-card">
+            <h3>{{ t('fluidDistribution') }}</h3>
+            <div v-if="fluidAnalysisRows.length" class="fluid-distribution-list">
+              <div v-for="row in fluidAnalysisRows" :key="`fluid-row-${row.kind}`" class="fluid-distribution-row">
+                <span
+                  class="fluid-kind-dot"
+                  :class="`tone-${fluidKindTone(row.kind)}`"
+                  v-html="lucideSvg(fluidKindIcon(row.kind))"
+                ></span>
+                <div>
+                  <b>{{ t(row.preset.labelKey) }}</b>
+                  <small
+                    >{{ formatFluidAmount(row.amountDl) }} · {{ row.percent }}% · {{ formatFluidAmount(row.waterDl) }}
+                    {{ t('fluidCleanWaterEquivalent')
+                    }}<template v-if="row.kcal"> · {{ row.kcal }} kcal</template></small
+                  >
+                  <span class="fluid-bar"><i :style="{ width: `${Math.max(4, row.percent)}%` }"></i></span>
+                </div>
+              </div>
+            </div>
+            <p v-else class="empty-line">{{ currentDayFluidSkipped ? t('fluidSkippedTodayHint') : t('noFluids') }}</p>
+          </section>
+        </article>
+      </div>
     </Teleport>
 
     <Teleport to="body">
@@ -22873,17 +23193,8 @@ function setTab(tab: Tab) {
                   </div>
                 </section>
 
-                <section class="tracking-settings-group">
-                  <label class="tracking-toggle-card"
-                    ><span
-                      ><b>{{ t('fluidTracking') }}</b
-                      ><small>{{ t('fluidTrackingHint') }}</small></span
-                    ><input
-                      v-model="state.settings.fluid_tracking_enabled"
-                      type="checkbox"
-                      @change="onFluidTrackingSettingChanged"
-                  /></label>
-                  <label v-if="state.settings.fluid_tracking_enabled" class="tracking-input-card"
+                <section v-if="state.settings.fluid_tracking_enabled" class="tracking-settings-group">
+                  <label class="tracking-input-card"
                     ><span>{{ t('fluidDailyGoal') }}</span
                     ><input
                       v-model.number="state.settings.daily_fluid_goal_dl"
@@ -22894,7 +23205,7 @@ function setTab(tab: Tab) {
                       step="1"
                       inputmode="decimal"
                   /></label>
-                  <label v-if="state.settings.fluid_tracking_enabled" class="tracking-input-card"
+                  <label class="tracking-input-card"
                     ><span>{{ t('fluidActivityBonus') }}</span
                     ><input
                       v-model.number="state.settings.fluid_activity_bonus_dl_per_100_kcal"
@@ -22905,7 +23216,7 @@ function setTab(tab: Tab) {
                       step="0.5"
                       inputmode="decimal"
                   /></label>
-                  <label v-if="state.settings.fluid_tracking_enabled" class="tracking-toggle-card"
+                  <label class="tracking-toggle-card"
                     ><span
                       ><b>{{ t('fluidReminder') }}</b
                       ><small>{{ t('fluidReminderHint') }}</small></span
@@ -22914,10 +23225,7 @@ function setTab(tab: Tab) {
                       type="checkbox"
                       @change="ensureNotificationPermissionForReminders"
                   /></label>
-                  <label
-                    v-if="state.settings.fluid_tracking_enabled"
-                    class="tracking-input-card"
-                    :class="{ disabled: !state.settings.fluid_reminders_enabled }"
+                  <label class="tracking-input-card" :class="{ disabled: !state.settings.fluid_reminders_enabled }"
                     ><span>{{ t('fluidReminderInterval') }}</span
                     ><select
                       v-model.number="state.settings.fluid_reminder_interval_min"
@@ -22930,7 +23238,7 @@ function setTab(tab: Tab) {
                       <option :value="180">180 min</option>
                     </select></label
                   >
-                  <p v-if="state.settings.fluid_tracking_enabled" class="helper tracking-fluid-summary">
+                  <p class="helper tracking-fluid-summary">
                     {{ t('fluidCleanWaterTargetHint') }} {{ fluidIndicatorText }} · {{ t('fluidRemainingCleanWater') }}
                     {{ formatFluidAmount(remainingWaterEquivalentDl) }}
                   </p>

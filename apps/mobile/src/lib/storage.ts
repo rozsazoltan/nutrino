@@ -182,6 +182,7 @@ export function defaultSettings(): AppSettings {
     fluid_activity_bonus_dl_per_100_kcal: 2,
     fluid_reminders_enabled: false,
     fluid_reminder_interval_min: 120,
+    fluid_skipped_day_keys: [],
     exercise_kcal_eatback_percent: 50,
     kcal_adjustment: 0,
     macro_carbs_percent: 60,
@@ -236,13 +237,13 @@ function normalizeFluidLog(entry: Partial<FluidLog> | null | undefined): FluidLo
     consumed_at: Number.isFinite(consumedAt) ? consumedAt : Date.now(),
     amount_dl: Math.max(0, Math.round(amountDl * 10) / 10),
     drink_kind:
-      entry.drink_kind || (entry.is_alcohol === true ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'water'),
+      entry.drink_kind || (entry.is_alcohol === true ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'fluid'),
     water_equivalent_dl: Number.isFinite(Number(entry.water_equivalent_dl))
       ? Math.max(0, Math.round(Number(entry.water_equivalent_dl) * 10) / 10)
       : waterEquivalentDl({
           amountDl,
           kind:
-            entry.drink_kind || (entry.is_alcohol === true ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'water'),
+            entry.drink_kind || (entry.is_alcohol === true ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'fluid'),
         }),
     is_alcohol: entry.is_alcohol === true,
     alcohol_kind: entry.alcohol_kind || null,
@@ -334,6 +335,11 @@ export function loadState(): AppState {
       calorie_limit_warning_enabled: storedSettings.calorie_limit_warning_enabled === true,
       fluid_tracking_enabled: storedSettings.fluid_tracking_enabled === true,
       fluid_reminders_enabled: storedSettings.fluid_reminders_enabled === true,
+      fluid_skipped_day_keys: Array.isArray(storedSettings.fluid_skipped_day_keys)
+        ? storedSettings.fluid_skipped_day_keys.filter(
+            (key): key is string => typeof key === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(key),
+          )
+        : [],
       health_diary_enabled: storedSettings.health_diary_enabled === true,
       protect_external_catalog_items: storedSettings.protect_external_catalog_items !== false,
       include_inactive_catalog_items: storedSettings.include_inactive_catalog_items === true,

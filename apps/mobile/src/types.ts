@@ -4,15 +4,54 @@ export type OptionalNutrientMap = Record<string, number | null | undefined>;
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 export type Gender = 'female' | 'male' | 'non_binary';
 export type ActivityLevel = 'sedentary' | 'low_active' | 'active' | 'very_active';
-export type AppLanguage = 'system' | 'en' | 'hu' | 'de' | 'fr' | 'ru' | 'uk' | 'zh' | 'sk' | 'ro' | 'cs' | 'sl' | 'hr' | 'pl' | 'es' | 'pt';
-export type FoodPreparationMethod = 'none' | 'boiled' | 'air_fryer' | 'pan_light_oil' | 'pan_oil' | 'deep_fried' | 'custom_oil';
+export type AppLanguage =
+  | 'system'
+  | 'en'
+  | 'hu'
+  | 'de'
+  | 'fr'
+  | 'ru'
+  | 'uk'
+  | 'zh'
+  | 'sk'
+  | 'ro'
+  | 'cs'
+  | 'sl'
+  | 'hr'
+  | 'pl'
+  | 'es'
+  | 'pt';
+export type FoodPreparationMethod =
+  | 'none'
+  | 'boiled'
+  | 'air_fryer'
+  | 'pan_light_oil'
+  | 'pan_oil'
+  | 'deep_fried'
+  | 'custom_oil';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type AppChannel = 'dev' | 'stable';
 export type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 export type FoodCatalogKind = 'food' | 'ingredient';
 export type CatalogSourceKind = 'desktop' | 'github' | 'custom' | 'qr';
-export type ProfilePurpose = 'weight_loss' | 'weight_gain' | 'healthy_eating' | 'meal_logging' | 'fluid_tracking' | 'health_issue_logging';
-export type HealthCategoryType = 'pain' | 'digestive' | 'stool' | 'skin' | 'respiratory' | 'sleep' | 'mood' | 'injury' | 'energy' | 'other';
+export type ProfilePurpose =
+  | 'weight_loss'
+  | 'weight_gain'
+  | 'healthy_eating'
+  | 'meal_logging'
+  | 'fluid_tracking'
+  | 'health_issue_logging';
+export type HealthCategoryType =
+  | 'pain'
+  | 'digestive'
+  | 'stool'
+  | 'skin'
+  | 'respiratory'
+  | 'sleep'
+  | 'mood'
+  | 'injury'
+  | 'energy'
+  | 'other';
 export type HealthAttachmentType = 'photo' | 'video';
 
 export interface CatalogItemMetadata {
@@ -78,7 +117,6 @@ export interface PairingConfig {
   acceptedNewerServerVersion?: string;
   declinedNewerServerVersion?: string;
 }
-
 
 export interface UserProfile {
   id: string;
@@ -227,9 +265,22 @@ export interface ActivityLog {
   updated_at: number;
 }
 
-
 export type FluidAlcoholKind = 'beer' | 'wine' | 'spirits' | 'cocktail' | 'other';
-export type FluidDrinkKind = 'water' | 'sparkling_water' | 'tea' | 'coffee' | 'soft_drink' | 'juice' | 'milk' | 'sports_drink' | 'beer' | 'wine' | 'spirits' | 'cocktail' | 'other_alcohol';
+export type FluidDrinkKind =
+  | 'fluid'
+  | 'water'
+  | 'sparkling_water'
+  | 'tea'
+  | 'coffee'
+  | 'soft_drink'
+  | 'juice'
+  | 'milk'
+  | 'sports_drink'
+  | 'beer'
+  | 'wine'
+  | 'spirits'
+  | 'cocktail'
+  | 'other_alcohol';
 
 export interface FluidLog {
   id: string;
@@ -256,7 +307,6 @@ export interface WeightLog {
   created_at: number;
   updated_at: number;
 }
-
 
 export type MobileHandoffKind = 'backup_export' | 'ai_export' | 'backup_import' | string;
 export type MobileHandoffStatus = 'pending' | 'completed' | 'rejected' | 'used' | 'kept' | 'deleted' | 'error' | string;
@@ -413,6 +463,7 @@ export interface AppSettings {
   fluid_activity_bonus_dl_per_100_kcal: number;
   fluid_reminders_enabled: boolean;
   fluid_reminder_interval_min: number;
+  fluid_skipped_day_keys: string[];
   exercise_kcal_eatback_percent: number;
   kcal_adjustment: number;
   macro_carbs_percent: number;

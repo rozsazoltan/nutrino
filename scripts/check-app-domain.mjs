@@ -56,6 +56,11 @@ expectContains(
 );
 expectMatches(
   'apps/mobile/src/lib/fluid.ts',
+  /kind:\s*'fluid',[\s\S]*?waterRatio:\s*0\.7/,
+  'Generic fluid preset should not count as pure water.',
+);
+expectMatches(
+  'apps/mobile/src/lib/fluid.ts',
   /kind:\s*'beer',[\s\S]*?kcalPerDl:\s*45/,
   'Beer preset should be available.',
 );
@@ -75,6 +80,12 @@ expectMatches(
   'Cocktail preset should be available.',
 );
 expectContains('apps/mobile/src/App.vue', 'function addFluidLog()', 'Fluid logging action should exist.');
+expectContains(
+  'apps/mobile/src/App.vue',
+  'function setFluidSkippedForCurrentDay',
+  'Daily fluid tracking can be skipped per day.',
+);
+expectContains('apps/mobile/src/App.vue', 'fluidAnalysisOpen', 'Fluid analysis modal should exist.');
 expectContains('apps/mobile/src/App.vue', "from './lib/fluid'", 'Mobile app should use the shared fluid helpers.');
 expectContains(
   'apps/mobile/src/lib/fluid.test.ts',

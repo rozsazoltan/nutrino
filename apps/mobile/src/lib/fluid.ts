@@ -19,6 +19,7 @@ export type AlcoholKcalPreset = {
 export const FLUID_QUICK_AMOUNTS_DL = [1, 2, 3] as const;
 
 export const FLUID_KIND_PRESETS: FluidKcalPreset[] = [
+  { kind: 'fluid', kcalPerDl: 0, waterRatio: 0.7, labelKey: 'fluidGeneric', hintKey: 'fluidGenericHint' },
   { kind: 'water', kcalPerDl: 0, waterRatio: 1, labelKey: 'fluidWater', hintKey: 'fluidWaterHint' },
   {
     kind: 'sparkling_water',
@@ -109,7 +110,7 @@ export function alcoholKindFromDrinkKind(kind: FluidDrinkKind): FluidAlcoholKind
 export function drinkKindFromAlcoholKind(kind: FluidAlcoholKind | null | undefined): FluidDrinkKind {
   if (kind === 'beer' || kind === 'wine' || kind === 'spirits' || kind === 'cocktail') return kind;
   if (kind === 'other') return 'other_alcohol';
-  return 'water';
+  return 'fluid';
 }
 
 export function estimateFluidKcal(input: {
@@ -147,7 +148,7 @@ export function waterEquivalentDl(input: { amountDl: number; kind?: FluidDrinkKi
 export function fluidLogWaterEquivalentDl(
   entry: Pick<FluidLog, 'amount_dl' | 'drink_kind' | 'is_alcohol' | 'alcohol_kind'>,
 ): number {
-  const kind = entry.drink_kind || (entry.is_alcohol ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'water');
+  const kind = entry.drink_kind || (entry.is_alcohol ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'fluid');
   return waterEquivalentDl({ amountDl: entry.amount_dl, kind });
 }
 
