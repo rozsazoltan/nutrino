@@ -26,7 +26,7 @@ Install hooks once per clone:
 hk install
 ```
 
-The repository uses `hk` directly for Git hooks. `pre-commit` formats JavaScript and Rust files, while `pre-push` runs the stricter quality gate. Re-run `hk install` after changing `hk.pkl`. If an older local hook path is still configured, clear it once with `git config --local --unset-all core.hooksPath`.
+The repository uses `hk` directly for Git hooks. `pre-commit` formats JavaScript and Rust files, then runs focused JavaScript, app-domain, i18n, Android bridge, and release workflow checks. `pre-push` runs the same checks plus Rust/Tauri checks and web builds. Re-run `hk install` after changing `hk.pkl`. If an older local hook path is still configured, clear it once with `git config --local --unset-all core.hooksPath`.
 
 Run the apps locally:
 
@@ -87,13 +87,20 @@ hk run pre-push
 hk check
 ```
 
+When debugging hidden hook output, use:
+
+```bash
+hk check -v
+HK_LOG=debug hk run pre-commit
+```
+
 Run hook formatters manually:
 
 ```bash
 hk fix
 ```
 
-`pre-commit` formats changed JavaScript and Rust sources first, then runs the JavaScript, app-domain, i18n, Android bridge, and release workflow checks. The quality step depends on the formatter steps, so tests do not race against auto-formatting. `pre-push` runs the full push gate, including Rust/Tauri checks and web builds, before code is pushed.
+`pre-commit` formats changed JavaScript and Rust sources first, then runs separate visible steps for JavaScript linting, Vitest unit tests, app-domain checks, i18n checks, Android bridge checks, and release workflow checks. Each check step depends on the formatter steps, so tests do not race against auto-formatting. `pre-push` runs the same checks plus Rust/Tauri checks and web builds before code is pushed.
 
 
 ## WIP commits

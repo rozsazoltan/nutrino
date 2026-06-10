@@ -28,19 +28,71 @@ local formatSteps = new Mapping<String, Step> {
   }
 }
 
-local qualitySteps = new Mapping<String, Step> {
-  ["quality-commit"] {
+local formatStepNames = List("format-js", "format-rust")
+local commitQualityStepNames = List(
+  "lint-js",
+  "test-unit",
+  "test-app",
+  "check-i18n",
+  "check-android-mainactivity-bridge",
+  "check-release-workflows",
+)
+
+local commitQualitySteps = new Mapping<String, Step> {
+  ["lint-js"] {
     shell = defaultShell
-    depends = List("format-js", "format-rust")
-    exclusive = true
-    check = "aube run quality:commit"
+    depends = formatStepNames
+    check = "aube run lint:js"
   }
 
-  ["quality-push"] {
+  ["test-unit"] {
     shell = defaultShell
-    depends = List("format-js", "format-rust")
-    exclusive = true
-    check = "aube run quality:push"
+    depends = formatStepNames
+    check = "aube run test:unit"
+  }
+
+  ["test-app"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run test:app"
+  }
+
+  ["check-i18n"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run check:i18n"
+  }
+
+  ["check-android-mainactivity-bridge"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run check:android-mainactivity-bridge"
+  }
+
+  ["check-release-workflows"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run check:release-workflows"
+  }
+}
+
+local pushQualitySteps = new Mapping<String, Step> {
+  ["test-rust"] {
+    shell = defaultShell
+    depends = commitQualityStepNames
+    check = "aube run test:rust"
+  }
+
+  ["build-mobile"] {
+    shell = defaultShell
+    depends = commitQualityStepNames
+    check = "aube run build --filter nutrino-mobile"
+  }
+
+  ["build-desktop"] {
+    shell = defaultShell
+    depends = commitQualityStepNames
+    check = "aube run build --filter nutrino-desktop"
   }
 }
 
@@ -50,7 +102,12 @@ hooks {
     steps = new Mapping<String, Step> {
       ["format-js"] = formatSteps["format-js"]
       ["format-rust"] = formatSteps["format-rust"]
-      ["quality-commit"] = qualitySteps["quality-commit"]
+      ["lint-js"] = commitQualitySteps["lint-js"]
+      ["test-unit"] = commitQualitySteps["test-unit"]
+      ["test-app"] = commitQualitySteps["test-app"]
+      ["check-i18n"] = commitQualitySteps["check-i18n"]
+      ["check-android-mainactivity-bridge"] = commitQualitySteps["check-android-mainactivity-bridge"]
+      ["check-release-workflows"] = commitQualitySteps["check-release-workflows"]
     }
   }
 
@@ -58,7 +115,15 @@ hooks {
     steps = new Mapping<String, Step> {
       ["format-js"] = formatSteps["format-js"]
       ["format-rust"] = formatSteps["format-rust"]
-      ["quality-push"] = qualitySteps["quality-push"]
+      ["lint-js"] = commitQualitySteps["lint-js"]
+      ["test-unit"] = commitQualitySteps["test-unit"]
+      ["test-app"] = commitQualitySteps["test-app"]
+      ["check-i18n"] = commitQualitySteps["check-i18n"]
+      ["check-android-mainactivity-bridge"] = commitQualitySteps["check-android-mainactivity-bridge"]
+      ["check-release-workflows"] = commitQualitySteps["check-release-workflows"]
+      ["test-rust"] = pushQualitySteps["test-rust"]
+      ["build-mobile"] = pushQualitySteps["build-mobile"]
+      ["build-desktop"] = pushQualitySteps["build-desktop"]
     }
   }
 
@@ -71,7 +136,15 @@ hooks {
     steps = new Mapping<String, Step> {
       ["format-js"] = formatSteps["format-js"]
       ["format-rust"] = formatSteps["format-rust"]
-      ["quality-push"] = qualitySteps["quality-push"]
+      ["lint-js"] = commitQualitySteps["lint-js"]
+      ["test-unit"] = commitQualitySteps["test-unit"]
+      ["test-app"] = commitQualitySteps["test-app"]
+      ["check-i18n"] = commitQualitySteps["check-i18n"]
+      ["check-android-mainactivity-bridge"] = commitQualitySteps["check-android-mainactivity-bridge"]
+      ["check-release-workflows"] = commitQualitySteps["check-release-workflows"]
+      ["test-rust"] = pushQualitySteps["test-rust"]
+      ["build-mobile"] = pushQualitySteps["build-mobile"]
+      ["build-desktop"] = pushQualitySteps["build-desktop"]
     }
   }
 }
