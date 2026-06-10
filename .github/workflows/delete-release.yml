@@ -1,0 +1,95 @@
+name: Delete Release
+run-name: Delete Nutrino release ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to delete without the v prefix. Example: 0.14.0."
+        required: true
+        type: string
+      delete_moving_tags:
+        description: "Also delete moving tags: latest, vX, and vX.Y."
+        required: false
+        default: false
+        type: boolean
+      confirm:
+        description: "Type DELETE X.Y.Z to confirm destructive release and tag deletion."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: delete-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  delete-release:
+    name: Delete GitHub Release and tags
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete release surfaces
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          CONFIRM: ${{ inputs.confirm }}
+          DELETE_MOVING_TAGS: ${{ inputs.delete_moving_tags }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${INPUT_VERSION}"
+          if [[ "${version}" == v* ]]; then
+            echo "::error::Version must be provided without the v prefix. Use '${version#v}' instead of '${version}'."
+            exit 1
+          fi
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Version must be a SemVer value without the v prefix, for example 0.14.0."
+            exit 1
+          fi
+
+          expected_confirmation="DELETE ${version}"
+          if [ "${CONFIRM}" != "${expected_confirmation}" ]; then
+            echo "::error::Confirmation mismatch. Type '${expected_confirmation}' to delete release and tag data."
+            exit 1
+          fi
+
+          release_tag="v${version}"
+
+          delete_release_if_exists() {
+            local tag="$1"
+            local release_id
+
+            release_id="$(gh api "repos/${{ github.repository }}/releases/tags/${tag}" --jq '.id' 2>/dev/null || true)"
+            if [ -n "${release_id}" ]; then
+              echo "Deleting GitHub Release ${tag}."
+              gh api --method DELETE "/repos/${{ github.repository }}/releases/${release_id}" >/dev/null
+            else
+              echo "::notice::GitHub Release ${tag} does not exist."
+            fi
+          }
+
+          delete_tag_if_exists() {
+            local tag="$1"
+
+            if gh api "/repos/${{ github.repository }}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              echo "Deleting git tag ${tag}."
+              gh api --method DELETE "/repos/${{ github.repository }}/git/refs/tags/${tag}" >/dev/null
+            else
+              echo "::notice::Git tag ${tag} does not exist."
+            fi
+          }
+
+          delete_release_if_exists "${release_tag}"
+          delete_tag_if_exists "${release_tag}"
+
+          if [ "${DELETE_MOVING_TAGS}" = "true" ]; then
+            major="${version%%.*}"
+            minor_patch="${version#*.}"
+            minor="${minor_patch%%.*}"
+            delete_tag_if_exists "latest"
+            delete_tag_if_exists "v${major}"
+            delete_tag_if_exists "v${major}.${minor}"
+          fi

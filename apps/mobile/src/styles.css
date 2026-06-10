@@ -7483,3 +7483,64 @@ select:focus {
     border-radius: 26px;
   }
 }
+
+.fluid-summary-card .meal-header {
+  align-items: center;
+}
+
+.fluid-quick-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fluid-quick-row .outlined-button.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.fluid-alcohol-card {
+  margin: 2px 0;
+}
+
+.fluid-alcohol-options {
+  display: grid;
+  gap: 10px;
+}
+
+.alcohol-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.alcohol-preset-button {
+  padding: 10px 12px;
+  min-height: 0;
+}
+
+.alcohol-preset-button.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface-container-high));
+}
+
+.fluid-kcal-preview {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  font-size: 0.9rem;
+}
+
+.fluid-entry-row b {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 420px) {
+  .alcohol-preset-grid {
+    grid-template-columns: 1fr;
+  }
+}

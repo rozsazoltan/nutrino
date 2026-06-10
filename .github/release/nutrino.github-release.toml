@@ -1,0 +1,73 @@
+[release]
+target_branch = "master"
+branch_prefix = "release/"
+tag_prefix = "v"
+release_name_prefix = "Nutrino "
+release_name_suffix = ""
+commit_message = "chore(release): prepare {tag}"
+git_user_name = "github-actions[bot]"
+git_user_email = "41898282+github-actions[bot]@users.noreply.github.com"
+
+[[files]]
+path = "package.json"
+kind = "json"
+key = "version"
+
+[[files]]
+path = "packages/shared/package.json"
+kind = "json"
+key = "version"
+
+[[files]]
+path = "packages/ui/package.json"
+kind = "json"
+key = "version"
+
+[[files]]
+path = "apps/desktop/package.json"
+kind = "json"
+key = "version"
+
+[[files]]
+path = "apps/mobile/package.json"
+kind = "json"
+key = "version"
+
+[[files]]
+path = "apps/desktop/src-tauri/tauri.conf.json"
+kind = "json"
+key = "version"
+
+[[files]]
+path = "apps/mobile/src-tauri/tauri.conf.json"
+kind = "json"
+key = "version"
+
+[[files]]
+path = "apps/mobile/src-tauri/tauri.conf.json"
+kind = "json"
+key = "bundle.android.versionCode"
+value = "{android_version_code}"
+value_type = "integer"
+
+[[files]]
+path = "apps/desktop/src-tauri/Cargo.toml"
+kind = "toml"
+key = "package.version"
+
+[[files]]
+path = "apps/mobile/src-tauri/Cargo.toml"
+kind = "toml"
+key = "package.version"
+
+[[files]]
+path = "apps/desktop/src-tauri/Cargo.lock"
+kind = "cargo-lock-package"
+package = "nutrino_desktop"
+key = "version"
+
+[[files]]
+path = "apps/mobile/src-tauri/Cargo.lock"
+kind = "cargo-lock-package"
+package = "nutrino_mobile"
+key = "version"

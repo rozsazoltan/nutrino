@@ -223,6 +223,22 @@ export interface ActivityLog {
   updated_at: number;
 }
 
+
+export type FluidAlcoholKind = 'beer' | 'wine' | 'spirits' | 'cocktail' | 'other';
+
+export interface FluidLog {
+  id: string;
+  consumed_at: number;
+  amount_dl: number;
+  is_alcohol: boolean;
+  alcohol_kind?: FluidAlcoholKind | null;
+  kcal?: number | null;
+  note?: string | null;
+  pending_sync: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface WeightLog {
   id: string;
   measured_at: number;
@@ -404,6 +420,7 @@ export interface AppState {
   activities: ActivityDefinition[];
   intakes: Intake[];
   activityLogs: ActivityLog[];
+  fluidLogs: FluidLog[];
   weightLogs: WeightLog[];
   healthEntries: HealthEntry[];
   catalogAliases: CatalogAlias[];
