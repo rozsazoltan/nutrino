@@ -64,10 +64,12 @@ expectNotExists('package-lock.json', 'package-lock.json should not be committed.
 expectNotExists('yarn.lock', 'yarn.lock should not be committed.');
 expectNotExists('bun.lockb', 'bun.lockb should not be committed.');
 expectNotExists('aube.lock', 'aube.lock should not be committed.');
+expectNotExists('aube-lock.yaml', 'aube-lock.yaml should not be committed.');
 expect(exists('.oxlintrc.json'), '.oxlintrc.json should exist.');
 expect(exists('.oxfmtrc.json'), '.oxfmtrc.json should exist.');
 expect(exists('vitest.config.ts'), 'vitest.config.ts should exist.');
 expect(exists('hk.pkl'), 'hk.pkl should exist.');
+expect(exists('CONTRIBUTING.md'), 'CONTRIBUTING.md should contain development and contribution instructions.');
 
 expectContains('aube-workspace.yaml', 'catalog:', 'aube-workspace.yaml should define a dependency catalog.');
 expectContains(
@@ -122,6 +124,14 @@ for (const file of [
 ]) {
   expectNoPackageManagerReferences(file);
 }
+
+expectContains('README.md', '## Installation', 'README should focus on user installation.');
+expectContains('README.md', '## Features', 'README should describe app features for users.');
+expectContains('CONTRIBUTING.md', 'aube run check', 'CONTRIBUTING.md should document repository checks.');
+expectContains('CONTRIBUTING.md', 'Rector', 'CONTRIBUTING.md should document PHP tooling convention.');
+expectContains('CONTRIBUTING.md', 'Oxlint', 'CONTRIBUTING.md should document JavaScript tooling convention.');
+expectContains('CONTRIBUTING.md', 'clippy', 'CONTRIBUTING.md should document Rust tooling convention.');
+expectContains('.gitignore', 'aube-lock.yaml', 'Aube YAML lock files should be ignored.');
 
 packageUsesCatalog('apps/mobile/package.json');
 packageUsesCatalog('apps/desktop/package.json');

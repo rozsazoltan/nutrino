@@ -42,7 +42,11 @@ expectContains(
   'verzly/setup-aube',
   'Release workflow should install JavaScript dependencies through setup-aube.',
 );
-expectContains('.github/workflows/test.yml', 'actions/setup-node@v6', 'Test workflow should install Node directly instead of failing during mise install.');
+expectContains(
+  '.github/workflows/test.yml',
+  'actions/setup-node@v6',
+  'Test workflow should install Node directly instead of failing during mise install.',
+);
 expectContains(
   '.github/workflows/test.yml',
   'aube run format:js',
@@ -111,6 +115,7 @@ expectContains(
   'Release workflow should cache iOS Cargo/Tauri builds.',
 );
 expectContains('.gitignore', 'aube.lock', 'Aube lock files should be ignored.');
+expectContains('.gitignore', 'aube-lock.yaml', 'Aube YAML lock files should be ignored.');
 expectContains('.gitignore', 'package-lock.json', 'npm lock files should be ignored.');
 expectContains(
   'aube-workspace.yaml',

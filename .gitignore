@@ -7,6 +7,7 @@ node_modules/
 # Nutrino uses aube with catalog-managed dependencies.
 # Cargo.lock stays tracked because release versioning updates Tauri app package versions.
 aube.lock
+aube-lock.yaml
 package-lock.json
 yarn.lock
 bun.lockb

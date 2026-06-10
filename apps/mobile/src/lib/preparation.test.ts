@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { estimatePreparationKcal, foodSupportsPreparation, hasPieceServing, oilMlToKcal } from './preparation';
+import {
+  PREPARATION_METHODS,
+  estimatePreparationKcal,
+  foodSupportsPreparation,
+  hasPieceServing,
+  intakePreparationKcal,
+  oilMlToKcal,
+  preparationMethodConfig,
+} from './preparation';
 
 describe('meal preparation helpers', () => {
   it('keeps raw and boiled preparation calorie-neutral', () => {
@@ -15,7 +23,20 @@ describe('meal preparation helpers', () => {
 
   it('supports custom oil amount when the user wants precise tracking', () => {
     expect(oilMlToKcal(10)).toBe(81);
+    expect(oilMlToKcal(-10)).toBe(0);
     expect(estimatePreparationKcal({ method: 'custom_oil', amountG: 150, oilMl: 10 })).toBe(81);
+    expect(estimatePreparationKcal({ method: 'custom_oil', amountG: 0, oilMl: 10 })).toBe(0);
+  });
+
+  it('handles invalid amounts and persisted entry values defensively', () => {
+    expect(estimatePreparationKcal({ method: 'pan_oil', amountG: Number.NaN })).toBe(0);
+    expect(estimatePreparationKcal({ method: 'deep_fried', amountG: -100 })).toBe(0);
+    expect(intakePreparationKcal({ preparation_kcal: 49.6 })).toBe(50);
+    expect(intakePreparationKcal({ preparation_kcal: -25 })).toBe(0);
+  });
+
+  it('returns the neutral preparation config for unknown legacy values', () => {
+    expect(preparationMethodConfig('legacy' as any).key).toBe('none');
   });
 
   it('only exposes piece mode for explicit piece-based items', () => {
@@ -29,6 +50,22 @@ describe('meal preparation helpers', () => {
   it('suggests preparation options for cookable foods', () => {
     expect(foodSupportsPreparation({ id: 'food-burgonya', name: 'Burgonya', note: null })).toBe(true);
     expect(foodSupportsPreparation({ id: 'food-alma', name: 'Alma', note: null })).toBe(false);
+    expect(foodSupportsPreparation({ id: 'food-note', name: 'Sima köret', note: 'air fryer krumpli változat' })).toBe(
+      true,
+    );
     expect(foodSupportsPreparation({ id: 'recipe:hotdog', name: 'hotdog', note: null })).toBe(false);
+  });
+
+  it('keeps preparation method keys unique and ordered for the UI', () => {
+    expect(PREPARATION_METHODS.map((method) => method.key)).toEqual([
+      'none',
+      'boiled',
+      'air_fryer',
+      'pan_light_oil',
+      'pan_oil',
+      'deep_fried',
+      'custom_oil',
+    ]);
+    expect(new Set(PREPARATION_METHODS.map((method) => method.key)).size).toBe(PREPARATION_METHODS.length);
   });
 });

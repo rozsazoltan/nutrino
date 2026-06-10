@@ -44,15 +44,35 @@ expect(alcoholKcal(2, 'other', 200) === 200, 'Custom alcohol entries should use 
 expectContains('apps/mobile/src/types.ts', 'export interface FluidLog', 'FluidLog type should exist.');
 expectContains('apps/mobile/src/types.ts', 'fluidLogs: FluidLog[];', 'AppState should persist fluid logs.');
 expectContains('apps/mobile/src/lib/storage.ts', 'normalizeFluidLog', 'Storage should normalize fluid logs.');
-expectContains('apps/mobile/src/App.vue', "type AddMode = 'food' | 'activity' | 'fluid' | null", 'Quick add mode should support fluids.');
-expectContains('apps/mobile/src/lib/fluid.ts', 'export const FLUID_QUICK_AMOUNTS_DL = [1, 2, 3]', 'Fluid quick amount buttons should be configured.');
+expectContains(
+  'apps/mobile/src/App.vue',
+  "type AddMode = 'food' | 'activity' | 'fluid' | null",
+  'Quick add mode should support fluids.',
+);
+expectContains(
+  'apps/mobile/src/lib/fluid.ts',
+  'export const FLUID_QUICK_AMOUNTS_DL = [1, 2, 3]',
+  'Fluid quick amount buttons should be configured.',
+);
 expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'beer',[\s\S]*?kcal:\s*45/, 'Beer preset should be available.');
 expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'wine',[\s\S]*?kcal:\s*85/, 'Wine preset should be available.');
-expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'spirits',[\s\S]*?kcal:\s*230/, 'Spirits preset should be available.');
-expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'cocktail',[\s\S]*?kcal:\s*160/, 'Cocktail preset should be available.');
+expectMatches(
+  'apps/mobile/src/lib/fluid.ts',
+  /kind:\s*'spirits',[\s\S]*?kcal:\s*230/,
+  'Spirits preset should be available.',
+);
+expectMatches(
+  'apps/mobile/src/lib/fluid.ts',
+  /kind:\s*'cocktail',[\s\S]*?kcal:\s*160/,
+  'Cocktail preset should be available.',
+);
 expectContains('apps/mobile/src/App.vue', 'function addFluidLog()', 'Fluid logging action should exist.');
 expectContains('apps/mobile/src/App.vue', "from './lib/fluid'", 'Mobile app should use the shared fluid helpers.');
-expectContains('apps/mobile/src/lib/fluid.test.ts', "describe('fluid tracking helpers'", 'Fluid helper unit tests should exist.');
+expectContains(
+  'apps/mobile/src/lib/fluid.test.ts',
+  "describe('fluid tracking helpers'",
+  'Fluid helper unit tests should exist.',
+);
 expectContains('apps/mobile/src/App.vue', 'aiFluidMarkdown', 'AI export should include fluid entries.');
 expectContains('apps/mobile/src/App.vue', 'fluid_total_dl', 'AI export should summarize total fluid amount.');
 expectContains('apps/mobile/src/icons.ts', 'glassWater:', 'Fluid icon should be registered.');

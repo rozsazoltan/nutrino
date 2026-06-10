@@ -3496,16 +3496,29 @@ fn duplicate_ids_key(kind: &str, item_ids: &[String]) -> String {
     format!("{}:{}", kind, ids.join("|"))
 }
 
+struct DuplicateGroupInput {
+    kind: &'static str,
+    reason: &'static str,
+    confidence: &'static str,
+    score: u8,
+    key: String,
+    items: Vec<CatalogDuplicateItem>,
+}
+
 fn push_duplicate_group(
     suggestions: &mut Vec<CatalogDuplicateSuggestion>,
     seen: &mut HashSet<String>,
-    kind: &str,
-    reason: &str,
-    confidence: &str,
-    score: u8,
-    key: String,
-    mut items: Vec<CatalogDuplicateItem>,
+    input: DuplicateGroupInput,
 ) {
+    let DuplicateGroupInput {
+        kind,
+        reason,
+        confidence,
+        score,
+        key,
+        mut items,
+    } = input;
+
     if items.len() < 2 {
         return;
     }
@@ -3571,24 +3584,28 @@ fn find_catalog_duplicate_suggestions(
         push_duplicate_group(
             &mut suggestions,
             &mut seen,
-            "food",
-            "Exact same food data",
-            "high",
-            100,
-            key,
-            items,
+            DuplicateGroupInput {
+                kind: "food",
+                reason: "Exact same food data",
+                confidence: "high",
+                score: 100,
+                key,
+                items,
+            },
         );
     }
     for (key, items) in food_name {
         push_duplicate_group(
             &mut suggestions,
             &mut seen,
-            "food",
-            "Same normalized food name",
-            "medium",
-            75,
-            key,
-            items,
+            DuplicateGroupInput {
+                kind: "food",
+                reason: "Same normalized food name",
+                confidence: "medium",
+                score: 75,
+                key,
+                items,
+            },
         );
     }
 
@@ -3618,24 +3635,28 @@ fn find_catalog_duplicate_suggestions(
         push_duplicate_group(
             &mut suggestions,
             &mut seen,
-            "ingredient",
-            "Exact same ingredient data",
-            "high",
-            100,
-            key,
-            items,
+            DuplicateGroupInput {
+                kind: "ingredient",
+                reason: "Exact same ingredient data",
+                confidence: "high",
+                score: 100,
+                key,
+                items,
+            },
         );
     }
     for (key, items) in ingredient_name {
         push_duplicate_group(
             &mut suggestions,
             &mut seen,
-            "ingredient",
-            "Same normalized ingredient name",
-            "medium",
-            75,
-            key,
-            items,
+            DuplicateGroupInput {
+                kind: "ingredient",
+                reason: "Same normalized ingredient name",
+                confidence: "medium",
+                score: 75,
+                key,
+                items,
+            },
         );
     }
 
@@ -3665,24 +3686,28 @@ fn find_catalog_duplicate_suggestions(
         push_duplicate_group(
             &mut suggestions,
             &mut seen,
-            "recipe",
-            "Exact same recipe metadata",
-            "high",
-            92,
-            key,
-            items,
+            DuplicateGroupInput {
+                kind: "recipe",
+                reason: "Exact same recipe metadata",
+                confidence: "high",
+                score: 92,
+                key,
+                items,
+            },
         );
     }
     for (key, items) in recipe_name {
         push_duplicate_group(
             &mut suggestions,
             &mut seen,
-            "recipe",
-            "Same normalized recipe name",
-            "medium",
-            72,
-            key,
-            items,
+            DuplicateGroupInput {
+                kind: "recipe",
+                reason: "Same normalized recipe name",
+                confidence: "medium",
+                score: 72,
+                key,
+                items,
+            },
         );
     }
 
@@ -3722,36 +3747,42 @@ fn find_catalog_duplicate_suggestions(
         push_duplicate_group(
             &mut suggestions,
             &mut seen,
-            "activity",
-            "Exact same activity data",
-            "high",
-            100,
-            key,
-            items,
+            DuplicateGroupInput {
+                kind: "activity",
+                reason: "Exact same activity data",
+                confidence: "high",
+                score: 100,
+                key,
+                items,
+            },
         );
     }
     for (key, items) in activity_name {
         push_duplicate_group(
             &mut suggestions,
             &mut seen,
-            "activity",
-            "Same normalized activity name",
-            "medium",
-            78,
-            key,
-            items,
+            DuplicateGroupInput {
+                kind: "activity",
+                reason: "Same normalized activity name",
+                confidence: "medium",
+                score: 78,
+                key,
+                items,
+            },
         );
     }
     for (key, items) in activity_code {
         push_duplicate_group(
             &mut suggestions,
             &mut seen,
-            "activity",
-            "Same activity code",
-            "medium",
-            70,
-            key,
-            items,
+            DuplicateGroupInput {
+                kind: "activity",
+                reason: "Same activity code",
+                confidence: "medium",
+                score: 70,
+                key,
+                items,
+            },
         );
     }
 
@@ -6164,4 +6195,270 @@ fn db_catalog_revision(path: &Path) -> Result<i64> {
 
 fn stringify_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    fn duplicate_item(id: &str, name: &str, updated_at: i64) -> CatalogDuplicateItem {
+        CatalogDuplicateItem {
+            id: id.to_string(),
+            name: name.to_string(),
+            subtitle: "test item".to_string(),
+            updated_at,
+        }
+    }
+
+    fn food_fixture(id: &str, name: &str) -> Food {
+        Food {
+            id: id.to_string(),
+            source_id: "mobile-test".to_string(),
+            name: name.to_string(),
+            name_i18n: HashMap::new(),
+            brand: Some("Test Brand".to_string()),
+            note: Some("Test note".to_string()),
+            barcode: Some("123456789".to_string()),
+            default_unit: "g".to_string(),
+            serving_size_g: Some(100.0),
+            kcal_per_100g: 123.456,
+            carbs_per_100g: 12.0,
+            fat_per_100g: 3.0,
+            protein_per_100g: 4.0,
+            sugars_per_100g: 5.0,
+            fiber_per_100g: 6.0,
+            salt_per_100g: 0.7,
+            optional_nutrients: HashMap::new(),
+            updated_at: 1,
+            deleted_at: None,
+        }
+    }
+
+    fn empty_sync_payload() -> SyncPushRequest {
+        SyncPushRequest {
+            source_id: Some("mobile-test".to_string()),
+            device_name: Some("Test phone".to_string()),
+            sent_at: Some(1),
+            foods: None,
+            ingredients: None,
+            recipes: None,
+            recipe_items: None,
+            activities: None,
+            intakes: Vec::new(),
+            weight_logs: Vec::new(),
+            activity_logs: Vec::new(),
+            skipped_items: Vec::new(),
+        }
+    }
+
+    fn intake_payload(id: &str) -> IntakePayload {
+        IntakePayload {
+            id: id.to_string(),
+            item_type: Some("food".to_string()),
+            food_id: "food-1".to_string(),
+            source_id: "mobile-test".to_string(),
+            consumed_at: 1,
+            meal_type: "lunch".to_string(),
+            amount_g: 100.0,
+            food_snapshot_json: "{}".to_string(),
+            note_title: None,
+            note_description: None,
+        }
+    }
+
+    #[test]
+    fn normalizes_loose_names_and_numeric_keys() {
+        assert_eq!(loose_name_key("  Rántott--hús  extra   "), "rántott hús extra");
+        assert_eq!(loose_name_key("!!!"), "");
+        assert_eq!(normalize_text("  Mixed   CASE  text "), "mixed case text");
+        assert_eq!(number_key(12.3454), 12345);
+        assert_eq!(number_key(12.3455), 12346);
+        assert_eq!(optional_number_key(None), 0);
+    }
+
+    #[test]
+    fn duplicate_id_keys_are_stable_regardless_of_item_order() {
+        let left = duplicate_ids_key("food", &["b".to_string(), "a".to_string()]);
+        let right = duplicate_ids_key("food", &["a".to_string(), "b".to_string()]);
+
+        assert_eq!(left, right);
+        assert_eq!(left, "food:a|b");
+    }
+
+    #[test]
+    fn duplicate_groups_sort_items_dedupe_groups_and_ignore_singletons() {
+        let mut suggestions = Vec::new();
+        let mut seen = HashSet::new();
+
+        push_duplicate_group(
+            &mut suggestions,
+            &mut seen,
+            DuplicateGroupInput {
+                kind: "food",
+                reason: "Same normalized food name",
+                confidence: "medium",
+                score: 75,
+                key: "alma".to_string(),
+                items: vec![
+                    duplicate_item("banana", "Banán", 30),
+                    duplicate_item("apple-old", "alma", 10),
+                    duplicate_item("apple-new", "Alma", 20),
+                ],
+            },
+        );
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].kind, "food");
+        assert_eq!(suggestions[0].score, 75);
+        assert_eq!(
+            suggestions[0]
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["apple-new", "apple-old", "banana"]
+        );
+
+        push_duplicate_group(
+            &mut suggestions,
+            &mut seen,
+            DuplicateGroupInput {
+                kind: "food",
+                reason: "Same normalized food name",
+                confidence: "medium",
+                score: 75,
+                key: "alma".to_string(),
+                items: vec![
+                    duplicate_item("banana", "Banán", 30),
+                    duplicate_item("apple-new", "Alma", 20),
+                    duplicate_item("apple-old", "alma", 10),
+                ],
+            },
+        );
+        assert_eq!(suggestions.len(), 1);
+
+        push_duplicate_group(
+            &mut suggestions,
+            &mut seen,
+            DuplicateGroupInput {
+                kind: "food",
+                reason: "Same normalized food name",
+                confidence: "medium",
+                score: 75,
+                key: "single".to_string(),
+                items: vec![duplicate_item("single", "Single", 1)],
+            },
+        );
+        assert_eq!(suggestions.len(), 1);
+    }
+
+    #[test]
+    fn food_signature_ignores_sync_metadata_but_keeps_nutrition_identity() {
+        let mut left = food_fixture("left", "  Apple cake ");
+        let mut right = food_fixture("right", "apple   cake");
+        right.source_id = "desktop".to_string();
+        right.updated_at = 999;
+
+        assert_eq!(food_signature(&left), food_signature(&right));
+
+        left.kcal_per_100g += 1.0;
+        assert_ne!(food_signature(&left), food_signature(&right));
+    }
+
+    #[test]
+    fn cleans_localized_names_and_optional_nutrients() {
+        let mut names = HashMap::new();
+        names.insert(" HU ".to_string(), " Alma ".to_string());
+        names.insert("en".to_string(), "".to_string());
+        names.insert("DE".to_string(), "Apfel".to_string());
+
+        let clean_names = clean_name_i18n(Some(names));
+        assert_eq!(clean_names.get("hu").map(String::as_str), Some("Alma"));
+        assert_eq!(clean_names.get("de").map(String::as_str), Some("Apfel"));
+        assert!(!clean_names.contains_key("en"));
+
+        let mut nutrients = HashMap::new();
+        nutrients.insert(" iron_mg_per_100g ".to_string(), 2.5);
+        nutrients.insert("negative".to_string(), -4.0);
+        nutrients.insert("nan".to_string(), f64::NAN);
+
+        let clean_nutrients = clean_optional_nutrients(Some(nutrients));
+        assert_eq!(clean_nutrients.get("iron_mg_per_100g"), Some(&2.5));
+        assert_eq!(clean_nutrients.get("negative"), Some(&0.0));
+        assert!(!clean_nutrients.contains_key("nan"));
+    }
+
+    #[test]
+    fn sync_payload_recordability_ignores_private_diary_data() {
+        let mut payload = empty_sync_payload();
+        payload.intakes.push(intake_payload("intake-1"));
+        payload.weight_logs.push(WeightLogPayload {
+            id: "weight-1".to_string(),
+            measured_at: 1,
+            weight_kg: 80.0,
+            bmi: Some(26.1),
+            source: "manual".to_string(),
+        });
+        payload.activity_logs.push(ActivityLogPayload {
+            id: "activity-log-1".to_string(),
+            activity_id: Some("activity-1".to_string()),
+            activity_name: "Walk".to_string(),
+            performed_at: 1,
+            duration_min: 20.0,
+            kcal: 100.0,
+            source: "manual".to_string(),
+        });
+
+        assert!(!sync_payload_has_recordable_data(&payload));
+
+        payload.foods = Some(vec![food_fixture("food-1", "Apple")]);
+        assert!(sync_payload_has_recordable_data(&payload));
+    }
+
+    #[test]
+    fn strips_private_mobile_diary_before_desktop_inbox_persistence() {
+        let mut payload = empty_sync_payload();
+        payload.intakes.push(intake_payload("intake-1"));
+        payload.weight_logs.push(WeightLogPayload {
+            id: "weight-1".to_string(),
+            measured_at: 1,
+            weight_kg: 80.0,
+            bmi: None,
+            source: "manual".to_string(),
+        });
+        payload.activity_logs.push(ActivityLogPayload {
+            id: "activity-log-1".to_string(),
+            activity_id: None,
+            activity_name: "Manual walk".to_string(),
+            performed_at: 1,
+            duration_min: 20.0,
+            kcal: 100.0,
+            source: "manual".to_string(),
+        });
+        payload.skipped_items = vec![
+            SkippedSyncItem {
+                kind: "intake".to_string(),
+                id: "private-intake".to_string(),
+                label: "Private diary".to_string(),
+                skipped_at: 1,
+                item: serde_json::json!({ "kind": "intake" }),
+            },
+            SkippedSyncItem {
+                kind: "food".to_string(),
+                id: "food-1".to_string(),
+                label: "Food draft".to_string(),
+                skipped_at: 1,
+                item: serde_json::json!({ "kind": "food" }),
+            },
+        ];
+
+        strip_private_mobile_diary(&mut payload);
+
+        assert!(payload.intakes.is_empty());
+        assert!(payload.weight_logs.is_empty());
+        assert!(payload.activity_logs.is_empty());
+        assert_eq!(payload.skipped_items.len(), 1);
+        assert_eq!(payload.skipped_items[0].kind, "food");
+    }
 }

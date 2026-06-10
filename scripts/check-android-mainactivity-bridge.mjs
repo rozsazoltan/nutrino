@@ -7,7 +7,9 @@ const source = fs.readFileSync(scriptPath, 'utf8');
 
 const errors = [];
 if (/import\s+app\.tauri\.TauriActivity/.test(source)) {
-  errors.push('patch-android-generated.mjs must not import app.tauri.TauriActivity; Tauri generates TauriActivity in the app package.');
+  errors.push(
+    'patch-android-generated.mjs must not import app.tauri.TauriActivity; Tauri generates TauriActivity in the app package.',
+  );
 }
 if (!/class\s+MainActivity\s*:\s*TauriActivity\s*\(\)/.test(source)) {
   errors.push('patch-android-generated.mjs must keep MainActivity extending the generated TauriActivity.');
