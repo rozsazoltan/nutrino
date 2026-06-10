@@ -56,7 +56,7 @@ expectContains(
 );
 expectContains(
   '.github/workflows/test.yml',
-  'needs: wip-guard',
+  "needs: wip-guard",
   'Test workflow quality jobs should depend on the WIP guard.',
 );
 expectContains(

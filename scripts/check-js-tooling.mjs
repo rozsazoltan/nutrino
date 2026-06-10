@@ -146,23 +146,24 @@ expectContains('mise.toml', 'pkl = "0.31.1"', 'mise should install pkl for hk co
 expectContains('hk.pkl', 'windows = "cmd /d /s /c"', 'hk should use cmd.exe instead of sh on Windows.');
 expectContains('hk.pkl', 'aube run format:js', 'hk should run JavaScript formatting.');
 expectContains('hk.pkl', 'aube run format:rust', 'hk should run Rust formatting.');
-expectContains('hk.pkl', 'aube run lint:js', 'hk pre-commit should run JavaScript linting.');
-expectContains('hk.pkl', 'aube run test:unit', 'hk pre-commit should run Vitest unit tests.');
-expectContains('hk.pkl', 'aube run test:app', 'hk pre-commit should run app-domain checks.');
-expectContains('hk.pkl', 'aube run check:i18n', 'hk pre-commit should run i18n checks.');
+expectContains('hk.pkl', 'aube run lint:js', 'hk pre-push should run JavaScript linting.');
+expectContains('hk.pkl', 'aube run test:unit', 'hk pre-push should run Vitest unit tests.');
+expectContains('hk.pkl', 'aube run test:app', 'hk pre-push should run app-domain checks.');
+expectContains('hk.pkl', 'aube run check:i18n', 'hk pre-push should run i18n checks.');
 expectContains('hk.pkl', 'aube run test:rust', 'hk pre-push should run Rust checks.');
 expectContains('hk.pkl', 'aube run build --filter nutrino-mobile', 'hk pre-push should build the mobile app.');
 expectContains('hk.pkl', 'aube run build --filter nutrino-desktop', 'hk pre-push should build the desktop app.');
 expectContains(
   'hk.pkl',
   'depends = formatStepNames',
-  'hk commit-quality steps should wait for formatter steps before running tests.',
+  'hk fast quality steps should wait for formatter steps before running tests.',
 );
 expectContains(
   'hk.pkl',
-  'depends = commitQualityStepNames',
-  'hk push-quality steps should wait for commit-quality checks before running expensive checks.',
+  'depends = fastQualityStepNames',
+  'hk push-quality steps should wait for fast quality checks before running expensive checks.',
 );
+expect(!read('hk.pkl').includes('["pre-commit"]'), 'hk should not define a pre-commit hook.');
 expectContains('hk.pkl', '["pre-push"]', 'hk should define a pre-push quality hook.');
 
 for (const file of [
@@ -184,7 +185,6 @@ for (const file of [
 
 expectContains('README.md', '## Installation', 'README should focus on user installation.');
 expectContains('README.md', '## Features', 'README should describe app features for users.');
-expectContains('CONTRIBUTING.md', 'hk run pre-commit', 'CONTRIBUTING.md should document commit hook checks.');
 expectContains('CONTRIBUTING.md', 'hk run pre-push', 'CONTRIBUTING.md should document push hook checks.');
 expectContains('CONTRIBUTING.md', 'Rector', 'CONTRIBUTING.md should document PHP tooling convention.');
 expectContains('CONTRIBUTING.md', 'Oxlint', 'CONTRIBUTING.md should document JavaScript tooling convention.');
@@ -204,14 +204,6 @@ expect(
 
 const rootPackage = readJson('package.json');
 expect(rootPackage.scripts.check === 'aube run quality:push', 'Root check should run the full push quality gate.');
-expect(
-  rootPackage.scripts['quality:commit']?.includes('aube run test:js'),
-  'Commit quality should include JavaScript tooling checks.',
-);
-expect(
-  rootPackage.scripts['quality:commit']?.includes('aube run test:app'),
-  'Commit quality should include app-domain checks.',
-);
 expect(
   rootPackage.scripts['quality:push']?.includes('aube run test:rust'),
   'Push quality should include Rust/Tauri checks.',
@@ -248,7 +240,7 @@ expect(
 );
 expect(
   !Object.prototype.hasOwnProperty.call(rootPackage.scripts, 'pre-commit'),
-  'Root package should let hk own pre-commit directly.',
+  'Root package should not define npm-style pre-commit scripts.',
 );
 expect(
   !Object.prototype.hasOwnProperty.call(rootPackage.scripts, 'pre-push'),
