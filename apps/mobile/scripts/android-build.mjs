@@ -100,7 +100,7 @@ if (patchCode !== 0) process.exit(patchCode);
 console.log('\nStarting Nutrino Android build');
 console.log(`Channel: ${config.channel} package (${config.applicationId})`);
 console.log(`App label: ${config.label}`);
-console.log(`Command: pnpm tauri android build ${args.join(' ')}`);
+console.log(`Command: aube run tauri -- android build ${args.join(' ')}`);
 const isApkBuild = args.includes('--apk');
 const isDebugBuild = args.includes('--debug') || args.includes('-d');
 const targetValues = args.flatMap((arg, index) => (arg === '--target' && args[index + 1] ? [args[index + 1]] : []));
@@ -162,7 +162,7 @@ console.log(isDebugBuild
 console.log(targetValues.length ? `Native targets: ${targetValues.join(', ')}` : 'Native targets: all supported ABIs (larger and slower).');
 console.log(`Cargo target cache: ${androidEnv.CARGO_TARGET_DIR}`);
 console.log(`Gradle user cache: ${androidEnv.GRADLE_USER_HOME}`);
-console.log('Use root commands: pnpm dev:android for live Vite development or pnpm build:android for a stable aarch64 APK.');
+console.log('Use root commands: aube dev:android for live Vite development or aube build:android for a stable aarch64 APK.');
 if (isApkBuild && !isDebugBuild && !fs.existsSync(keystorePropertiesPath)) {
   console.warn('\nWarning: no src-tauri/gen/android/keystore.properties file found.');
   console.warn('Nutrino will sign the local release APK with Android debug signing as a sideload fallback.');
@@ -173,12 +173,9 @@ if (isApkBuild && !isDebugBuild && !fs.existsSync(keystorePropertiesPath)) {
 }
 console.log('');
 
-const command = process.platform === 'win32' ? 'cmd.exe' : 'pnpm';
-const commandArgs = process.platform === 'win32'
-  ? ['/d', '/s', '/c', `pnpm tauri android build ${args.join(' ')}`]
-  : ['tauri', 'android', 'build', ...args];
-
-const child = spawn(command, commandArgs, {
+const tauriEnvScript = path.resolve(projectRoot, '..', '..', 'scripts', 'tauri-env.mjs');
+const child = spawn(process.execPath, [tauriEnvScript, 'android', 'build', ...args], {
+  cwd: projectRoot,
   stdio: 'inherit',
   env: androidEnv,
 });

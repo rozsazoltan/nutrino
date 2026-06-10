@@ -29,7 +29,7 @@ for (const file of vueFiles) {
     let match;
     while ((match = regex.exec(source))) {
       const line = source.slice(0, match.index).split('\n').length;
-      failures.push(`${relative(root, file)}:${line}: unsafe double-quoted t(\"...\") translation expression`);
+      failures.push(`${relative(root, file)}:${line}: unsafe double-quoted t("...") translation expression`);
     }
   }
 }

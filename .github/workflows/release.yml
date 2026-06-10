@@ -36,6 +36,8 @@ env:
   AUBE_NO_UPDATE_CHECK: "1"
   AUBE_STORE_DIR: ${{ github.workspace }}/.cache/aube/store
   AUBE_CACHE_DIR: ${{ github.workspace }}/.cache/aube/cache
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
   ANDROID_NDK_VERSION: "27.0.11718014"
   RELEASE_ARTIFACT_DIR: dist/release-artifacts
   RELEASE_UPLOAD_DIR: dist/release-upload
@@ -173,6 +175,20 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Restore Cargo and Tauri cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/tauri-release
+            apps/desktop/src-tauri/target
+          key: cargo-tauri-desktop-v2-${{ runner.os }}-${{ matrix.platform }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/Cargo.toml', '.github/release/nutrino-desktop.tauri-release.toml') }}
+          restore-keys: |
+            cargo-tauri-desktop-v2-${{ runner.os }}-${{ matrix.platform }}-
+            cargo-tauri-desktop-v2-${{ runner.os }}-
+            cargo-tauri-v2-${{ runner.os }}-
+
       - name: Install Linux Tauri dependencies
         if: runner.os == 'Linux'
         shell: bash
@@ -283,6 +299,22 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Restore Android build cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.cache/tauri-release
+            apps/mobile/src-tauri/target
+            apps/mobile/src-tauri/gen/android/.gradle
+          key: android-release-v2-${{ runner.os }}-${{ hashFiles('apps/mobile/src-tauri/Cargo.lock', 'apps/mobile/src-tauri/Cargo.toml', 'apps/mobile/src-tauri/gen/android/**/*.gradle*', 'apps/mobile/src-tauri/gen/android/**/gradle-wrapper.properties', '.github/release/nutrino-mobile.tauri-release.toml') }}
+          restore-keys: |
+            android-release-v2-${{ runner.os }}-
+            cargo-tauri-v2-${{ runner.os }}-
+
       - name: Install Android SDK packages
         shell: bash
         run: |
@@ -381,6 +413,19 @@ jobs:
           rustup default stable
           rustc --version
           cargo --version
+
+      - name: Restore iOS Cargo and Tauri cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/tauri-release
+            apps/mobile/src-tauri/target
+          key: cargo-tauri-ios-v2-${{ runner.os }}-${{ hashFiles('apps/mobile/src-tauri/Cargo.lock', 'apps/mobile/src-tauri/Cargo.toml', '.github/release/nutrino-mobile.tauri-release.toml') }}
+          restore-keys: |
+            cargo-tauri-ios-v2-${{ runner.os }}-
+            cargo-tauri-v2-${{ runner.os }}-
 
       - name: Import Apple signing assets
         shell: bash

@@ -37,8 +37,16 @@ interface GitHubRelease {
 const releasesUrl = 'https://api.github.com/repos/rozsazoltan/nutrino/releases';
 
 export function compareVersionStrings(left: string, right: string): number {
-  const a = String(left || '').replace(/^v/i, '').split(/[^0-9]+/).filter(Boolean).map(Number);
-  const b = String(right || '').replace(/^v/i, '').split(/[^0-9]+/).filter(Boolean).map(Number);
+  const a = String(left || '')
+    .replace(/^v/i, '')
+    .split(/[^0-9]+/)
+    .filter(Boolean)
+    .map(Number);
+  const b = String(right || '')
+    .replace(/^v/i, '')
+    .split(/[^0-9]+/)
+    .filter(Boolean)
+    .map(Number);
   const length = Math.max(a.length, b.length, 3);
   for (let index = 0; index < length; index += 1) {
     const av = Number.isFinite(a[index]) ? a[index] : 0;
@@ -50,12 +58,15 @@ export function compareVersionStrings(left: string, right: string): number {
 }
 
 export function normalizeReleaseVersion(tagOrVersion: string): string {
-  return String(tagOrVersion || '').trim().replace(/^v/i, '');
+  return String(tagOrVersion || '')
+    .trim()
+    .replace(/^v/i, '');
 }
 
 function preferredAsset(release: GitHubRelease, target: ReleaseTarget): GitHubReleaseAsset | undefined {
   const assets = release.assets || [];
-  const byName = (patterns: RegExp[]) => assets.find((asset) => patterns.some((pattern) => pattern.test(asset.name || '')));
+  const byName = (patterns: RegExp[]) =>
+    assets.find((asset) => patterns.some((pattern) => pattern.test(asset.name || '')));
   if (target === 'android') return byName([/\.apk$/i]);
   if (target === 'ios') return byName([/\.ipa$/i, /ios/i]);
   if (target === 'windows') return byName([/\.msi$/i, /\.exe$/i, /windows/i]);
@@ -69,7 +80,9 @@ function toUpdateRelease(release: GitHubRelease, target: ReleaseTarget): UpdateR
   const tag = String(release.tag_name || '').trim();
   if (!tag) return null;
   const asset = preferredAsset(release, target);
-  const url = String(release.html_url || `https://github.com/rozsazoltan/nutrino/releases/tag/${encodeURIComponent(tag)}`);
+  const url = String(
+    release.html_url || `https://github.com/rozsazoltan/nutrino/releases/tag/${encodeURIComponent(tag)}`,
+  );
   return {
     version: normalizeReleaseVersion(tag),
     tag,
@@ -82,7 +95,10 @@ function toUpdateRelease(release: GitHubRelease, target: ReleaseTarget): UpdateR
   };
 }
 
-export async function checkNutrinoUpdates(currentVersion: string, options: { includePrereleases?: boolean; target: ReleaseTarget }): Promise<UpdateCheckResult> {
+export async function checkNutrinoUpdates(
+  currentVersion: string,
+  options: { includePrereleases?: boolean; target: ReleaseTarget },
+): Promise<UpdateCheckResult> {
   const response = await fetch(releasesUrl, {
     headers: {
       Accept: 'application/vnd.github+json',
@@ -90,7 +106,7 @@ export async function checkNutrinoUpdates(currentVersion: string, options: { inc
     },
   });
   if (!response.ok) throw new Error(`GitHub releases HTTP ${response.status}`);
-  const releases = await response.json() as GitHubRelease[];
+  const releases = (await response.json()) as GitHubRelease[];
   const candidates = releases
     .filter((release) => !release.draft)
     .filter((release) => options.includePrereleases || !release.prerelease)

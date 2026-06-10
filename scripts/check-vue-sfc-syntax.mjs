@@ -39,9 +39,13 @@ for (const file of vueFiles) {
     });
     for (const diagnostic of result.diagnostics || []) {
       if (diagnostic.category !== ts.DiagnosticCategory.Error) continue;
-      const pos = typeof diagnostic.start === 'number'
-        ? ts.getLineAndCharacterOfPosition(ts.createSourceFile(file, block, ts.ScriptTarget.Latest, true), diagnostic.start)
-        : null;
+      const pos =
+        typeof diagnostic.start === 'number'
+          ? ts.getLineAndCharacterOfPosition(
+              ts.createSourceFile(file, block, ts.ScriptTarget.Latest, true),
+              diagnostic.start,
+            )
+          : null;
       const line = pos ? pos.line + 1 : '?';
       const col = pos ? pos.character + 1 : '?';
       const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');

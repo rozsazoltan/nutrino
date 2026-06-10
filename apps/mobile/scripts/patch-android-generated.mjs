@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import os from 'node:os';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { channelConfig, parseChannel, patchTauriConfig } from './android-channel.mjs';
 import { mobileCargoTargetDir } from './android-artifacts.mjs';
@@ -682,26 +681,6 @@ ${markerEnd}
 }
 
 
-function hashFileIfExists(filePath) {
-  if (!fs.existsSync(filePath)) return '';
-  return fs.readFileSync(filePath);
-}
-
-function currentNativeIdentityHash(config) {
-  const hash = crypto.createHash('sha256');
-  hash.update(`nativeStateVersion=${NATIVE_STATE_VERSION}\n`);
-  hash.update(`applicationId=${config.applicationId}\n`);
-  hash.update(`channel=${config.channel}\n`);
-  hash.update(`label=${config.label}\n`);
-  hash.update(`productName=${config.productName}\n`);
-  for (const relative of ['src-tauri/Cargo.toml', 'src-tauri/build.rs', 'src-tauri/tauri.conf.json']) {
-    hash.update(`file=${relative}\n`);
-    hash.update(hashFileIfExists(path.join(projectRoot, relative)));
-    hash.update('\n');
-  }
-  return hash.digest('hex');
-}
-
 function removePathIfExists(targetPath, options = {}) {
   const { optional = false } = options;
   if (!fs.existsSync(targetPath)) return false;
@@ -1313,6 +1292,110 @@ function patchMainActivityPackage(config) {
 }
 
 
+
+function normalizedAndroidRustBuildTaskSource(source) {
+  const packageLine = source.match(/^\s*package\s+[A-Za-z_][A-Za-z0-9_.]*\s*$/m)?.[0]?.trim();
+  const lines = [];
+
+  if (packageLine) {
+    lines.push(packageLine, '');
+  }
+
+  lines.push(
+    'import java.io.File',
+    'import org.apache.tools.ant.taskdefs.condition.Os',
+    'import org.gradle.api.DefaultTask',
+    'import org.gradle.api.GradleException',
+    'import org.gradle.api.logging.LogLevel',
+    'import org.gradle.api.tasks.Input',
+    'import org.gradle.api.tasks.TaskAction',
+    '',
+    'open class BuildTask : DefaultTask() {',
+    '    @Input',
+    '    var rootDirRel: String? = null',
+    '',
+    '    @Input',
+    '    var target: String? = null',
+    '',
+    '    @Input',
+    '    var release: Boolean? = null',
+    '',
+    '    @TaskAction',
+    '    fun assemble() {',
+    "        // Tauri's generated Android Rust task can incorrectly execute",
+    '        // Node plus the Tauri command on Windows. In that case Node tries to load a local',
+    '        // src-tauri/tauri module and the Gradle build fails after Cargo has',
+    '        // already produced the Android shared library. Execute the Tauri CLI',
+    '        // directly instead. On Windows we go through cmd.exe so the local',
+    '        // node_modules/.bin/tauri.cmd shim is resolved through PATH.',
+    '        val executable = if (Os.isFamily(Os.FAMILY_WINDOWS)) "cmd.exe" else "tauri"',
+    '        runTauriCli(executable)',
+    '    }',
+    '',
+    '    fun runTauriCli(executable: String) {',
+    '        val rootDirRel = rootDirRel ?: throw GradleException("rootDirRel cannot be null")',
+    '        val target = target ?: throw GradleException("target cannot be null")',
+    '        val release = release ?: throw GradleException("release cannot be null")',
+    '        val args = mutableListOf<String>()',
+    '',
+    '        if (Os.isFamily(Os.FAMILY_WINDOWS)) {',
+    '            args.addAll(listOf("/d", "/s", "/c", "tauri"))',
+    '        }',
+    '',
+    '        args.addAll(listOf("android", "android-studio-script", "--target", target))',
+    '',
+    '        if (release) {',
+    '            args.add("--release")',
+    '        }',
+    '',
+    '        if (project.logger.isEnabled(LogLevel.DEBUG)) {',
+    '            args.add("-vv")',
+    '        } else if (project.logger.isEnabled(LogLevel.INFO)) {',
+    '            args.add("-v")',
+    '        }',
+    '',
+    '        project.exec {',
+    '            workingDir(File(project.projectDir, rootDirRel))',
+    '            executable(executable)',
+    '            args(args)',
+    '        }.assertNormalExitValue()',
+    '    }',
+    '}',
+    ''
+  );
+
+  return lines.join('\n');
+}
+
+function patchBuildSrcAndroidRustBuildTask() {
+  const buildSrcDir = path.join(androidDir, 'buildSrc');
+  if (!fs.existsSync(buildSrcDir)) return false;
+
+  const buildTaskFiles = walk(buildSrcDir).filter((file) => {
+    if (path.basename(file) !== 'BuildTask.kt') return false;
+    const source = fs.readFileSync(file, 'utf8');
+    return /class\s+BuildTask\b/.test(source) && source.includes('android-studio-script');
+  });
+
+  let changed = false;
+  for (const file of buildTaskFiles) {
+    const source = fs.readFileSync(file, 'utf8');
+    const next = normalizedAndroidRustBuildTaskSource(source);
+    if (source !== next) {
+      fs.writeFileSync(file, next);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    removePathIfExists(path.join(buildSrcDir, 'build'));
+    removePathIfExists(path.join(buildSrcDir, '.gradle'), { optional: true });
+    removePathIfExists(path.join(androidDir, '.gradle'), { optional: true });
+  }
+
+  return changed;
+}
+
 function parseRustPluginImplementationClass(source) {
   if (!/class\s+RustPlugin\b/.test(source)) return null;
   const packageMatch = source.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*$/m);
@@ -1400,7 +1483,7 @@ const tauriConfigPatched = patchTauriConfig(projectRoot, config.channel).changed
 
 if (!fs.existsSync(androidDir)) {
   console.log(`Android channel configured before generation: channel=${config.channel}, identifier=${config.applicationId}, label="${config.label}"`);
-  console.log('Android project not generated yet. Run pnpm android:init first.');
+  console.log('Android project not generated yet. Run aube init:android first.');
   process.exit(0);
 }
 
@@ -1413,6 +1496,7 @@ const networkSecurityPatched = ensureNetworkSecurityConfig();
 const updateFilePathsPatched = ensureUpdateFileProviderPaths();
 const labelResourcesPatched = patchAndroidLabelResources(config);
 const manifestPatched = patchManifest(config);
+const buildSrcRustTaskPatched = patchBuildSrcAndroidRustBuildTask();
 const buildSrcRustPluginPatched = normalizeBuildSrcRustPluginResources();
 const notificationOverridePatched = patchNotificationPluginOverride();
 const notificationStoragePatched = patchNotificationStorageActionKeys();
@@ -1420,4 +1504,4 @@ const notificationManagerPatched = patchNotificationManagerNutrinoActions();
 const nativeStateCleaned = cleanStaleAndroidNativeState(config);
 const generatedKotlinCleaned = cleanGeneratedKotlinPackages();
 const activityPackagePatched = patchMainActivityPackage(config);
-console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, networkSecurity=${networkSecurityPatched ? 'yes' : 'already ok'}, updateFilePaths=${updateFilePathsPatched ? 'yes' : 'already ok'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, notificationOverride=${notificationOverridePatched ? 'patched' : 'already ok'}, notificationStorage=${notificationStoragePatched ? 'patched' : 'already ok'}, notificationManager=${notificationManagerPatched ? 'patched' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);
+console.log(`Android generated project patched: channel=${config.channel}, applicationId=${config.applicationId}, label="${config.label}", tauriConfig=${tauriConfigPatched ? 'yes' : 'already ok'}, gradle=${gradlePatched ? 'yes' : 'no'}, identity=${identityPatched ? 'yes' : 'no'}, signingFallback=${signingPatched ? 'yes' : 'no'}, icons=${iconsPatched ? 'yes' : 'no'}, launcherColor=${launcherColorPatched ? 'yes' : 'no'}, networkSecurity=${networkSecurityPatched ? 'yes' : 'already ok'}, updateFilePaths=${updateFilePathsPatched ? 'yes' : 'already ok'}, labelResources=${labelResourcesPatched ? 'yes' : 'no'}, manifest=${manifestPatched ? 'yes' : 'no'}, buildSrcRustTask=${buildSrcRustTaskPatched ? 'patched' : 'already ok'}, buildSrcRustPlugin=${buildSrcRustPluginPatched ? 'normalized' : 'already ok'}, notificationOverride=${notificationOverridePatched ? 'patched' : 'already ok'}, notificationStorage=${notificationStoragePatched ? 'patched' : 'already ok'}, notificationManager=${notificationManagerPatched ? 'patched' : 'already ok'}, nativeState=${nativeStateCleaned ? 'cleaned' : 'already ok'}, generatedKotlin=${generatedKotlinCleaned ? 'cleaned' : 'already clean'}, mainActivityPackage=${activityPackagePatched ? 'yes' : 'already ok'}`);

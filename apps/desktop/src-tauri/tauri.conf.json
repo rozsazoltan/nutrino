@@ -4,9 +4,9 @@
   "version": "0.13.0",
   "identifier": "net.datarose.nutrino.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "aube run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "aube run build",
     "frontendDist": "../dist"
   },
   "app": {

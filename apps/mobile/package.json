@@ -25,7 +25,8 @@
     "android:prune": "node scripts/android-clean.mjs --outputs",
     "android:size": "node scripts/android-clean.mjs --size",
     "android:clean:gradle-user-home": "node scripts/android-clean.mjs --gradle-user-home",
-    "android:build:release": "node scripts/android-build.mjs --channel stable --apk --aab --target aarch64"
+    "android:build:release": "node scripts/android-build.mjs --channel stable --apk --aab --target aarch64",
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
     "@tauri-apps/api": "catalog:",
@@ -42,7 +43,8 @@
     "@vitejs/plugin-vue": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "vue-tsc": "catalog:"
+    "vue-tsc": "catalog:",
+    "esbuild": "catalog:"
   },
   "license": "AGPL-3.0-only",
   "repository": {

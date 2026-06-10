@@ -18,7 +18,7 @@ function quoteForCmd(value) {
 }
 function commandSpec(command, args = []) {
   if (process.platform !== 'win32') return { command, args };
-  const executable = command === 'pnpm' ? 'pnpm.cmd' : command;
+  const executable = command;
   if (!/\.cmd$/i.test(executable) && !/\.bat$/i.test(executable)) return { command: executable, args };
   return { command: 'cmd.exe', args: ['/d', '/s', '/c', [executable, ...args].map(quoteForCmd).join(' ')] };
 }
@@ -80,7 +80,7 @@ if (fs.existsSync(androidDir)) {
   stopGradleDaemon();
   removePath(androidDir, 'Removing old generated Android project');
 }
-run('pnpm', ['tauri', 'android', 'init'], { env: envForAndroid(channel) });
+run(process.execPath, [path.resolve(projectRoot, '..', '..', 'scripts', 'tauri-env.mjs'), 'android', 'init'], { env: envForAndroid(channel) });
 run(process.execPath, [path.join(scriptsDir, 'patch-android-generated.mjs'), '--channel', channel], { env: { ...process.env, NUTRINO_ANDROID_CHANNEL: channel } });
 writeGeneratedState(config);
 console.log(`Android project initialized for ${config.channel}.`);

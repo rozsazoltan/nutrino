@@ -1,0 +1,131 @@
+amends "package://github.com/jdx/hk/releases/download/v1.47.0/hk@1.47.0#/Config.pkl"
+
+local defaultShell = new Script {
+  linux = "sh -o errexit -c"
+  macos = "sh -o errexit -c"
+  windows = "cmd /d /s /c"
+  other = "sh -o errexit -c"
+}
+
+local formatSteps = new Mapping<String, Step> {
+  ["format-js"] {
+    shell = defaultShell
+    check = "aube run format:js:check"
+    fix = "aube run format:js"
+    stage = List(
+      "package.json",
+      "vitest.config.ts",
+      "apps/mobile/src/lib/*.ts",
+      "scripts/*.mjs",
+    )
+  }
+
+  ["format-rust"] {
+    shell = defaultShell
+    check = "aube run format:rust:check"
+    fix = "aube run format:rust"
+    stage = List("apps/*/src-tauri/**/*.rs")
+  }
+}
+
+local formatStepNames = List("format-js", "format-rust")
+local fastQualityStepNames = List(
+  "lint-js",
+  "test-unit",
+  "test-app",
+  "check-i18n",
+  "check-android-mainactivity-bridge",
+  "check-release-workflows",
+)
+
+local fastQualitySteps = new Mapping<String, Step> {
+  ["lint-js"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run lint:js"
+  }
+
+  ["test-unit"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run test:unit"
+  }
+
+  ["test-app"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run test:app"
+  }
+
+  ["check-i18n"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run check:i18n"
+  }
+
+  ["check-android-mainactivity-bridge"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run check:android-mainactivity-bridge"
+  }
+
+  ["check-release-workflows"] {
+    shell = defaultShell
+    depends = formatStepNames
+    check = "aube run check:release-workflows"
+  }
+}
+
+local pushQualitySteps = new Mapping<String, Step> {
+  ["test-rust"] {
+    shell = defaultShell
+    depends = fastQualityStepNames
+    check = "aube run test:rust"
+  }
+
+  ["build-mobile"] {
+    shell = defaultShell
+    depends = fastQualityStepNames
+    check = "aube run build --filter nutrino-mobile"
+  }
+
+  ["build-desktop"] {
+    shell = defaultShell
+    depends = fastQualityStepNames
+    check = "aube run build --filter nutrino-desktop"
+  }
+}
+
+local fullQualitySteps = new Mapping<String, Step> {
+  ["format-js"] = formatSteps["format-js"]
+  ["format-rust"] = formatSteps["format-rust"]
+  ["lint-js"] = fastQualitySteps["lint-js"]
+  ["test-unit"] = fastQualitySteps["test-unit"]
+  ["test-app"] = fastQualitySteps["test-app"]
+  ["check-i18n"] = fastQualitySteps["check-i18n"]
+  ["check-android-mainactivity-bridge"] = fastQualitySteps["check-android-mainactivity-bridge"]
+  ["check-release-workflows"] = fastQualitySteps["check-release-workflows"]
+  ["test-rust"] = pushQualitySteps["test-rust"]
+  ["build-mobile"] = pushQualitySteps["build-mobile"]
+  ["build-desktop"] = pushQualitySteps["build-desktop"]
+}
+
+hooks {
+  ["pre-commit"] {
+    fix = true
+    steps = formatSteps
+  }
+
+  ["pre-push"] {
+    steps = fullQualitySteps
+  }
+
+  ["fix"] {
+    fix = true
+    steps = formatSteps
+  }
+
+  ["check"] {
+    steps = fullQualitySteps
+  }
+}

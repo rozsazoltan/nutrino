@@ -16,15 +16,36 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  NODE_VERSION: "24"
-  AUBE_NO_UPDATE_CHECK: "1"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  NODE_VERSION: '24'
+  AUBE_NO_UPDATE_CHECK: '1'
   AUBE_STORE_DIR: ${{ github.workspace }}/.cache/aube/store
   AUBE_CACHE_DIR: ${{ github.workspace }}/.cache/aube/cache
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
 
 jobs:
-  app:
-    name: App checks
+  wip-guard:
+    name: WIP guard
+    runs-on: ubuntu-latest
+    outputs:
+      is_wip: ${{ steps.guard.outputs.is_wip }}
+    steps:
+      - name: Checkout HEAD commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Block WIP commits without running expensive checks
+        id: guard
+        shell: bash
+        run: node scripts/check-wip-ci.mjs
+
+  javascript:
+    name: JavaScript and repository checks
+    needs: wip-guard
+    if: needs.wip-guard.outputs.is_wip != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -40,24 +61,119 @@ jobs:
         with:
           path: |
             .cache/aube
-          key: aube-store-test-v1-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
+          key: aube-test-v2-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
           restore-keys: |
-            aube-store-test-v1-${{ runner.os }}-
-            aube-store-v1-${{ runner.os }}-
+            aube-test-v2-${{ runner.os }}-
+            aube-v2-${{ runner.os }}-
 
       - name: Set up aube
         uses: verzly/setup-aube@v1
         with:
           run_install: true
 
-      - name: Run repository checks
+      - name: Format JavaScript sources
         shell: bash
-        run: aube run check
+        run: aube run format:js
 
-      - name: Type-check mobile app
+      - name: Run JavaScript quality gate
+        shell: bash
+        run: aube run test:js
+
+      - name: Run app domain checks
+        shell: bash
+        run: aube run test:app
+
+      - name: Run i18n and repository checks
+        shell: bash
+        run: >-
+          aube run check:i18n
+          && aube run check:android-mainactivity-bridge
+          && aube run check:release-workflows
+
+      - name: Build mobile web app
         shell: bash
         run: aube run build --filter nutrino-mobile
 
-      - name: Type-check desktop app
+      - name: Build desktop web app
         shell: bash
         run: aube run build --filter nutrino-desktop
+
+  rust:
+    name: Rust and Tauri checks
+    needs: wip-guard
+    if: needs.wip-guard.outputs.is_wip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+          rustc --version
+          cargo --version
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+            apps/mobile/src-tauri/target
+          key: cargo-test-v2-${{ runner.os }}-${{ hashFiles('apps/**/src-tauri/Cargo.lock', 'apps/**/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cargo-test-v2-${{ runner.os }}-
+            cargo-v2-${{ runner.os }}-
+
+      - name: Install Linux Tauri dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Run Rust/Tauri config checks
+        shell: bash
+        run: node scripts/check-rust-tauri-config.mjs
+
+      - name: Format Rust sources
+        shell: bash
+        run: >-
+          cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml
+          && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml
+
+      - name: Check Rust formatting
+        shell: bash
+        run: >-
+          cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+          && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml -- --check
+
+      - name: Check mobile Rust manifest
+        shell: bash
+        run: cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml --no-deps >/dev/null
+
+      - name: Check desktop Rust crate
+        shell: bash
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+      - name: Lint desktop Rust crate
+        shell: bash
+        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Test desktop Rust crate
+        shell: bash
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets

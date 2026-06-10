@@ -1,3 +1,4 @@
+import { drinkKindFromAlcoholKind, waterEquivalentDl } from './fluid';
 import type {
   ActivityDefinition,
   ActivityLevel,
@@ -6,7 +7,6 @@ import type {
   AppSettings,
   Food,
   Ingredient,
-  Gender,
   HealthEntry,
   Intake,
   PairingConfig,
@@ -27,11 +27,66 @@ const STORAGE_KEY = 'nutrino.mobile.v3.state';
 const KCAL_PER_KG_PER_WEEK_DAILY = 1100;
 
 const fallbackActivities: ActivityDefinition[] = [
-  { id: 'activity-walking', code: '17190', name: 'walking', description: 'general, moderate pace', type: 'conditioning', met: 3.5, kcal_per_min: 4.4, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
-  { id: 'activity-cycling', code: '01015', name: 'bicycling', description: 'general', type: 'bicycling', met: 7.5, kcal_per_min: 9.4, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
-  { id: 'activity-running', code: '12150', name: 'running', description: 'general', type: 'running', met: 8.3, kcal_per_min: 10.4, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
-  { id: 'activity-yoga', code: '02160', name: 'yoga', description: 'general, hatha', type: 'conditioning', met: 3.0, kcal_per_min: 3.8, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
-  { id: 'activity-strength', code: '02050', name: 'resistance training', description: 'weight lifting', type: 'conditioning', met: 6.0, kcal_per_min: 7.5, updated_at: 0, catalog_source_kind: 'custom', source_label: 'Nutrino default' },
+  {
+    id: 'activity-walking',
+    code: '17190',
+    name: 'walking',
+    description: 'general, moderate pace',
+    type: 'conditioning',
+    met: 3.5,
+    kcal_per_min: 4.4,
+    updated_at: 0,
+    catalog_source_kind: 'custom',
+    source_label: 'Nutrino default',
+  },
+  {
+    id: 'activity-cycling',
+    code: '01015',
+    name: 'bicycling',
+    description: 'general',
+    type: 'bicycling',
+    met: 7.5,
+    kcal_per_min: 9.4,
+    updated_at: 0,
+    catalog_source_kind: 'custom',
+    source_label: 'Nutrino default',
+  },
+  {
+    id: 'activity-running',
+    code: '12150',
+    name: 'running',
+    description: 'general',
+    type: 'running',
+    met: 8.3,
+    kcal_per_min: 10.4,
+    updated_at: 0,
+    catalog_source_kind: 'custom',
+    source_label: 'Nutrino default',
+  },
+  {
+    id: 'activity-yoga',
+    code: '02160',
+    name: 'yoga',
+    description: 'general, hatha',
+    type: 'conditioning',
+    met: 3.0,
+    kcal_per_min: 3.8,
+    updated_at: 0,
+    catalog_source_kind: 'custom',
+    source_label: 'Nutrino default',
+  },
+  {
+    id: 'activity-strength',
+    code: '02050',
+    name: 'resistance training',
+    description: 'weight lifting',
+    type: 'conditioning',
+    met: 6.0,
+    kcal_per_min: 7.5,
+    updated_at: 0,
+    catalog_source_kind: 'custom',
+    source_label: 'Nutrino default',
+  },
 ];
 
 export function inferDevBaseUrl(): string {
@@ -80,8 +135,6 @@ export function defaultPairing(): PairingConfig {
   };
 }
 
-
-
 export const DEFAULT_MICRONUTRIENT_LIMITS: Record<string, number> = {
   sugars_per_100g: 50,
   fiber_per_100g: 30,
@@ -124,6 +177,12 @@ export function defaultSettings(): AppSettings {
     calorie_deficit_enabled: false,
     target_deficit_kcal: 300,
     calorie_limit_warning_enabled: false,
+    fluid_tracking_enabled: false,
+    daily_fluid_goal_dl: 25,
+    fluid_activity_bonus_dl_per_100_kcal: 2,
+    fluid_reminders_enabled: false,
+    fluid_reminder_interval_min: 120,
+    fluid_skipped_day_keys: [],
     exercise_kcal_eatback_percent: 50,
     kcal_adjustment: 0,
     macro_carbs_percent: 60,
@@ -168,7 +227,6 @@ export function defaultState(): AppState {
   };
 }
 
-
 function normalizeFluidLog(entry: Partial<FluidLog> | null | undefined): FluidLog | null {
   if (!entry) return null;
   const amountDl = Number(entry.amount_dl ?? 0);
@@ -178,6 +236,15 @@ function normalizeFluidLog(entry: Partial<FluidLog> | null | undefined): FluidLo
     id: String(entry.id || generateId('fluid')),
     consumed_at: Number.isFinite(consumedAt) ? consumedAt : Date.now(),
     amount_dl: Math.max(0, Math.round(amountDl * 10) / 10),
+    drink_kind:
+      entry.drink_kind || (entry.is_alcohol === true ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'fluid'),
+    water_equivalent_dl: Number.isFinite(Number(entry.water_equivalent_dl))
+      ? Math.max(0, Math.round(Number(entry.water_equivalent_dl) * 10) / 10)
+      : waterEquivalentDl({
+          amountDl,
+          kind:
+            entry.drink_kind || (entry.is_alcohol === true ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'fluid'),
+        }),
     is_alcohol: entry.is_alcohol === true,
     alcohol_kind: entry.alcohol_kind || null,
     kcal: Number.isFinite(Number(entry.kcal)) ? Math.max(0, Math.round(Number(entry.kcal))) : 0,
@@ -189,19 +256,21 @@ function normalizeFluidLog(entry: Partial<FluidLog> | null | undefined): FluidLo
 }
 
 function normalizeHealthEntry(entry: HealthEntry): HealthEntry {
-  const attachments = Array.isArray(entry.attachments) ? entry.attachments.map((attachment: any) => ({
-    id: String(attachment?.id || generateId('health-attachment')),
-    type: attachment?.type === 'video' ? 'video' as const : 'photo' as const,
-    name: String(attachment?.name || attachment?.display_name || 'attachment'),
-    display_name: attachment?.display_name ?? null,
-    mime_type: String(attachment?.mime_type || (attachment?.type === 'video' ? 'video/*' : 'image/*')),
-    size: Number(attachment?.size || 0),
-    data_url: String(attachment?.data_url || ''),
-    preview_data_url: attachment?.preview_data_url ? String(attachment.preview_data_url) : null,
-    backup_path: attachment?.backup_path ? String(attachment.backup_path) : null,
-    fingerprint: attachment?.fingerprint ? String(attachment.fingerprint) : null,
-    created_at: Number(attachment?.created_at || Date.now()),
-  })) : [];
+  const attachments = Array.isArray(entry.attachments)
+    ? entry.attachments.map((attachment: any) => ({
+        id: String(attachment?.id || generateId('health-attachment')),
+        type: attachment?.type === 'video' ? ('video' as const) : ('photo' as const),
+        name: String(attachment?.name || attachment?.display_name || 'attachment'),
+        display_name: attachment?.display_name ?? null,
+        mime_type: String(attachment?.mime_type || (attachment?.type === 'video' ? 'video/*' : 'image/*')),
+        size: Number(attachment?.size || 0),
+        data_url: String(attachment?.data_url || ''),
+        preview_data_url: attachment?.preview_data_url ? String(attachment.preview_data_url) : null,
+        backup_path: attachment?.backup_path ? String(attachment.backup_path) : null,
+        fingerprint: attachment?.fingerprint ? String(attachment.fingerprint) : null,
+        created_at: Number(attachment?.created_at || Date.now()),
+      }))
+    : [];
 
   return {
     ...entry,
@@ -224,7 +293,6 @@ function normalizeHealthEntry(entry: HealthEntry): HealthEntry {
   };
 }
 
-
 export function loadState(): AppState {
   const defaults = defaultState();
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -236,21 +304,26 @@ export function loadState(): AppState {
     const storedProfile: Partial<UserProfile> = parsed.profile ?? {};
     const storedSettings: Partial<AppSettings> = parsed.settings ?? {};
 
-    const rawFoods = Array.isArray(parsed.foods) ? parsed.foods.map(normalizeFood) : [];
-    const migratedIngredients = rawFoods
+    const rawFoodEntries = Array.isArray(parsed.foods) ? (parsed.foods as Food[]) : [];
+    const migratedIngredients = rawFoodEntries
       .filter((food) => food.catalog_kind === 'ingredient')
-      .map(foodToIngredient);
+      .map((food) => foodToIngredient(normalizeFood({ ...food, catalog_kind: 'food' })));
     const parsedIngredients = Array.isArray((parsed as any).ingredients)
       ? ((parsed as any).ingredients as Ingredient[]).map(normalizeIngredient)
       : [];
-    const foods = rawFoods.filter((food) => food.catalog_kind !== 'ingredient').map((food) => ({ ...food, catalog_kind: 'food' as const }));
+    const foods = rawFoodEntries
+      .filter((food) => food.catalog_kind !== 'ingredient')
+      .map((food) => normalizeFood({ ...food, catalog_kind: 'food' }));
     const ingredients = mergeById(parsedIngredients, migratedIngredients);
 
     const mergedSettings: AppSettings = {
       ...defaults.settings,
       ...storedSettings,
       daily_reminder: storedSettings.daily_reminder === true,
-      daily_reminder_time: typeof storedSettings.daily_reminder_time === 'string' ? storedSettings.daily_reminder_time : defaults.settings.daily_reminder_time,
+      daily_reminder_time:
+        typeof storedSettings.daily_reminder_time === 'string'
+          ? storedSettings.daily_reminder_time
+          : defaults.settings.daily_reminder_time,
       weekly_weight_average_enabled: storedSettings.weekly_weight_average_enabled === true,
       desktop_api_enabled: storedSettings.desktop_api_enabled !== false,
       github_csv_enabled: storedSettings.github_csv_enabled !== false,
@@ -260,14 +333,40 @@ export function loadState(): AppState {
       meal_reminders_enabled: storedSettings.meal_reminders_enabled === true,
       calorie_deficit_enabled: storedSettings.calorie_deficit_enabled === true,
       calorie_limit_warning_enabled: storedSettings.calorie_limit_warning_enabled === true,
+      fluid_tracking_enabled: storedSettings.fluid_tracking_enabled === true,
+      fluid_reminders_enabled: storedSettings.fluid_reminders_enabled === true,
+      fluid_skipped_day_keys: Array.isArray(storedSettings.fluid_skipped_day_keys)
+        ? storedSettings.fluid_skipped_day_keys.filter(
+            (key): key is string => typeof key === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(key),
+          )
+        : [],
       health_diary_enabled: storedSettings.health_diary_enabled === true,
       protect_external_catalog_items: storedSettings.protect_external_catalog_items !== false,
       include_inactive_catalog_items: storedSettings.include_inactive_catalog_items === true,
-      target_deficit_kcal: Number.isFinite(Number(storedSettings.target_deficit_kcal)) ? Number(storedSettings.target_deficit_kcal) : defaults.settings.target_deficit_kcal,
-      exercise_kcal_eatback_percent: Number.isFinite(Number(storedSettings.exercise_kcal_eatback_percent)) ? Number(storedSettings.exercise_kcal_eatback_percent) : defaults.settings.exercise_kcal_eatback_percent,
+      target_deficit_kcal: Number.isFinite(Number(storedSettings.target_deficit_kcal))
+        ? Number(storedSettings.target_deficit_kcal)
+        : defaults.settings.target_deficit_kcal,
+      exercise_kcal_eatback_percent: Number.isFinite(Number(storedSettings.exercise_kcal_eatback_percent))
+        ? Number(storedSettings.exercise_kcal_eatback_percent)
+        : defaults.settings.exercise_kcal_eatback_percent,
+      daily_fluid_goal_dl: Number.isFinite(Number(storedSettings.daily_fluid_goal_dl))
+        ? Math.max(1, Number(storedSettings.daily_fluid_goal_dl))
+        : defaults.settings.daily_fluid_goal_dl,
+      fluid_activity_bonus_dl_per_100_kcal: Number.isFinite(Number(storedSettings.fluid_activity_bonus_dl_per_100_kcal))
+        ? Math.max(0, Number(storedSettings.fluid_activity_bonus_dl_per_100_kcal))
+        : defaults.settings.fluid_activity_bonus_dl_per_100_kcal,
+      fluid_reminder_interval_min: Number.isFinite(Number(storedSettings.fluid_reminder_interval_min))
+        ? Math.max(30, Math.round(Number(storedSettings.fluid_reminder_interval_min)))
+        : defaults.settings.fluid_reminder_interval_min,
       micronutrient_limits: {
         ...DEFAULT_MICRONUTRIENT_LIMITS,
-        ...(storedSettings.micronutrient_limits && typeof storedSettings.micronutrient_limits === 'object' ? Object.fromEntries(Object.entries(storedSettings.micronutrient_limits).filter(([, value]) => Number.isFinite(Number(value))).map(([key, value]) => [key, Math.max(0, Number(value))])) : {}),
+        ...(storedSettings.micronutrient_limits && typeof storedSettings.micronutrient_limits === 'object'
+          ? Object.fromEntries(
+              Object.entries(storedSettings.micronutrient_limits)
+                .filter(([, value]) => Number.isFinite(Number(value)))
+                .map(([key, value]) => [key, Math.max(0, Number(value))]),
+            )
+          : {}),
       },
     };
 
@@ -287,21 +386,32 @@ export function loadState(): AppState {
         ...defaults.profile,
         ...storedProfile,
         id: storedProfile.id || defaults.profile.id,
-        plan_start_weight_kg: storedProfile.plan_start_weight_kg || storedProfile.current_weight_kg || defaults.profile.current_weight_kg,
-        usage_purposes: Array.isArray(storedProfile.usage_purposes) ? storedProfile.usage_purposes : defaults.profile.usage_purposes,
+        plan_start_weight_kg:
+          storedProfile.plan_start_weight_kg || storedProfile.current_weight_kg || defaults.profile.current_weight_kg,
+        usage_purposes: Array.isArray(storedProfile.usage_purposes)
+          ? storedProfile.usage_purposes
+          : defaults.profile.usage_purposes,
       },
       foods,
       ingredients,
       recipes: Array.isArray(parsed.recipes) ? parsed.recipes.map((recipe: Recipe) => normalizeRecipe(recipe)) : [],
       recipeItems: Array.isArray(parsed.recipeItems) ? parsed.recipeItems : [],
-      activities: Array.isArray(parsed.activities) ? parsed.activities.map((activity) => normalizeActivity(activity)) : defaults.activities,
+      activities: Array.isArray(parsed.activities)
+        ? parsed.activities.map((activity) => normalizeActivity(activity))
+        : defaults.activities,
       intakes: Array.isArray(parsed.intakes) ? parsed.intakes : [],
       activityLogs: Array.isArray(parsed.activityLogs) ? parsed.activityLogs : [],
-      fluidLogs: Array.isArray((parsed as any).fluidLogs) ? ((parsed as any).fluidLogs as Partial<FluidLog>[]).map(normalizeFluidLog).filter(Boolean) as FluidLog[] : [],
+      fluidLogs: Array.isArray((parsed as any).fluidLogs)
+        ? (((parsed as any).fluidLogs as Partial<FluidLog>[]).map(normalizeFluidLog).filter(Boolean) as FluidLog[])
+        : [],
       weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
-      healthEntries: Array.isArray((parsed as any).healthEntries) ? ((parsed as any).healthEntries as HealthEntry[]).map(normalizeHealthEntry) : [],
+      healthEntries: Array.isArray((parsed as any).healthEntries)
+        ? ((parsed as any).healthEntries as HealthEntry[]).map(normalizeHealthEntry)
+        : [],
       catalogAliases: Array.isArray(parsed.catalogAliases) ? parsed.catalogAliases : [],
-      githubSources: Array.isArray(parsed.githubSources) ? parsed.githubSources.map(normalizeGitHubSource).filter(Boolean) as GitHubCsvSource[] : [],
+      githubSources: Array.isArray(parsed.githubSources)
+        ? (parsed.githubSources.map(normalizeGitHubSource).filter(Boolean) as GitHubCsvSource[])
+        : [],
     };
   } catch {
     return defaults;
@@ -374,8 +484,6 @@ export function normalizeGitHubSource(source: Partial<GitHubCsvSource> | null | 
   };
 }
 
-
-
 function normalizeNullableOptionalNutrient(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string' && !value.trim()) return null;
@@ -386,7 +494,7 @@ function normalizeNullableOptionalNutrient(value: unknown): number | null {
 function scaledNullableOptionalNutrient(value: unknown, amountG: number): number | null {
   const normalized = normalizeNullableOptionalNutrient(value);
   if (normalized === null) return null;
-  return normalized * Math.max(0, Number(amountG || 0)) / 100;
+  return (normalized * Math.max(0, Number(amountG || 0))) / 100;
 }
 
 function normalizeOptionalNutrients(value: unknown): Record<string, number> {
@@ -418,7 +526,9 @@ function normalizeNameI18n(value: unknown): LocalizedNameMap {
   if (!value || typeof value !== 'object') return {};
   const result: LocalizedNameMap = {};
   for (const [rawCode, rawName] of Object.entries(value as Record<string, unknown>)) {
-    const code = String(rawCode || '').trim().toLowerCase();
+    const code = String(rawCode || '')
+      .trim()
+      .toLowerCase();
     const name = String(rawName ?? '').trim();
     if (!code || !name) continue;
     result[code] = name;
@@ -427,7 +537,9 @@ function normalizeNameI18n(value: unknown): LocalizedNameMap {
 }
 
 function normalizeCatalogSourceKind(value: unknown, sourceId?: string | null): CatalogSourceKind {
-  const kind = String(value || '').trim().toLowerCase();
+  const kind = String(value || '')
+    .trim()
+    .toLowerCase();
   if (kind === 'desktop' || kind === 'github' || kind === 'custom' || kind === 'qr') return kind;
   const source = String(sourceId || '').trim();
   if (source.startsWith('github:')) return 'github';
@@ -442,15 +554,17 @@ function sourceLabelFromId(sourceId?: string | null): string | null {
   return source;
 }
 
-function normalizeCatalogMetadata<T extends {
-  source_id?: string | null;
-  catalog_source_kind?: CatalogSourceKind | null;
-  source_label?: string | null;
-  source_url?: string | null;
-  source_checked_at?: number | null;
-  locked?: boolean | null;
-  inactive?: boolean | null;
-}>(item: T): T {
+function normalizeCatalogMetadata<
+  T extends {
+    source_id?: string | null;
+    catalog_source_kind?: CatalogSourceKind | null;
+    source_label?: string | null;
+    source_url?: string | null;
+    source_checked_at?: number | null;
+    locked?: boolean | null;
+    inactive?: boolean | null;
+  },
+>(item: T): T {
   const sourceKind = normalizeCatalogSourceKind(item.catalog_source_kind, item.source_id);
   const sourceLabel = String(item.source_label ?? '').trim() || sourceLabelFromId(item.source_id);
   const sourceUrl = String(item.source_url ?? '').trim();
@@ -589,7 +703,15 @@ export interface RecipeFood extends Food {
   recipe_id: string;
 }
 
-function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[], ingredients: Ingredient[], recipes: Recipe[], allItems: RecipeItem[], visited: Set<string>): RecipeFood {
+function recipeAsFoodInternal(
+  recipe: Recipe,
+  items: RecipeItem[],
+  foods: Food[],
+  ingredients: Ingredient[],
+  recipes: Recipe[],
+  allItems: RecipeItem[],
+  visited: Set<string>,
+): RecipeFood {
   if (visited.has(recipe.id)) {
     return {
       id: `recipe:${recipe.id}`,
@@ -654,15 +776,17 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
         })()
       : item.food_id.startsWith('ingredient:')
         ? (() => {
-            const ingredient = ingredients.find((entry) => entry.id === item.food_id.slice('ingredient:'.length) && !entry.deleted_at);
+            const ingredient = ingredients.find(
+              (entry) => entry.id === item.food_id.slice('ingredient:'.length) && !entry.deleted_at,
+            );
             return ingredient ? ingredientAsFood(ingredient) : undefined;
           })()
         : foods.find((entry) => entry.id === item.food_id && !entry.deleted_at);
     if (!food) continue;
-    kcal += food.kcal_per_100g * item.amount_g / 100;
-    carbs += food.carbs_per_100g * item.amount_g / 100;
-    fat += food.fat_per_100g * item.amount_g / 100;
-    protein += food.protein_per_100g * item.amount_g / 100;
+    kcal += (food.kcal_per_100g * item.amount_g) / 100;
+    carbs += (food.carbs_per_100g * item.amount_g) / 100;
+    fat += (food.fat_per_100g * item.amount_g) / 100;
+    protein += (food.protein_per_100g * item.amount_g) / 100;
     const sugarContribution = scaledNullableOptionalNutrient(food.sugars_per_100g, item.amount_g);
     if (sugarContribution !== null) {
       sugars += sugarContribution;
@@ -683,9 +807,8 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
 
   visited.delete(recipe.id);
   const ratio = totalWeight > 0 ? 100 / totalWeight : 0;
-  const serving = recipe.servings_count && recipe.servings_count > 0 && totalWeight > 0
-    ? totalWeight / recipe.servings_count
-    : null;
+  const serving =
+    recipe.servings_count && recipe.servings_count > 0 && totalWeight > 0 ? totalWeight / recipe.servings_count : null;
 
   return {
     id: `recipe:${recipe.id}`,
@@ -717,10 +840,24 @@ function recipeAsFoodInternal(recipe: Recipe, items: RecipeItem[], foods: Food[]
   };
 }
 
-export function recipeAsFood(recipe: Recipe, items: RecipeItem[], foods: Food[], ingredients: Ingredient[] = [], recipes: Recipe[] = [], allItems: RecipeItem[] = items): RecipeFood {
-  return recipeAsFoodInternal(recipe, items, foods.map(normalizeFood), ingredients.map(normalizeIngredient), recipes, allItems, new Set<string>());
+export function recipeAsFood(
+  recipe: Recipe,
+  items: RecipeItem[],
+  foods: Food[],
+  ingredients: Ingredient[] = [],
+  recipes: Recipe[] = [],
+  allItems: RecipeItem[] = items,
+): RecipeFood {
+  return recipeAsFoodInternal(
+    recipe,
+    items,
+    foods.map(normalizeFood),
+    ingredients.map(normalizeIngredient),
+    recipes,
+    allItems,
+    new Set<string>(),
+  );
 }
-
 
 function aliasKey(kind: CatalogKind, id: string): string {
   return `${kind}:${id}`;
@@ -737,7 +874,12 @@ export function mergeAliases(current: CatalogAlias[] = [], incoming: CatalogAlia
 }
 
 export function resolveCatalogId(state: AppState, kind: CatalogKind, id: string): string {
-  const clean = kind === 'recipe' && id.startsWith('recipe:') ? id.slice('recipe:'.length) : kind === 'ingredient' && id.startsWith('ingredient:') ? id.slice('ingredient:'.length) : id;
+  const clean =
+    kind === 'recipe' && id.startsWith('recipe:')
+      ? id.slice('recipe:'.length)
+      : kind === 'ingredient' && id.startsWith('ingredient:')
+        ? id.slice('ingredient:'.length)
+        : id;
   let current = clean;
   const visited = new Set<string>();
   for (let i = 0; i < 12; i += 1) {
@@ -755,7 +897,7 @@ export function canonicalizeStateReferences(state: AppState): AppState {
   const canonicalRecipe = (id: string) => resolveCatalogId(state, 'recipe', id);
   const canonicalFood = (id: string) => resolveCatalogId(state, 'food', id);
   const canonicalIngredient = (id: string) => resolveCatalogId(state, 'ingredient', id);
-  const canonicalActivity = (id?: string | null) => id ? resolveCatalogId(state, 'activity', id) : id;
+  const canonicalActivity = (id?: string | null) => (id ? resolveCatalogId(state, 'activity', id) : id);
 
   return {
     ...state,
@@ -773,36 +915,57 @@ export function canonicalizeStateReferences(state: AppState): AppState {
     }),
     intakes: state.intakes.map((intake) => {
       if (intake.item_type === 'note') return { ...intake, pending_sync: false };
-      const kind: CatalogKind = intake.item_type === 'recipe' ? 'recipe' : intake.item_type === 'ingredient' ? 'ingredient' : 'food';
+      const kind: CatalogKind =
+        intake.item_type === 'recipe' ? 'recipe' : intake.item_type === 'ingredient' ? 'ingredient' : 'food';
       const canonical = resolveCatalogId(state, kind, intake.food_id);
-      const normalized = kind === 'recipe' ? `recipe:${canonical}` : kind === 'ingredient' ? `ingredient:${canonical}` : canonical;
-      return normalized === intake.food_id ? { ...intake, pending_sync: false } : { ...intake, food_id: normalized, pending_sync: false, updated_at: Date.now() };
+      const normalized =
+        kind === 'recipe' ? `recipe:${canonical}` : kind === 'ingredient' ? `ingredient:${canonical}` : canonical;
+      return normalized === intake.food_id
+        ? { ...intake, pending_sync: false }
+        : { ...intake, food_id: normalized, pending_sync: false, updated_at: Date.now() };
     }),
     activityLogs: state.activityLogs.map((log) => {
       const canonical = canonicalActivity(log.activity_id);
-      return canonical === log.activity_id ? { ...log, pending_sync: false } : { ...log, activity_id: canonical, pending_sync: false, updated_at: Date.now() };
+      return canonical === log.activity_id
+        ? { ...log, pending_sync: false }
+        : { ...log, activity_id: canonical, pending_sync: false, updated_at: Date.now() };
     }),
   };
 }
 
 export function catalogItems(state: AppState): Array<Food | RecipeFood> {
-  const recipeFoods = state.recipes.map((recipe) => recipeAsFood(
-    recipe,
-    state.recipeItems.filter((item) => item.recipe_id === recipe.id && !item.deleted_at),
-    state.foods,
-    state.ingredients,
-    state.recipes,
-    state.recipeItems,
-  ));
-  return [...state.ingredients.map(ingredientAsFood), ...state.foods.map(normalizeFood), ...recipeFoods].sort((a, b) => a.name.localeCompare(b.name));
+  const recipeFoods = state.recipes.map((recipe) =>
+    recipeAsFood(
+      recipe,
+      state.recipeItems.filter((item) => item.recipe_id === recipe.id && !item.deleted_at),
+      state.foods,
+      state.ingredients,
+      state.recipes,
+      state.recipeItems,
+    ),
+  );
+  return [...state.ingredients.map(ingredientAsFood), ...state.foods.map(normalizeFood), ...recipeFoods].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
 }
 
 export function findCatalogItem(state: AppState, id: string): Food | RecipeFood | undefined {
   const rawRecipeId = id.startsWith('recipe:') ? id.slice('recipe:'.length) : id;
   const recipeId = resolveCatalogId(state, 'recipe', rawRecipeId);
-  const ingredientId = resolveCatalogId(state, 'ingredient', id.startsWith('ingredient:') ? id.slice('ingredient:'.length) : id);
+  const ingredientId = resolveCatalogId(
+    state,
+    'ingredient',
+    id.startsWith('ingredient:') ? id.slice('ingredient:'.length) : id,
+  );
   const foodId = resolveCatalogId(state, 'food', id);
-  return catalogItems(state).find((item) => item.id === id || item.id === foodId || item.id === `ingredient:${ingredientId}` || item.id === `recipe:${recipeId}` || item.id === `recipe:${rawRecipeId}`);
+  return catalogItems(state).find(
+    (item) =>
+      item.id === id ||
+      item.id === foodId ||
+      item.id === `ingredient:${ingredientId}` ||
+      item.id === `recipe:${recipeId}` ||
+      item.id === `recipe:${rawRecipeId}`,
+  );
 }
 
 export function calculateKcal(food: Food, amountG: number): number {
@@ -820,17 +983,22 @@ export function ageFromBirthday(birthday: string): number {
   if (Number.isNaN(date.getTime())) return 30;
   const today = new Date();
   let age = today.getFullYear() - date.getFullYear();
-  const beforeBirthday = today.getMonth() < date.getMonth() || (today.getMonth() === date.getMonth() && today.getDate() < date.getDate());
+  const beforeBirthday =
+    today.getMonth() < date.getMonth() || (today.getMonth() === date.getMonth() && today.getDate() < date.getDate());
   if (beforeBirthday) age -= 1;
   return Math.max(13, age);
 }
 
 export function palValue(level: ActivityLevel): number {
   switch (level) {
-    case 'sedentary': return 1.25;
-    case 'low_active': return 1.5;
-    case 'active': return 1.75;
-    case 'very_active': return 2.2;
+    case 'sedentary':
+      return 1.25;
+    case 'low_active':
+      return 1.5;
+    case 'active':
+      return 1.75;
+    case 'very_active':
+      return 2.2;
   }
 }
 

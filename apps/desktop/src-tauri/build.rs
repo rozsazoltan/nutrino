@@ -37,7 +37,10 @@ fn app_channel() -> String {
             }
         }
     }
-    if env::var("PROFILE").map(|value| value == "debug").unwrap_or(false) {
+    if env::var("PROFILE")
+        .map(|value| value == "debug")
+        .unwrap_or(false)
+    {
         "dev".to_string()
     } else {
         "stable".to_string()

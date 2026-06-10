@@ -13,12 +13,21 @@ function extractObject(file, name) {
   for (let i = start; i < src.length; i += 1) {
     const ch = src[i];
     if (quote) {
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\') { escaped = true; continue; }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
       if (ch === quote) quote = null;
       continue;
     }
-    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      continue;
+    }
     if (ch === '{') depth += 1;
     if (ch === '}') {
       depth -= 1;
@@ -48,7 +57,9 @@ function assertComplete(scope, base, complete) {
     const values = complete[language] || {};
     const missing = baseKeys.filter((key) => !(key in values) || String(values[key] ?? '').trim() === '');
     if (missing.length) {
-      throw new Error(`${scope} ${language} has ${missing.length} missing i18n keys: ${missing.slice(0, 10).join(', ')}`);
+      throw new Error(
+        `${scope} ${language} has ${missing.length} missing i18n keys: ${missing.slice(0, 10).join(', ')}`,
+      );
     }
   }
   console.log(`${scope} i18n completeness OK (${baseKeys.length} keys × ${languageCodes.length} languages).`);

@@ -1,0 +1,10 @@
+{
+  "ignorePatterns": [
+    "node_modules/**",
+    ".cache/**",
+    "dist/**",
+    "**/dist/**",
+    "**/target/**",
+    "**/src-tauri/gen/**"
+  ]
+}

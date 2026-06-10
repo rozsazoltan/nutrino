@@ -1,260 +1,133 @@
 # Nutrino
 
-Nutrino is a local-first nutrition and health diary for Android, iOS, Windows, macOS, and Linux. It helps track meals, activities, fluids, body weight, health notes, barcode-based food catalog entries, backups, and AI-ready exports without depending on a central cloud account.
+Nutrino is a local-first nutrition and health diary for mobile and desktop. It helps you track meals, recipes, fluids, activities, weight, and health notes while keeping your personal diary data under your control.
 
-- [What it is](#what-it-is)
-- [Apps](#apps)
+- [Overview](#overview)
+- [Installation](#installation)
+  - [Android](#android)
+  - [iOS](#ios)
+  - [Desktop](#desktop)
+- [First launch](#first-launch)
 - [Features](#features)
-- [Get started](#get-started)
-  - [Requirements](#requirements)
-  - [Install dependencies](#install-dependencies)
-  - [Run locally](#run-locally)
-  - [Build locally](#build-locally)
-- [Testing](#testing)
-- [Releases](#releases)
-  - [Release tools](#release-tools)
-  - [Android signing](#android-signing)
-  - [Delete a release](#delete-a-release)
-- [Project structure](#project-structure)
-- [Privacy model](#privacy-model)
-- [Contributing](#contributing)
+  - [Meal diary](#meal-diary)
+  - [Fluid tracking](#fluid-tracking)
+  - [Recipes and catalog](#recipes-and-catalog)
+  - [Activity and weight](#activity-and-weight)
+  - [Health diary](#health-diary)
+  - [Backups and exports](#backups-and-exports)
+  - [Desktop handoff](#desktop-handoff)
+- [Updates](#updates)
+- [Privacy](#privacy)
 
-## What it is
+## Overview
 
-Nutrino is built for personal food and health logging with practical offline-first workflows:
+Nutrino is built for everyday personal tracking. The app can be used without a central cloud account, and the mobile diary stays local unless you explicitly export or share data.
 
-- food, recipe, ingredient, and barcode catalog management;
-- meal diary and activity tracking;
-- fluid tracking with optional alcohol kcal estimates;
-- body weight and health diary entries;
-- local backup import/export;
-- AI Markdown export with selectable data scope and date range;
-- desktop/mobile pairing for trusted local-network handoff requests.
+The desktop app can act as a trusted local-network companion for catalog management and controlled handoff requests. The mobile app decides whether a desktop request is allowed, rejected, or scoped to specific exported data.
 
-The app idea was inspired by OpenNutriTracker, but Nutrino is its own implementation and release workflow.
+## Installation
 
-## Apps
+Download Nutrino from the GitHub Releases page of this repository. Choose the package that matches your device and operating system.
 
-Nutrino is a monorepo with two Tauri apps:
+### Android
+
+Install the Android APK from the latest release. Android may ask you to allow installation from the browser or file manager you used to open the APK.
+
+After installing, keep future APK updates signed with the same release key. Android will reject an update if the app signature does not match the already installed version.
+
+### iOS
+
+Nutrino can run on iOS, but iOS builds require an Apple Developer account for signing and provisioning. I do not currently have an Apple Developer account, so I cannot distribute an installable iOS package yet.
+
+The iOS target remains part of the project so the app can be built and tested on iOS when the required Apple signing setup becomes available.
+
+### Desktop
+
+Use the Windows, macOS, or Linux package from the latest release. The desktop app is optional, but useful if you want a larger-screen catalog editor or local-network handoff with the mobile app.
+
+## First launch
+
+On first launch, set up your profile so Nutrino can estimate daily energy targets:
 
 ```text
-apps/mobile   -> Android and iOS app
-apps/desktop  -> Windows, macOS, and Linux desktop app
+height
+current weight
+birthday
+gender
+activity level
+weekly goal
+tracking purpose
 ```
 
-Shared package folders are reserved for reusable code and UI boundaries:
-
-```text
-packages/shared
-packages/ui
-```
+You can change these values later from the Profile and Settings areas.
 
 ## Features
 
-Daily tracking:
+### Meal diary
+
+Use the quick add button to log meals into breakfast, lunch, dinner, or snack. You can select an existing catalog item, customize recipe amounts for a diary entry, or add a temporary meal note that can be converted into a proper food later.
+
+Nutrino shows daily kcal, macros, optional micronutrients, remaining kcal, deficit status, and diary history by day.
+
+### Fluid tracking
+
+Use the quick add button and choose “I drank fluid” to record fluid amount in deciliters. Quick amount buttons are available for 1 dl, 2 dl, and 3 dl.
+
+Alcohol can be marked separately. When alcohol is enabled, Nutrino adds an estimated kcal value to the day. Built-in estimates cover beer, wine, spirits, cocktails, and custom alcohol entries.
+
+### Recipes and catalog
+
+Nutrino supports ingredients, foods, recipes, and barcode-based catalog entries. Recipes are calculated from their components, and foods can include kcal, macros, and optional micronutrients.
+
+Cooked or fried variants should not need separate duplicate foods. When supported, choose a preparation method during logging instead:
 
 ```text
-- meals and nutrition totals
-- activities and burned kcal
-- fluids in dl
-- optional alcohol kcal estimates
-- body weight
-- health diary entries
+boiled or steamed
+air fryer
+pan-fried with light oil
+pan-fried with normal oil
+deep-fried
+custom oil amount
 ```
 
-Catalog and scanning:
+The selected preparation method adjusts the logged diary entry while the base catalog item stays clean.
 
-```text
-- ingredients
-- foods
-- recipes
-- barcode scanning
-- create a new Food from an unknown barcode
-- scan directly into the Food form barcode field
-```
+### Activity and weight
 
-Data flows:
+Activities can be logged from the activity catalog or as manual burned kcal. Weight entries are used for the profile, BMI, and progress tracking.
 
-```text
-- local backup export/import
-- backup scope selection
-- AI Markdown export
-- desktop-to-mobile export requests
-- mobile approval before data transfer
-- chunked export upload to desktop
-```
+### Health diary
 
-## Get started
+Health diary entries can record symptoms, notes, recurring events, status, and media attachments when the feature is enabled.
 
-### Requirements
+### Backups and exports
 
-```text
-Node.js 24
-aube
-rust stable
-mise, recommended
-Tauri prerequisites for the target platform
-Android SDK + NDK for Android builds
-Xcode and Apple signing assets for signed iOS builds
-```
+Nutrino can export app data as a local backup. Backups can include catalog data, food diary data, health diary data, and health media depending on the selected scope.
 
-### Install dependencies
+AI Markdown export is available when you want a readable, scoped summary for external analysis.
 
-```bash
-mise trust
-mise install
-aube install
-```
+### Desktop handoff
 
-### Run locally
+The desktop app can request a mobile export over the local network. The mobile app must approve the request before data is sent. Large exports are uploaded in chunks to avoid broken zero-byte transfers.
 
-Desktop:
+## Updates
 
-```bash
-aube run dev:desktop
-```
+The mobile app can check for newer releases. Android updates require matching app signatures; if an update is signed with a different key, Android will refuse to install it over the existing app.
 
-Android:
+Desktop and mobile release packages are published through GitHub Releases.
 
-```bash
-aube run init:android
-aube run dev:android
-```
+## Privacy
 
-iOS:
+Nutrino is designed around local data ownership. Diary data, backups, health entries, media, and AI exports are only shared when you explicitly export, import, approve a handoff, or copy the generated data yourself.
 
-```bash
-aube run init:ios
-aube run dev:ios
-```
-
-### Build locally
-
-```bash
-aube run build:desktop
-aube run build:android
-aube run build:ios
-```
-
-Android and iOS builds require the native toolchains to be configured on the host machine.
-
-## Testing
-
-Run the repository checks:
-
-```bash
-aube run check
-```
-
-Run only the app domain checks:
-
-```bash
-aube run test:app
-```
-
-The app checks cover repository-level invariants that are easy to break during feature work, including fluid tracking domain behavior, release workflow wiring, i18n completeness, Vue SFC syntax, and Android bridge patch expectations.
-
-CI runs the same checks in `.github/workflows/test.yml`.
-
-## Releases
-
-Nutrino uses a release branch flow:
-
-```text
-github-release prepare
-→ release/vX.Y.Z branch
-→ version bump commit
-→ desktop, Android, and optional iOS builds
-→ github-release finalize
-→ merge into master
-→ tag master HEAD
-→ GitHub Release with What's changed notes
-→ upload artifacts
-→ delete the release branch
-```
-
-If a required build fails, the temporary release branch is deleted without merging.
-
-### Release tools
-
-Nutrino release automation is split by responsibility:
-
-```text
-verzly/github-release  -> branch, version bump, merge, tag, release, cleanup
-verzly/tauri-release   -> Android, iOS, Windows, macOS, Linux build artifacts
-verzly/android-signing -> Android release keystore helper
-```
-
-The versioned files are configured in:
-
-```text
-.github/release/nutrino.github-release.toml
-```
-
-The platform build profiles are configured in:
-
-```text
-.github/release/nutrino-desktop.tauri-release.toml
-.github/release/nutrino-mobile.tauri-release.toml
-```
-
-### Android signing
-
-Android self-updates require every release APK to be signed with the same release key. Generate and export the signing material with `android-signing`, then store these values in GitHub Secrets:
-
-```text
-ANDROID_KEYSTORE_BASE64
-ANDROID_KEYSTORE_PASSWORD
-ANDROID_KEY_ALIAS
-ANDROID_KEY_PASSWORD
-```
-
-Do not commit the `.jks` keystore file. Treat it as a private release signing secret.
-
-### Delete a release
-
-Use the manual workflow:
-
-```text
-.github/workflows/delete-release.yml
-```
-
-It deletes the GitHub Release and the matching `vX.Y.Z` tag after explicit confirmation:
-
-```text
-DELETE X.Y.Z
-```
-
-The workflow can also delete moving tags such as `latest`, `vX`, and `vX.Y` when requested.
-
-## Project structure
-
-```text
-.github/release      release tool configuration
-.github/workflows    CI, release, and delete-release workflows
-aube-workspace.yaml  JavaScript workspace and dependency catalog
-mise.toml            local toolchain and task shortcuts
-apps/desktop         Tauri desktop app
-apps/mobile          Tauri mobile app
-packages/shared      shared workspace package
-packages/ui          shared UI workspace package
-scripts              repository checks and helper scripts
-```
-
-## Privacy model
-
-Nutrino is designed around local data ownership. Backups, AI exports, and desktop/mobile handoff requests require explicit user action. Desktop requests do not silently receive mobile data; the mobile app approves, scopes, or rejects each transfer.
-
-## Contributing
-
-Keep changes small and reviewable. For app changes, run:
-
-```bash
-aube run check
-```
-
-For release workflow changes, verify the relevant workflow and release config files before opening a pull request.
+Desktop sync is catalog-oriented. Mobile meal diary entries, activity logs, and weight logs are treated as private mobile data and are not silently uploaded to the desktop catalog inbox.
 
 ## License
 
 Nutrino is licensed under `AGPL-3.0-only`.
+
+### Acknowledgements
+
+Nutrino is inspired by OpenNutriTracker and its privacy-first approach to nutrition tracking. Nutrino does not copy OpenNutriTracker source code or assets, but the original project helped shape the direction of a local-first, open-source nutrition diary.
+
+Nutrino is built with Vue, TypeScript, Vite, Rust, Tauri, JSZip and Lucide Icons. Thanks to these projects and their maintainers for the tooling, runtime, backup, native app and icon foundations used by Nutrino.
