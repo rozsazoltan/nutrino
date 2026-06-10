@@ -21,6 +21,13 @@ if (!/configureEdgeToEdgeWindow/.test(source) || !/statusBarColor\s*=\s*Color\.T
   errors.push('patch-android-generated.mjs must keep the Android edge-to-edge transparent status bar setup.');
 }
 
+if (!/function\s+patchBuildSrcAndroidRustBuildTask/.test(source)) {
+  errors.push('patch-android-generated.mjs must patch the generated Android BuildTask CLI invocation.');
+}
+if (!/cmd\.exe/.test(source) || !/android-studio-script/.test(source)) {
+  errors.push('patch-android-generated.mjs must keep the Windows-safe Tauri Android BuildTask command.');
+}
+
 if (errors.length > 0) {
   console.error(errors.join('\n'));
   process.exit(1);

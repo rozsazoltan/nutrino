@@ -184,6 +184,22 @@ for (const file of [
   expectNoPackageManagerReferences(file);
 }
 
+expectContains(
+  'apps/mobile/scripts/patch-android-generated.mjs',
+  'patchBuildSrcAndroidRustBuildTask',
+  'Android patch script should fix the generated Gradle BuildTask CLI invocation.',
+);
+expectContains(
+  'apps/mobile/scripts/patch-android-generated.mjs',
+  'cmd.exe',
+  'Android patch script should use cmd.exe for the Windows Tauri CLI shim.',
+);
+expectContains(
+  'apps/mobile/scripts/patch-android-generated.mjs',
+  'android-studio-script',
+  'Android patch script should keep the Tauri Android studio script invocation.',
+);
+
 expectContains('README.md', '## Installation', 'README should focus on user installation.');
 expectContains('README.md', '## Features', 'README should describe app features for users.');
 expectContains('CONTRIBUTING.md', 'hk run pre-push', 'CONTRIBUTING.md should document push hook checks.');
