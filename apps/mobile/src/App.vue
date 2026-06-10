@@ -2039,12 +2039,7 @@ const fluidIndicatorText = computed(() =>
 );
 const fluidSummaryText = computed(() => {
   if (currentDayFluidSkipped.value) return t('fluidSkippedToday');
-  const parts = [
-    `${formatFluidAmount(consumedFluidDl.value)} ${t('total')}`,
-    `${formatFluidAmount(consumedWaterEquivalentDl.value)} ${t('fluidCleanWaterEquivalent')}`,
-  ];
-  if (fluidKcal.value > 0) parts.push(`${fluidKcal.value} kcal`);
-  return parts.join(' · ');
+  return `${formatFluidAmount(consumedFluidDl.value)} (${formatFluidAmount(dailyFluidGoalDl.value)})\n${fluidKcal.value} kcal`;
 });
 
 const fluidNormalPresets = computed(() => fluidKindPresets.filter((preset) => preset.isAlcohol !== true));
