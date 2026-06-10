@@ -1,7 +1,16 @@
 {
   "name": "nutrino",
-  "private": true,
   "version": "0.13.0",
+  "private": true,
+  "homepage": "https://github.com/rozsazoltan/nutrino#readme",
+  "bugs": {
+    "url": "https://github.com/rozsazoltan/nutrino/issues"
+  },
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rozsazoltan/nutrino.git"
+  },
   "type": "module",
   "scripts": {
     "dev:desktop": "aube run tauri:dev --filter nutrino-desktop",
@@ -28,7 +37,7 @@
     "format:check": "aube run format:js:check && aube run format:rust:check",
     "hooks:install": "HK_MISE=1 hk install --mise",
     "hooks:fix": "hk run fix",
-    "hooks:check": "hk run check",
+    "hooks:check": "hk run check && hk run quality",
     "pre-commit": "hk run pre-commit",
     "test:js": "aube run lint:js && aube run format:js:check && aube run test:unit && node scripts/check-js-tooling.mjs",
     "test:rust": "aube run check:rust",
@@ -42,22 +51,14 @@
     "format:rust:check": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml -- --check",
     "lint:rust": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings",
     "test:rust:cargo": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets",
-    "check:rust": "aube run check:rust:config && aube run format:rust:check && cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml --no-deps >/dev/null && cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml && aube run lint:rust && aube run test:rust:cargo"
+    "check:rust": "aube run check:rust:config && aube run format:rust:check && cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml --no-deps >/dev/null && cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml && aube run lint:rust && aube run test:rust:cargo",
+    "pre-push": "hk run pre-push"
   },
   "devDependencies": {
-    "typescript": "catalog:",
     "esbuild": "catalog:",
-    "oxlint": "catalog:",
     "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "license": "AGPL-3.0-only",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/rozsazoltan/nutrino.git"
-  },
-  "bugs": {
-    "url": "https://github.com/rozsazoltan/nutrino/issues"
-  },
-  "homepage": "https://github.com/rozsazoltan/nutrino#readme"
+  }
 }

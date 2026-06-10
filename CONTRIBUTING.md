@@ -19,11 +19,13 @@ mise install
 aube install
 ```
 
-Install formatting hooks once per clone:
+Install hooks once per clone:
 
 ```bash
 aube run hooks:install
 ```
+
+The hook setup installs a fast `pre-commit` formatter hook and a stricter `pre-push` quality hook. Re-run the install command after changing `hk.pkl`.
 
 Run the apps locally:
 
@@ -69,6 +71,16 @@ Format sources:
 aube run format
 aube run format:check
 ```
+
+Run hook checks manually:
+
+```bash
+HK_MISE=1 hk run pre-commit
+HK_MISE=1 hk run pre-push
+aube run hooks:check
+```
+
+`pre-commit` only formats changed JavaScript and Rust sources. `pre-push` runs the slower JavaScript, app-domain, repository, and Rust quality gates before code is pushed.
 
 ## Quality gates
 

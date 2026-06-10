@@ -24,6 +24,31 @@ local rustFormatters = new Mapping<String, Step> {
   }
 }
 
+local qualityChecks = new Mapping<String, Step> {
+  ["js-quality"] {
+    glob = List(
+      "apps/mobile/src/lib/**/*.ts",
+      "apps/desktop/src/lib/**/*.ts",
+      "scripts/**/*.mjs",
+      "vitest.config.ts",
+      "package.json",
+      "aube-workspace.yaml",
+    )
+    check = "aube run test:js && aube run test:app && aube run check:i18n && aube run check:android-mainactivity-bridge && aube run check:release-workflows"
+  }
+
+  ["rust-quality"] {
+    glob = List(
+      "apps/desktop/src-tauri/**/*.rs",
+      "apps/desktop/src-tauri/Cargo.toml",
+      "apps/mobile/src-tauri/**/*.rs",
+      "apps/mobile/src-tauri/Cargo.toml",
+      "scripts/check-rust-tauri-config.mjs",
+    )
+    check = "aube run test:rust"
+  }
+}
+
 local formatters = new Mapping<String, Step> {
   ["oxfmt"] {
     glob = List(
@@ -60,6 +85,14 @@ hooks {
 
   ["check"] {
     steps = formatters
+  }
+
+  ["pre-push"] {
+    steps = qualityChecks
+  }
+
+  ["quality"] {
+    steps = qualityChecks
   }
 
   ["fix-js"] {

@@ -288,14 +288,16 @@ export function loadState(): AppState {
     const storedProfile: Partial<UserProfile> = parsed.profile ?? {};
     const storedSettings: Partial<AppSettings> = parsed.settings ?? {};
 
-    const rawFoods = Array.isArray(parsed.foods) ? parsed.foods.map(normalizeFood) : [];
-    const migratedIngredients = rawFoods.filter((food) => food.catalog_kind === 'ingredient').map(foodToIngredient);
+    const rawFoodEntries = Array.isArray(parsed.foods) ? (parsed.foods as Food[]) : [];
+    const migratedIngredients = rawFoodEntries
+      .filter((food) => food.catalog_kind === 'ingredient')
+      .map((food) => foodToIngredient(normalizeFood({ ...food, catalog_kind: 'food' })));
     const parsedIngredients = Array.isArray((parsed as any).ingredients)
       ? ((parsed as any).ingredients as Ingredient[]).map(normalizeIngredient)
       : [];
-    const foods = rawFoods
+    const foods = rawFoodEntries
       .filter((food) => food.catalog_kind !== 'ingredient')
-      .map((food) => ({ ...food, catalog_kind: 'food' as const }));
+      .map((food) => normalizeFood({ ...food, catalog_kind: 'food' }));
     const ingredients = mergeById(parsedIngredients, migratedIngredients);
 
     const mergedSettings: AppSettings = {
