@@ -146,15 +146,18 @@ Run the repository checks:
 aube run check
 ```
 
-Run only the app domain checks:
+Run focused checks when iterating locally:
 
 ```bash
+aube run test:js
 aube run test:app
+aube run test:rust
+aube run check:release-workflows
 ```
 
-The app checks cover repository-level invariants that are easy to break during feature work, including fluid tracking domain behavior, release workflow wiring, i18n completeness, Vue SFC syntax, and Android bridge patch expectations.
+The JavaScript checks cover workspace tooling, aube catalog usage, and package-manager drift. The app checks cover repository-level invariants that are easy to break during feature work, including fluid tracking domain behavior, i18n completeness, Vue SFC syntax, Android bridge patch expectations, and release workflow wiring. The Rust/Tauri checks keep Cargo package versions, Cargo.lock package entries, Tauri config versions, Android versionCode derivation, and important native feature flags aligned.
 
-CI runs the same checks in `.github/workflows/test.yml`.
+CI runs the same checks in `.github/workflows/test.yml`, plus Rust `cargo check` for both Tauri crates.
 
 ## Releases
 

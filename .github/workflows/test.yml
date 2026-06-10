@@ -21,10 +21,12 @@ env:
   AUBE_NO_UPDATE_CHECK: "1"
   AUBE_STORE_DIR: ${{ github.workspace }}/.cache/aube/store
   AUBE_CACHE_DIR: ${{ github.workspace }}/.cache/aube/cache
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
 
 jobs:
-  app:
-    name: App checks
+  javascript:
+    name: JavaScript and repository checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -40,17 +42,21 @@ jobs:
         with:
           path: |
             .cache/aube
-          key: aube-store-test-v1-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
+          key: aube-test-v2-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
           restore-keys: |
-            aube-store-test-v1-${{ runner.os }}-
-            aube-store-v1-${{ runner.os }}-
+            aube-test-v2-${{ runner.os }}-
+            aube-v2-${{ runner.os }}-
 
       - name: Set up aube
         uses: verzly/setup-aube@v1
         with:
           run_install: true
 
-      - name: Run repository checks
+      - name: Run JavaScript tooling checks
+        shell: bash
+        run: aube run test:js
+
+      - name: Run app and repository checks
         shell: bash
         run: aube run check
 
@@ -61,3 +67,55 @@ jobs:
       - name: Type-check desktop app
         shell: bash
         run: aube run build --filter nutrino-desktop
+
+  rust:
+    name: Rust and Tauri checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup update stable
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+            apps/mobile/src-tauri/target
+          key: cargo-test-v2-${{ runner.os }}-${{ hashFiles('apps/**/src-tauri/Cargo.lock', 'apps/**/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cargo-test-v2-${{ runner.os }}-
+            cargo-v2-${{ runner.os }}-
+
+      - name: Install Linux Tauri dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Run Rust/Tauri config checks
+        shell: bash
+        run: node scripts/check-rust-tauri-config.mjs
+
+      - name: Check mobile Rust crate
+        shell: bash
+        run: cargo check --manifest-path apps/mobile/src-tauri/Cargo.toml --locked
+
+      - name: Check desktop Rust crate
+        shell: bash
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked

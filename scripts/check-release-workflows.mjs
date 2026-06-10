@@ -23,6 +23,17 @@ expectContains('.github/workflows/release.yml', 'github-release cleanup', 'Relea
 expectContains('.github/workflows/release.yml', 'verzly/tauri-release', 'Release workflow should delegate platform builds to tauri-release.');
 expectContains('.github/workflows/release.yml', 'verzly/setup-aube', 'Release workflow should install JavaScript dependencies through setup-aube.');
 expectContains('.github/workflows/test.yml', 'aube run check', 'Test workflow should run repository checks through aube.');
+
+expectContains('.github/workflows/test.yml', 'aube run test:js', 'Test workflow should run JavaScript tooling checks.');
+expectContains('.github/workflows/test.yml', 'node scripts/check-rust-tauri-config.mjs', 'Test workflow should run Rust/Tauri config checks.');
+expectContains('.github/workflows/test.yml', 'cargo check --manifest-path apps/mobile/src-tauri/Cargo.toml --locked', 'Test workflow should check the mobile Rust crate.');
+expectContains('.github/workflows/test.yml', 'cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked', 'Test workflow should check the desktop Rust crate.');
+expectContains('.github/workflows/test.yml', 'Restore Cargo cache', 'Test workflow should cache Cargo dependencies.');
+expectContains('.github/workflows/release.yml', 'Restore Cargo and Tauri cache', 'Release workflow should cache desktop Cargo/Tauri builds.');
+expectContains('.github/workflows/release.yml', 'Restore Android build cache', 'Release workflow should cache Android Cargo/Gradle/Tauri builds.');
+expectContains('.github/workflows/release.yml', 'Restore iOS Cargo and Tauri cache', 'Release workflow should cache iOS Cargo/Tauri builds.');
+expectContains('.gitignore', 'aube.lock', 'Aube lock files should be ignored.');
+expectContains('.gitignore', 'package-lock.json', 'npm lock files should be ignored.');
 expectContains('aube-workspace.yaml', 'verifyDepsBeforeRun: install', 'Aube workspace should install dependencies before running scripts.');
 expectContains('mise.toml', 'aube = "latest"', 'Mise should install aube for local development.');
 expectContains('.github/workflows/release.yml', 'release_name_prefix', 'Release workflow should support release name prefix input.');

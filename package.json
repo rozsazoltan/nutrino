@@ -23,7 +23,9 @@
     "size:android": "aube run android:size --filter nutrino-mobile",
     "test:app": "node scripts/check-app-domain.mjs",
     "check:release-workflows": "node scripts/check-release-workflows.mjs",
-    "check": "aube run test:app && aube run check:i18n && aube run check:android-mainactivity-bridge && aube run check:release-workflows"
+    "check": "aube run test:js && aube run test:app && aube run test:rust && aube run check:i18n && aube run check:android-mainactivity-bridge && aube run check:release-workflows",
+    "test:js": "node scripts/check-js-tooling.mjs",
+    "test:rust": "node scripts/check-rust-tauri-config.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.0"
