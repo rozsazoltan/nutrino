@@ -31,8 +31,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "22"
-  PNPM_VERSION: "10.32.1"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  NODE_VERSION: "24"
+  AUBE_NO_UPDATE_CHECK: "1"
+  AUBE_STORE_DIR: ${{ github.workspace }}/.cache/aube/store
+  AUBE_CACHE_DIR: ${{ github.workspace }}/.cache/aube/cache
   ANDROID_NDK_VERSION: "27.0.11718014"
   RELEASE_ARTIFACT_DIR: dist/release-artifacts
   RELEASE_UPLOAD_DIR: dist/release-upload
@@ -143,13 +146,20 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Set up pnpm
-        shell: bash
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare "pnpm@${PNPM_VERSION}" --activate
-          pnpm --version
+      - name: Restore aube cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            .cache/aube
+          key: aube-store-release-v1-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
+          restore-keys: |
+            aube-store-release-v1-${{ runner.os }}-
+            aube-store-v1-${{ runner.os }}-
+
+      - name: Set up aube
+        uses: verzly/setup-aube@v1
+        with:
+          run_install: true
 
       - name: Set up Rust
         shell: bash
@@ -176,12 +186,6 @@ jobs:
             librsvg2-dev \
             patchelf \
             rpm
-
-      - name: Install JavaScript dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          pnpm install --no-frozen-lockfile
 
       - name: Build desktop artifacts
         uses: verzly/tauri-release@latest
@@ -248,13 +252,20 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Set up pnpm
-        shell: bash
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare "pnpm@${PNPM_VERSION}" --activate
-          pnpm --version
+      - name: Restore aube cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            .cache/aube
+          key: aube-store-release-v1-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
+          restore-keys: |
+            aube-store-release-v1-${{ runner.os }}-
+            aube-store-v1-${{ runner.os }}-
+
+      - name: Set up aube
+        uses: verzly/setup-aube@v1
+        with:
+          run_install: true
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -295,12 +306,6 @@ jobs:
           echo "NDK_HOME=${NDK_PATH}" >> "${GITHUB_ENV}"
           echo "${ANDROID_HOME}/platform-tools" >> "${GITHUB_PATH}"
           echo "${ANDROID_HOME}/cmdline-tools/latest/bin" >> "${GITHUB_PATH}"
-
-      - name: Install JavaScript dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          pnpm install --no-frozen-lockfile
 
       - name: Build Android artifacts
         uses: verzly/tauri-release@latest
@@ -353,13 +358,20 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Set up pnpm
-        shell: bash
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare "pnpm@${PNPM_VERSION}" --activate
-          pnpm --version
+      - name: Restore aube cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            .cache/aube
+          key: aube-store-release-v1-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
+          restore-keys: |
+            aube-store-release-v1-${{ runner.os }}-
+            aube-store-v1-${{ runner.os }}-
+
+      - name: Set up aube
+        uses: verzly/setup-aube@v1
+        with:
+          run_install: true
 
       - name: Set up Rust
         shell: bash
@@ -369,12 +381,6 @@ jobs:
           rustup default stable
           rustc --version
           cargo --version
-
-      - name: Install JavaScript dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          pnpm install --no-frozen-lockfile
 
       - name: Import Apple signing assets
         shell: bash

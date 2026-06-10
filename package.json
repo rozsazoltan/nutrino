@@ -2,29 +2,28 @@
   "name": "nutrino",
   "private": true,
   "version": "0.13.0",
-  "packageManager": "pnpm@10.32.1",
   "type": "module",
   "scripts": {
-    "dev:desktop": "pnpm --filter nutrino-desktop tauri:dev",
-    "dev:android": "pnpm --filter nutrino-mobile android:dev",
-    "dev:ios": "pnpm --filter nutrino-mobile ios:dev",
-    "build:desktop": "pnpm --filter nutrino-desktop tauri:build",
-    "build:android": "pnpm --filter nutrino-mobile android:build",
-    "build:ios": "pnpm --filter nutrino-mobile ios:build",
-    "init:android": "pnpm --filter nutrino-mobile android:init",
-    "init:ios": "pnpm --filter nutrino-mobile ios:init",
-    "reset:android": "pnpm --filter nutrino-mobile android:reset",
+    "dev:desktop": "aube run tauri:dev --filter nutrino-desktop",
+    "dev:android": "aube run android:dev --filter nutrino-mobile",
+    "dev:ios": "aube run ios:dev --filter nutrino-mobile",
+    "build:desktop": "aube run tauri:build --filter nutrino-desktop",
+    "build:android": "aube run android:build --filter nutrino-mobile",
+    "build:ios": "aube run ios:build --filter nutrino-mobile",
+    "init:android": "aube run android:init --filter nutrino-mobile",
+    "init:ios": "aube run ios:init --filter nutrino-mobile",
+    "reset:android": "aube run android:reset --filter nutrino-mobile",
     "check:vue-i18n-quotes": "node scripts/check-vue-i18n-quotes.mjs",
     "check:vue-sfc-syntax": "node scripts/check-vue-sfc-syntax.mjs",
-    "check:i18n": "pnpm check:vue-i18n-quotes && pnpm check:vue-sfc-syntax && pnpm check:i18n-completeness && pnpm check:desktop-raw-i18n-keys",
+    "check:i18n": "aube run check:vue-i18n-quotes && aube run check:vue-sfc-syntax && aube run check:i18n-completeness && aube run check:desktop-raw-i18n-keys",
     "check:i18n-completeness": "node scripts/check-i18n-completeness.mjs",
     "check:android-mainactivity-bridge": "node scripts/check-android-mainactivity-bridge.mjs",
     "check:desktop-raw-i18n-keys": "node scripts/check-desktop-raw-i18n-keys.mjs",
-    "prune:android": "pnpm --filter nutrino-mobile android:prune",
-    "size:android": "pnpm --filter nutrino-mobile android:size",
+    "prune:android": "aube run android:prune --filter nutrino-mobile",
+    "size:android": "aube run android:size --filter nutrino-mobile",
     "test:app": "node scripts/check-app-domain.mjs",
     "check:release-workflows": "node scripts/check-release-workflows.mjs",
-    "check": "pnpm test:app && pnpm check:i18n && pnpm check:android-mainactivity-bridge && pnpm check:release-workflows"
+    "check": "aube run test:app && aube run check:i18n && aube run check:android-mainactivity-bridge && aube run check:release-workflows"
   },
   "devDependencies": {
     "typescript": "^5.9.0"
@@ -37,10 +36,5 @@
   "bugs": {
     "url": "https://github.com/rozsazoltan/nutrino/issues"
   },
-  "homepage": "https://github.com/rozsazoltan/nutrino#readme",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  }
+  "homepage": "https://github.com/rozsazoltan/nutrino#readme"
 }

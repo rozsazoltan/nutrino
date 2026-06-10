@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-.pnpm-store/
+.aube/
 .pnp.*
 
 # Build output
@@ -27,7 +27,7 @@ coverage/
 **/src-tauri/gen/android/*.keystore
 **/src-tauri/gen/android/*.p12
 
-# Generated mobile projects can be recreated with pnpm init:android / pnpm init:ios.
+# Generated mobile projects can be recreated with aube run init:android / aube run init:ios.
 # Keep this commented if you intentionally commit native generated projects.
 # apps/mobile/src-tauri/gen/
 
@@ -54,4 +54,4 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
+aube-debug.log*

@@ -1,0 +1,28 @@
+[tools]
+node = "24"
+aube = "latest"
+rust = "stable"
+
+[tasks."dev:desktop"]
+run = "aube run dev:desktop"
+
+[tasks."dev:android"]
+run = "aube run dev:android"
+
+[tasks."dev:ios"]
+run = "aube run dev:ios"
+
+[tasks."build:desktop"]
+run = "aube run build:desktop"
+
+[tasks."build:android"]
+run = "aube run build:android"
+
+[tasks."build:ios"]
+run = "aube run build:ios"
+
+[tasks."check"]
+run = "aube run check"
+
+[tasks."test:app"]
+run = "aube run test:app"

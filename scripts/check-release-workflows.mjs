@@ -21,6 +21,10 @@ expectContains('.github/workflows/release.yml', 'github-release prepare', 'Relea
 expectContains('.github/workflows/release.yml', 'github-release finalize', 'Release workflow should finalize releases through github-release.');
 expectContains('.github/workflows/release.yml', 'github-release cleanup', 'Release workflow should clean up failed release branches.');
 expectContains('.github/workflows/release.yml', 'verzly/tauri-release', 'Release workflow should delegate platform builds to tauri-release.');
+expectContains('.github/workflows/release.yml', 'verzly/setup-aube', 'Release workflow should install JavaScript dependencies through setup-aube.');
+expectContains('.github/workflows/test.yml', 'aube run check', 'Test workflow should run repository checks through aube.');
+expectContains('aube-workspace.yaml', 'verifyDepsBeforeRun: install', 'Aube workspace should install dependencies before running scripts.');
+expectContains('mise.toml', 'aube = "latest"', 'Mise should install aube for local development.');
 expectContains('.github/workflows/release.yml', 'release_name_prefix', 'Release workflow should support release name prefix input.');
 expectContains('.github/release/nutrino.github-release.toml', 'bundle.android.versionCode', 'Release config should manage Android versionCode.');
 expectContains('.github/release/nutrino.github-release.toml', 'cargo-lock-package', 'Release config should manage Cargo.lock package versions.');

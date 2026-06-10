@@ -3,7 +3,6 @@
   "private": true,
   "version": "0.13.0",
   "type": "module",
-  "packageManager": "pnpm@10.32.1",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 1421",
     "build": "vue-tsc --noEmit && vite build",
@@ -25,24 +24,25 @@
     "android:clean:rust": "node scripts/android-clean.mjs --all",
     "android:prune": "node scripts/android-clean.mjs --outputs",
     "android:size": "node scripts/android-clean.mjs --size",
-    "android:clean:gradle-user-home": "node scripts/android-clean.mjs --gradle-user-home"
+    "android:clean:gradle-user-home": "node scripts/android-clean.mjs --gradle-user-home",
+    "android:build:release": "node scripts/android-build.mjs --channel stable --apk --aab --target aarch64"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.0",
-    "@tauri-apps/plugin-dialog": "^2.4.0",
-    "@tauri-apps/plugin-fs": "^2.4.0",
-    "@tauri-apps/plugin-notification": "^2.3.3",
-    "driver.js": "^1.4.0",
-    "jszip": "^3.10.1",
-    "vue": "^3.5.0",
-    "@tauri-apps/plugin-opener": "^2.5.0"
+    "@tauri-apps/api": "catalog:",
+    "@tauri-apps/plugin-dialog": "catalog:",
+    "@tauri-apps/plugin-fs": "catalog:",
+    "@tauri-apps/plugin-notification": "catalog:",
+    "driver.js": "catalog:",
+    "jszip": "catalog:",
+    "vue": "catalog:",
+    "@tauri-apps/plugin-opener": "catalog:"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.0",
-    "@vitejs/plugin-vue": "^5.2.0",
-    "typescript": "^5.9.0",
-    "vite": "^6.4.0",
-    "vue-tsc": "^2.2.0"
+    "@tauri-apps/cli": "catalog:",
+    "@vitejs/plugin-vue": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vue-tsc": "catalog:"
   },
   "license": "AGPL-3.0-only",
   "repository": {

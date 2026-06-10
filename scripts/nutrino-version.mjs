@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 export function findRepoRoot(startDir = process.cwd()) {
   let current = path.resolve(startDir);
   while (true) {
-    if (fs.existsSync(path.join(current, 'pnpm-workspace.yaml'))) return current;
+    if (fs.existsSync(path.join(current, 'aube-workspace.yaml'))) return current;
     const parent = path.dirname(current);
     if (parent === current) return path.resolve(startDir);
     current = parent;
