@@ -26,3 +26,30 @@ run = "aube run check"
 
 [tasks."test:app"]
 run = "aube run test:app"
+
+[tasks."lint:js"]
+run = "aube run lint:js"
+
+[tasks."format:js"]
+run = "aube run format:js"
+
+[tasks."format:js:check"]
+run = "aube run format:js:check"
+
+[tasks."test:unit"]
+run = "aube run test:unit"
+
+[tasks."check:js"]
+run = "aube run test:js"
+
+[tasks."format:rust"]
+run = "aube run format:rust"
+
+[tasks."format:rust:check"]
+run = "aube run format:rust:check"
+
+[tasks."lint:rust"]
+run = "aube run lint:rust"
+
+[tasks."check:rust"]
+run = "aube run test:rust"

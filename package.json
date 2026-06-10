@@ -24,11 +24,26 @@
     "test:app": "node scripts/check-app-domain.mjs",
     "check:release-workflows": "node scripts/check-release-workflows.mjs",
     "check": "aube run test:js && aube run test:app && aube run test:rust && aube run check:i18n && aube run check:android-mainactivity-bridge && aube run check:release-workflows",
-    "test:js": "node scripts/check-js-tooling.mjs",
-    "test:rust": "node scripts/check-rust-tauri-config.mjs"
+    "test:js": "aube run lint:js && aube run format:js:check && aube run test:unit && node scripts/check-js-tooling.mjs",
+    "test:rust": "aube run check:rust",
+    "lint:js": "oxlint apps/mobile/src/lib/fluid.ts apps/mobile/src/lib/fluid.test.ts vitest.config.ts",
+    "format:js": "oxfmt --write apps/mobile/src/lib/fluid.ts apps/mobile/src/lib/fluid.test.ts vitest.config.ts",
+    "format:js:check": "oxfmt --check apps/mobile/src/lib/fluid.ts apps/mobile/src/lib/fluid.test.ts vitest.config.ts",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "check:rust:config": "node scripts/check-rust-tauri-config.mjs",
+    "format:rust": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml",
+    "format:rust:check": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml -- --check",
+    "lint:rust": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "test:rust:cargo": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets",
+    "check:rust": "aube run check:rust:config && aube run format:rust:check && cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml --no-deps >/dev/null && cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml && aube run lint:rust && aube run test:rust:cargo"
   },
   "devDependencies": {
-    "typescript": "^6.0.3"
+    "typescript": "catalog:",
+    "esbuild": "catalog:",
+    "oxlint": "catalog:",
+    "oxfmt": "catalog:",
+    "vitest": "catalog:"
   },
   "license": "AGPL-3.0-only",
   "repository": {

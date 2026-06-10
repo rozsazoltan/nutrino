@@ -155,9 +155,35 @@ aube run test:rust
 aube run check:release-workflows
 ```
 
-The JavaScript checks cover workspace tooling, aube catalog usage, and package-manager drift. The app checks cover repository-level invariants that are easy to break during feature work, including fluid tracking domain behavior, i18n completeness, Vue SFC syntax, Android bridge patch expectations, and release workflow wiring. The Rust/Tauri checks keep Cargo package versions, Cargo.lock package entries, Tauri config versions, Android versionCode derivation, and important native feature flags aligned.
+Tooling convention across related projects:
 
-CI runs the same checks in `.github/workflows/test.yml`, plus Rust `cargo check` for both Tauri crates.
+```text
+PHP    -> Rector + Pest
+JS/TS  -> Oxlint + Oxfmt + Vitest
+Rust   -> rustfmt + clippy + cargo test
+```
+
+Nutrino currently has no PHP package, so Rector/Pest are not installed here. The active Nutrino gates are JavaScript/TypeScript and Rust/Tauri.
+
+JavaScript quality uses the Oxc stack and Vitest:
+
+```bash
+aube run lint:js
+aube run format:js:check
+aube run test:unit
+```
+
+Rust quality uses the standard Cargo toolchain:
+
+```bash
+aube run format:rust:check
+aube run lint:rust
+aube run test:rust:cargo
+```
+
+The JavaScript checks cover Oxlint, Oxfmt, Vitest unit tests, workspace tooling, aube catalog usage, and package-manager drift. The app checks cover repository-level invariants that are easy to break during feature work, including fluid tracking domain behavior, i18n completeness, Vue SFC syntax, Android bridge patch expectations, and release workflow wiring. The Rust/Tauri checks keep Cargo package versions, Cargo.lock package entries, Tauri config versions, Android versionCode derivation, important native feature flags, formatting, clippy, and desktop crate tests aligned.
+
+CI runs the same focused gates in `.github/workflows/test.yml`. The mobile Tauri crate is validated through `cargo metadata` on Linux because it contains mobile-only capabilities; the desktop Tauri crate is checked, linted, and tested with Cargo.
 
 ## Releases
 

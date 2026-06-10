@@ -33,6 +33,7 @@ import {
 } from './lib/storage';
 import { APP_VERSION, checkServerHealth, normalizeApiBaseUrl, pingServer, pullFromServer, pushToServer, requestDesktopUpdateCheck, listMobileHandoffRequests, mobileHandoffWebSocketUrl, respondMobileHandoffRequest, uploadMobileHandoffResultChunk, syncGitHubCsvSources } from './lib/api';
 import { checkNutrinoUpdates, type UpdateCheckResult } from './lib/releases';
+import { ALCOHOL_KCAL_PRESETS as alcoholKcalPresets, FLUID_QUICK_AMOUNTS_DL as fluidQuickAmountsDl, estimateFluidAlcoholKcal, fluidLogKcal, formatFluidAmount as formatFluidAmountValue } from './lib/fluid';
 import { lucideSvg, type IconName } from './icons';
 
 type Tab = 'home' | 'diary' | 'recipes' | 'profile';
@@ -718,15 +719,6 @@ const mealIconSvg: Record<string, string> = {
   bakery_dining: lucideSvg('cookie'),
   water_drop: lucideSvg('glassWater'),
 };
-
-const fluidQuickAmountsDl = [1, 2, 3];
-const alcoholKcalPresets: Array<{ kind: FluidAlcoholKind; kcal: number; labelKey: string; hintKey: string }> = [
-  { kind: 'beer', kcal: 45, labelKey: 'alcoholBeer', hintKey: 'alcoholBeerHint' },
-  { kind: 'wine', kcal: 85, labelKey: 'alcoholWine', hintKey: 'alcoholWineHint' },
-  { kind: 'spirits', kcal: 230, labelKey: 'alcoholSpirits', hintKey: 'alcoholSpiritsHint' },
-  { kind: 'cocktail', kcal: 160, labelKey: 'alcoholCocktail', hintKey: 'alcoholCocktailHint' },
-  { kind: 'other', kcal: 200, labelKey: 'alcoholOther', hintKey: 'alcoholOtherHint' },
-];
 
 let pendingStateSaveTimer: number | undefined;
 let pendingStateSaveIdle: number | undefined;
@@ -12896,14 +12888,12 @@ function selectedAlcoholPreset() {
 }
 
 function fluidAlcoholKcalEstimate(amountDl = Number(fluidAmountDl.value || 0), kind: FluidAlcoholKind = fluidAlcoholKind.value) {
-  if (!fluidIsAlcohol.value) return 0;
-  const preset = alcoholKcalPresets.find((item) => item.kind === kind) || alcoholKcalPresets.at(-1)!;
-  if (kind === 'other') return Math.max(0, Math.round(Number(fluidCustomKcal.value || preset.kcal)));
-  return Math.max(0, Math.round(Number(amountDl || 0) * preset.kcal));
-}
-
-function fluidLogKcal(entry: FluidLog) {
-  return entry.is_alcohol ? Math.max(0, Math.round(Number(entry.kcal || 0))) : 0;
+  return estimateFluidAlcoholKcal({
+    amountDl,
+    isAlcohol: fluidIsAlcohol.value,
+    kind,
+    customKcal: fluidCustomKcal.value,
+  });
 }
 
 const fluidKcalPreview = computed(() => fluidAlcoholKcalEstimate());
@@ -12923,8 +12913,7 @@ function fluidLogSubtitle(entry: FluidLog) {
 }
 
 function formatFluidAmount(amountDl: number) {
-  const rounded = Math.round(Number(amountDl || 0) * 10) / 10;
-  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)} dl`;
+  return formatFluidAmountValue(amountDl);
 }
 
 function openFluidAdd() {

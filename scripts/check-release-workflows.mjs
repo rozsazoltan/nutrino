@@ -22,12 +22,15 @@ expectContains('.github/workflows/release.yml', 'github-release finalize', 'Rele
 expectContains('.github/workflows/release.yml', 'github-release cleanup', 'Release workflow should clean up failed release branches.');
 expectContains('.github/workflows/release.yml', 'verzly/tauri-release', 'Release workflow should delegate platform builds to tauri-release.');
 expectContains('.github/workflows/release.yml', 'verzly/setup-aube', 'Release workflow should install JavaScript dependencies through setup-aube.');
-expectContains('.github/workflows/test.yml', 'aube run check', 'Test workflow should run repository checks through aube.');
-
 expectContains('.github/workflows/test.yml', 'aube run test:js', 'Test workflow should run JavaScript tooling checks.');
+expectContains('.github/workflows/test.yml', 'aube run build --filter nutrino-mobile', 'Test workflow should build the mobile web app.');
+expectContains('.github/workflows/test.yml', 'aube run build --filter nutrino-desktop', 'Test workflow should build the desktop web app.');
 expectContains('.github/workflows/test.yml', 'node scripts/check-rust-tauri-config.mjs', 'Test workflow should run Rust/Tauri config checks.');
-expectContains('.github/workflows/test.yml', 'cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml --locked --no-deps', 'Test workflow should validate the mobile Rust manifest without a host-only cargo check.');
-expectContains('.github/workflows/test.yml', 'cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked', 'Test workflow should check the desktop Rust crate.');
+expectContains('.github/workflows/test.yml', 'cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml --no-deps', 'Test workflow should validate the mobile Rust manifest without a host-only cargo check.');
+expectContains('.github/workflows/test.yml', 'cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml', 'Test workflow should check the desktop Rust crate.');
+expectContains('.github/workflows/test.yml', 'cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check', 'Test workflow should check Rust formatting.');
+expectContains('.github/workflows/test.yml', 'cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings', 'Test workflow should lint the desktop Rust crate.');
+expectContains('.github/workflows/test.yml', 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets', 'Test workflow should run desktop Rust tests.');
 expectContains('.github/workflows/test.yml', 'Restore Cargo cache', 'Test workflow should cache Cargo dependencies.');
 expectContains('.github/workflows/release.yml', 'Restore Cargo and Tauri cache', 'Release workflow should cache desktop Cargo/Tauri builds.');
 expectContains('.github/workflows/release.yml', 'Restore Android build cache', 'Release workflow should cache Android Cargo/Gradle/Tauri builds.');

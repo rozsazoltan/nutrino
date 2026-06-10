@@ -77,6 +77,17 @@ expectContains('apps/desktop/src-tauri/Cargo.toml', 'base64 = "0.22"', 'Desktop 
 expectContains('.gitignore', '**/src-tauri/gen/android/*.jks', 'Android keystores should be ignored.');
 expectContains('.gitignore', '**/src-tauri/gen/android/keystore.properties', 'Android keystore properties should be ignored.');
 
+
+const rootPackage = readJson('package.json');
+expect(rootPackage.scripts['format:rust:check']?.includes('cargo fmt'), 'Rust checks should include rustfmt.');
+expect(rootPackage.scripts['lint:rust']?.includes('cargo clippy'), 'Rust checks should include clippy.');
+expect(rootPackage.scripts['test:rust:cargo']?.includes('cargo test'), 'Rust checks should include cargo test.');
+expect(rootPackage.scripts['check:rust']?.includes('cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml'), 'Rust checks should validate the mobile manifest without host-checking mobile-only capabilities.');
+expect(rootPackage.scripts['check:rust']?.includes('cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml'), 'Rust checks should check the desktop crate.');
+expectContains('mise.toml', '[tasks."format:rust:check"]', 'mise should expose Rust formatting checks.');
+expectContains('mise.toml', '[tasks."lint:rust"]', 'mise should expose Rust lint checks.');
+expectContains('mise.toml', '[tasks."check:rust"]', 'mise should expose Rust checks.');
+
 if (failures.length > 0) {
   console.error('Rust/Tauri config check failed:');
   for (const failure of failures) console.error(`- ${failure}`);
