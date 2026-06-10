@@ -1,3 +1,4 @@
+import { drinkKindFromAlcoholKind, waterEquivalentDl } from './fluid';
 import type {
   ActivityDefinition,
   ActivityLevel,
@@ -176,6 +177,11 @@ export function defaultSettings(): AppSettings {
     calorie_deficit_enabled: false,
     target_deficit_kcal: 300,
     calorie_limit_warning_enabled: false,
+    fluid_tracking_enabled: false,
+    daily_fluid_goal_dl: 25,
+    fluid_activity_bonus_dl_per_100_kcal: 2,
+    fluid_reminders_enabled: false,
+    fluid_reminder_interval_min: 120,
     exercise_kcal_eatback_percent: 50,
     kcal_adjustment: 0,
     macro_carbs_percent: 60,
@@ -229,6 +235,15 @@ function normalizeFluidLog(entry: Partial<FluidLog> | null | undefined): FluidLo
     id: String(entry.id || generateId('fluid')),
     consumed_at: Number.isFinite(consumedAt) ? consumedAt : Date.now(),
     amount_dl: Math.max(0, Math.round(amountDl * 10) / 10),
+    drink_kind:
+      entry.drink_kind || (entry.is_alcohol === true ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'water'),
+    water_equivalent_dl: Number.isFinite(Number(entry.water_equivalent_dl))
+      ? Math.max(0, Math.round(Number(entry.water_equivalent_dl) * 10) / 10)
+      : waterEquivalentDl({
+          amountDl,
+          kind:
+            entry.drink_kind || (entry.is_alcohol === true ? drinkKindFromAlcoholKind(entry.alcohol_kind) : 'water'),
+        }),
     is_alcohol: entry.is_alcohol === true,
     alcohol_kind: entry.alcohol_kind || null,
     kcal: Number.isFinite(Number(entry.kcal)) ? Math.max(0, Math.round(Number(entry.kcal))) : 0,
@@ -317,6 +332,8 @@ export function loadState(): AppState {
       meal_reminders_enabled: storedSettings.meal_reminders_enabled === true,
       calorie_deficit_enabled: storedSettings.calorie_deficit_enabled === true,
       calorie_limit_warning_enabled: storedSettings.calorie_limit_warning_enabled === true,
+      fluid_tracking_enabled: storedSettings.fluid_tracking_enabled === true,
+      fluid_reminders_enabled: storedSettings.fluid_reminders_enabled === true,
       health_diary_enabled: storedSettings.health_diary_enabled === true,
       protect_external_catalog_items: storedSettings.protect_external_catalog_items !== false,
       include_inactive_catalog_items: storedSettings.include_inactive_catalog_items === true,
@@ -326,6 +343,15 @@ export function loadState(): AppState {
       exercise_kcal_eatback_percent: Number.isFinite(Number(storedSettings.exercise_kcal_eatback_percent))
         ? Number(storedSettings.exercise_kcal_eatback_percent)
         : defaults.settings.exercise_kcal_eatback_percent,
+      daily_fluid_goal_dl: Number.isFinite(Number(storedSettings.daily_fluid_goal_dl))
+        ? Math.max(1, Number(storedSettings.daily_fluid_goal_dl))
+        : defaults.settings.daily_fluid_goal_dl,
+      fluid_activity_bonus_dl_per_100_kcal: Number.isFinite(Number(storedSettings.fluid_activity_bonus_dl_per_100_kcal))
+        ? Math.max(0, Number(storedSettings.fluid_activity_bonus_dl_per_100_kcal))
+        : defaults.settings.fluid_activity_bonus_dl_per_100_kcal,
+      fluid_reminder_interval_min: Number.isFinite(Number(storedSettings.fluid_reminder_interval_min))
+        ? Math.max(30, Math.round(Number(storedSettings.fluid_reminder_interval_min)))
+        : defaults.settings.fluid_reminder_interval_min,
       micronutrient_limits: {
         ...DEFAULT_MICRONUTRIENT_LIMITS,
         ...(storedSettings.micronutrient_limits && typeof storedSettings.micronutrient_limits === 'object'

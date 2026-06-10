@@ -7562,3 +7562,70 @@ select:focus {
   font-weight: 850;
   color: var(--primary);
 }
+
+/* v0.14 fluid tracking indicator and sheet polish */
+.home-fluid-chip {
+  position: absolute;
+  top: 10px;
+  right: 18px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0;
+  color: color-mix(in srgb, #F2F8EE 86%, transparent);
+  background: transparent;
+  border: 0;
+  font-size: .72rem;
+  font-weight: 750;
+  line-height: 1;
+}
+.home-fluid-chip svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+}
+.home-fluid-chip:active { transform: none; }
+.fluid-entry-sheet {
+  padding-inline: max(18px, env(safe-area-inset-left)) max(18px, env(safe-area-inset-right)) !important;
+  gap: 16px !important;
+}
+.fluid-entry-sheet > h2,
+.fluid-entry-sheet > .helper,
+.fluid-entry-sheet > .field-label,
+.fluid-entry-sheet > .input,
+.fluid-entry-sheet > .filled-button,
+.fluid-entry-sheet > .fluid-quick-row,
+.fluid-entry-sheet > .fluid-kind-grid,
+.fluid-entry-sheet > .fluid-kcal-preview {
+  width: 100%;
+  margin-inline: 0;
+}
+.fluid-kind-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.fluid-kind-button {
+  min-height: 64px;
+  align-items: flex-start;
+  text-align: left;
+}
+.fluid-kind-button.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 16%, var(--surface));
+}
+.fluid-kind-button.alcohol.active {
+  background: color-mix(in srgb, #ef5350 16%, var(--surface));
+}
+.tracking-fluid-summary {
+  margin: 0;
+  padding: 0 4px;
+}
+@media (max-width: 380px) {
+  .fluid-kind-grid { grid-template-columns: 1fr; }
+  .home-fluid-chip b { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}

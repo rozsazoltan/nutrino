@@ -11,7 +11,7 @@ export type AppChannel = 'dev' | 'stable';
 export type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 export type FoodCatalogKind = 'food' | 'ingredient';
 export type CatalogSourceKind = 'desktop' | 'github' | 'custom' | 'qr';
-export type ProfilePurpose = 'weight_loss' | 'weight_gain' | 'healthy_eating' | 'meal_logging' | 'health_issue_logging';
+export type ProfilePurpose = 'weight_loss' | 'weight_gain' | 'healthy_eating' | 'meal_logging' | 'fluid_tracking' | 'health_issue_logging';
 export type HealthCategoryType = 'pain' | 'digestive' | 'stool' | 'skin' | 'respiratory' | 'sleep' | 'mood' | 'injury' | 'energy' | 'other';
 export type HealthAttachmentType = 'photo' | 'video';
 
@@ -229,11 +229,14 @@ export interface ActivityLog {
 
 
 export type FluidAlcoholKind = 'beer' | 'wine' | 'spirits' | 'cocktail' | 'other';
+export type FluidDrinkKind = 'water' | 'sparkling_water' | 'tea' | 'coffee' | 'soft_drink' | 'juice' | 'milk' | 'sports_drink' | 'beer' | 'wine' | 'spirits' | 'cocktail' | 'other_alcohol';
 
 export interface FluidLog {
   id: string;
   consumed_at: number;
   amount_dl: number;
+  drink_kind?: FluidDrinkKind | null;
+  water_equivalent_dl?: number | null;
   is_alcohol: boolean;
   alcohol_kind?: FluidAlcoholKind | null;
   kcal?: number | null;
@@ -405,6 +408,11 @@ export interface AppSettings {
   calorie_deficit_enabled: boolean;
   target_deficit_kcal: number;
   calorie_limit_warning_enabled: boolean;
+  fluid_tracking_enabled: boolean;
+  daily_fluid_goal_dl: number;
+  fluid_activity_bonus_dl_per_100_kcal: number;
+  fluid_reminders_enabled: boolean;
+  fluid_reminder_interval_min: number;
   exercise_kcal_eatback_percent: number;
   kcal_adjustment: number;
   macro_carbs_percent: number;
