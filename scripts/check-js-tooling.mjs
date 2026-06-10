@@ -163,7 +163,8 @@ expectContains(
   'depends = fastQualityStepNames',
   'hk push-quality steps should wait for fast quality checks before running expensive checks.',
 );
-expect(!read('hk.pkl').includes('["pre-commit"]'), 'hk should not define a pre-commit hook.');
+expectContains('hk.pkl', '["pre-commit"]', 'hk should define a fast formatting pre-commit hook.');
+expectContains('hk.pkl', 'fix = true', 'hk pre-commit should auto-fix formatting only.');
 expectContains('hk.pkl', '["pre-push"]', 'hk should define a pre-push quality hook.');
 
 for (const file of [

@@ -111,6 +111,11 @@ local fullQualitySteps = new Mapping<String, Step> {
 }
 
 hooks {
+  ["pre-commit"] {
+    fix = true
+    steps = formatSteps
+  }
+
   ["pre-push"] {
     steps = fullQualitySteps
   }

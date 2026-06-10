@@ -26,7 +26,7 @@ Install hooks once per clone:
 hk install
 ```
 
-The repository uses `hk` directly for Git hooks. There is intentionally no `pre-commit` hook, so commits stay fast and lazygit does not block on long-running checks. `pre-push` is the quality gate: it checks formatting, JavaScript linting, Vitest unit tests, app-domain checks, i18n checks, Android bridge checks, release workflow checks, Rust/Tauri checks, and web builds before code is pushed. Re-run `hk install` after changing `hk.pkl`. If an older local hook path is still configured, clear it once with `git config --local --unset-all core.hooksPath`.
+The repository uses `hk` directly for Git hooks. `pre-commit` only runs fast JavaScript and Rust formatters, so commits stay quick while formatting drift is fixed before it reaches a push. `pre-push` is the quality gate: it checks formatting, JavaScript linting, Vitest unit tests, app-domain checks, i18n checks, Android bridge checks, release workflow checks, Rust/Tauri checks, and web builds before code is pushed. Re-run `hk install` after changing `hk.pkl`. If an older local hook path is still configured, clear it once with `git config --local --unset-all core.hooksPath`.
 
 Run the apps locally:
 
@@ -93,7 +93,7 @@ Run hook formatters manually:
 hk fix
 ```
 
-`pre-push` runs separate visible steps for JavaScript formatting, Rust formatting, JavaScript linting, Vitest unit tests, app-domain checks, i18n checks, Android bridge checks, release workflow checks, Rust/Tauri checks, and web builds. Each check step depends on the formatter check steps, so tests do not race against formatting validation. Use `hk fix` or `aube run format` before committing when files need formatting.
+`pre-commit` runs formatter fix steps only. `pre-push` runs separate visible steps for JavaScript formatting checks, Rust formatting checks, JavaScript linting, Vitest unit tests, app-domain checks, i18n checks, Android bridge checks, release workflow checks, Rust/Tauri checks, and web builds. Each check step depends on the formatter check steps, so tests do not race against formatting validation. Use `hk fix` or `aube run format` manually when you want to format without committing.
 
 ## WIP commits
 
