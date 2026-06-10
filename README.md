@@ -91,7 +91,8 @@ Data flows:
 ```text
 Node.js 24
 aube
-rust stable
+Rust stable
+hk + pkl for Git hooks
 mise, recommended
 Tauri prerequisites for the target platform
 Android SDK + NDK for Android builds
@@ -104,6 +105,7 @@ Xcode and Apple signing assets for signed iOS builds
 mise trust
 mise install
 aube install
+aube run hooks:install
 ```
 
 ### Run locally
@@ -146,6 +148,20 @@ Run the repository checks:
 aube run check
 ```
 
+Format before committing:
+
+```bash
+aube run format
+```
+
+Install the local Git hook once per clone:
+
+```bash
+aube run hooks:install
+```
+
+The pre-commit hook is managed by `hk.pkl`. It runs the JavaScript and Rust formatters through hk before the commit is created.
+
 Run focused checks when iterating locally:
 
 ```bash
@@ -183,7 +199,7 @@ aube run test:rust:cargo
 
 The JavaScript checks cover Oxlint, Oxfmt, Vitest unit tests, workspace tooling, aube catalog usage, and package-manager drift. The app checks cover repository-level invariants that are easy to break during feature work, including fluid tracking domain behavior, i18n completeness, Vue SFC syntax, Android bridge patch expectations, and release workflow wiring. The Rust/Tauri checks keep Cargo package versions, Cargo.lock package entries, Tauri config versions, Android versionCode derivation, important native feature flags, formatting, clippy, and desktop crate tests aligned.
 
-CI runs the same focused gates in `.github/workflows/test.yml`. The mobile Tauri crate is validated through `cargo metadata` on Linux because it contains mobile-only capabilities; the desktop Tauri crate is checked, linted, and tested with Cargo.
+CI runs the same focused gates in `.github/workflows/test.yml`. The workflow installs mise-managed tools, runs the hk formatting hooks first, and then runs the JavaScript, app-domain, i18n, release workflow, and Rust/Tauri checks. The mobile Tauri crate is validated through `cargo metadata` on Linux because it contains mobile-only capabilities; the desktop Tauri crate is checked, linted, and tested with Cargo.
 
 ## Releases
 
@@ -262,7 +278,8 @@ The workflow can also delete moving tags such as `latest`, `vX`, and `vX.Y` when
 .github/release      release tool configuration
 .github/workflows    CI, release, and delete-release workflows
 aube-workspace.yaml  JavaScript workspace and dependency catalog
-mise.toml            local toolchain and task shortcuts
+mise.toml            local toolchain dependencies
+hk.pkl               pre-commit and format hook configuration
 apps/desktop         Tauri desktop app
 apps/mobile          Tauri mobile app
 packages/shared      shared workspace package

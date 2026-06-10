@@ -1,0 +1,82 @@
+amends "package://github.com/jdx/hk/releases/download/v1.18.1/hk@1.18.1#/Config.pkl"
+
+local jsFormatters = new Mapping<String, Step> {
+  ["oxfmt"] {
+    glob = List(
+      "apps/mobile/src/lib/**/*.ts",
+      "apps/desktop/src/lib/**/*.ts",
+      "vitest.config.ts",
+      "scripts/**/*.mjs",
+    )
+    check = "aube run format:js:check"
+    fix = "aube run format:js"
+  }
+}
+
+local rustFormatters = new Mapping<String, Step> {
+  ["rustfmt"] {
+    glob = List(
+      "apps/desktop/src-tauri/**/*.rs",
+      "apps/mobile/src-tauri/**/*.rs",
+    )
+    check = "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml -- --check"
+    fix = "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml"
+  }
+}
+
+local formatters = new Mapping<String, Step> {
+  ["oxfmt"] {
+    glob = List(
+      "apps/mobile/src/lib/**/*.ts",
+      "apps/desktop/src/lib/**/*.ts",
+      "vitest.config.ts",
+      "scripts/**/*.mjs",
+    )
+    check = "aube run format:js:check"
+    fix = "aube run format:js"
+  }
+
+  ["rustfmt"] {
+    glob = List(
+      "apps/desktop/src-tauri/**/*.rs",
+      "apps/mobile/src-tauri/**/*.rs",
+    )
+    check = "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml -- --check"
+    fix = "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml"
+  }
+}
+
+hooks {
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps = formatters
+  }
+
+  ["fix"] {
+    fix = true
+    steps = formatters
+  }
+
+  ["check"] {
+    steps = formatters
+  }
+
+  ["fix-js"] {
+    fix = true
+    steps = jsFormatters
+  }
+
+  ["check-js"] {
+    steps = jsFormatters
+  }
+
+  ["fix-rust"] {
+    fix = true
+    steps = rustFormatters
+  }
+
+  ["check-rust"] {
+    steps = rustFormatters
+  }
+}

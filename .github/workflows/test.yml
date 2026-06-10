@@ -32,10 +32,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up mise tools
+        uses: jdx/mise-action@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          cache: true
+          install: true
+          github_token: ${{ github.token }}
 
       - name: Restore aube cache
         uses: actions/cache@v5
@@ -51,6 +53,12 @@ jobs:
         uses: verzly/setup-aube@v1
         with:
           run_install: true
+
+      - name: Run JavaScript format hook
+        shell: bash
+        env:
+          HK_MISE: "1"
+        run: hk run fix-js
 
       - name: Run JavaScript quality gate
         shell: bash
@@ -82,17 +90,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up mise tools
+        uses: jdx/mise-action@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          cache: true
+          install: true
+          github_token: ${{ github.token }}
 
-      - name: Set up Rust
+      - name: Show Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
-          rustup update stable
-          rustup default stable
           rustc --version
           cargo --version
 
@@ -123,6 +131,12 @@ jobs:
       - name: Run Rust/Tauri config checks
         shell: bash
         run: node scripts/check-rust-tauri-config.mjs
+
+      - name: Run Rust format hook
+        shell: bash
+        env:
+          HK_MISE: "1"
+        run: hk run fix-rust
 
       - name: Check Rust formatting
         shell: bash

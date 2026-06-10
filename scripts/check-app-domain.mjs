@@ -17,6 +17,10 @@ function expectContains(file, needle, message) {
   expect(read(file).includes(needle), message);
 }
 
+function expectMatches(file, pattern, message) {
+  expect(pattern.test(read(file)), message);
+}
+
 function alcoholKcal(amountDl, kind, customKcal = 200) {
   const presets = {
     beer: 45,
@@ -42,10 +46,10 @@ expectContains('apps/mobile/src/types.ts', 'fluidLogs: FluidLog[];', 'AppState s
 expectContains('apps/mobile/src/lib/storage.ts', 'normalizeFluidLog', 'Storage should normalize fluid logs.');
 expectContains('apps/mobile/src/App.vue', "type AddMode = 'food' | 'activity' | 'fluid' | null", 'Quick add mode should support fluids.');
 expectContains('apps/mobile/src/lib/fluid.ts', 'export const FLUID_QUICK_AMOUNTS_DL = [1, 2, 3]', 'Fluid quick amount buttons should be configured.');
-expectContains('apps/mobile/src/lib/fluid.ts', "{ kind: 'beer', kcal: 45", 'Beer preset should be available.');
-expectContains('apps/mobile/src/lib/fluid.ts', "{ kind: 'wine', kcal: 85", 'Wine preset should be available.');
-expectContains('apps/mobile/src/lib/fluid.ts', "{ kind: 'spirits', kcal: 230", 'Spirits preset should be available.');
-expectContains('apps/mobile/src/lib/fluid.ts', "{ kind: 'cocktail', kcal: 160", 'Cocktail preset should be available.');
+expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'beer',[\s\S]*?kcal:\s*45/, 'Beer preset should be available.');
+expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'wine',[\s\S]*?kcal:\s*85/, 'Wine preset should be available.');
+expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'spirits',[\s\S]*?kcal:\s*230/, 'Spirits preset should be available.');
+expectMatches('apps/mobile/src/lib/fluid.ts', /kind:\s*'cocktail',[\s\S]*?kcal:\s*160/, 'Cocktail preset should be available.');
 expectContains('apps/mobile/src/App.vue', 'function addFluidLog()', 'Fluid logging action should exist.');
 expectContains('apps/mobile/src/App.vue', "from './lib/fluid'", 'Mobile app should use the shared fluid helpers.');
 expectContains('apps/mobile/src/lib/fluid.test.ts', "describe('fluid tracking helpers'", 'Fluid helper unit tests should exist.');

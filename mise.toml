@@ -2,54 +2,5 @@
 node = "24"
 aube = "latest"
 rust = "stable"
-
-[tasks."dev:desktop"]
-run = "aube run dev:desktop"
-
-[tasks."dev:android"]
-run = "aube run dev:android"
-
-[tasks."dev:ios"]
-run = "aube run dev:ios"
-
-[tasks."build:desktop"]
-run = "aube run build:desktop"
-
-[tasks."build:android"]
-run = "aube run build:android"
-
-[tasks."build:ios"]
-run = "aube run build:ios"
-
-[tasks."check"]
-run = "aube run check"
-
-[tasks."test:app"]
-run = "aube run test:app"
-
-[tasks."lint:js"]
-run = "aube run lint:js"
-
-[tasks."format:js"]
-run = "aube run format:js"
-
-[tasks."format:js:check"]
-run = "aube run format:js:check"
-
-[tasks."test:unit"]
-run = "aube run test:unit"
-
-[tasks."check:js"]
-run = "aube run test:js"
-
-[tasks."format:rust"]
-run = "aube run format:rust"
-
-[tasks."format:rust:check"]
-run = "aube run format:rust:check"
-
-[tasks."lint:rust"]
-run = "aube run lint:rust"
-
-[tasks."check:rust"]
-run = "aube run test:rust"
+hk = "latest"
+pkl = "latest"
