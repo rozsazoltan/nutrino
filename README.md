@@ -18,7 +18,6 @@ Nutrino is a local-first nutrition and health diary for mobile and desktop. It h
   - [Desktop handoff](#desktop-handoff)
 - [Updates](#updates)
 - [Privacy](#privacy)
-- [License](#license)
 
 ## Overview
 
@@ -38,7 +37,9 @@ After installing, keep future APK updates signed with the same release key. Andr
 
 ### iOS
 
-Install the iOS build only from a trusted signed package. iOS installation requires valid Apple signing and provisioning.
+Nutrino can run on iOS, but iOS builds require an Apple Developer account for signing and provisioning. I do not currently have an Apple Developer account, so I cannot distribute an installable iOS package yet.
+
+The iOS target remains part of the project so the app can be built and tested on iOS when the required Apple signing setup becomes available.
 
 ### Desktop
 
@@ -124,3 +125,9 @@ Desktop sync is catalog-oriented. Mobile meal diary entries, activity logs, and 
 ## License
 
 Nutrino is licensed under `AGPL-3.0-only`.
+
+### Acknowledgements
+
+Nutrino is inspired by OpenNutriTracker and its privacy-first approach to nutrition tracking. Nutrino does not copy OpenNutriTracker source code or assets, but the original project helped shape the direction of a local-first, open-source nutrition diary.
+
+Nutrino is built with Vue, TypeScript, Vite, Rust, Tauri, JSZip and Lucide Icons. Thanks to these projects and their maintainers for the tooling, runtime, backup, native app and icon foundations used by Nutrino.
