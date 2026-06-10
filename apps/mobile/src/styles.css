@@ -9701,6 +9701,7 @@ select:focus {
 }
 
 .fluid-summary-card .meal-header {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   align-items: center;
 }
 
