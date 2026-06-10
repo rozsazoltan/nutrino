@@ -3,19 +3,14 @@ import { spawnSync } from 'node:child_process';
 
 const mode = process.argv[2] || 'check';
 
-const commandName = (command) => {
-  if (process.platform !== 'win32') return command;
-  if (command === 'aube') return 'aube.cmd';
-  return command;
-};
-
 function run(command, args = []) {
   const display = [command, ...args].join(' ');
   console.log(`\n> ${display}`);
-  const result = spawnSync(commandName(command), args, {
+  const result = spawnSync(command, args, {
     stdio: 'inherit',
-    shell: false,
+    shell: process.platform === 'win32',
     env: process.env,
+    windowsHide: true,
   });
 
   if (result.error) {

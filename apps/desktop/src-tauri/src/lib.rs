@@ -6269,7 +6269,10 @@ mod tests {
 
     #[test]
     fn normalizes_loose_names_and_numeric_keys() {
-        assert_eq!(loose_name_key("  Rántott--hús  extra   "), "rántott hús extra");
+        assert_eq!(
+            loose_name_key("  Rántott--hús  extra   "),
+            "rántott hús extra"
+        );
         assert_eq!(loose_name_key("!!!"), "");
         assert_eq!(normalize_text("  Mixed   CASE  text "), "mixed case text");
         assert_eq!(number_key(12.3454), 12345);
