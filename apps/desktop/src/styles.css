@@ -5307,3 +5307,722 @@ body {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 }
+
+/* v0.16.1 senior correction: desktop foods as action cards, top-layer menus, calm settings subdialogs. */
+.desktop-shell .desktop-food-card-list {
+  display: grid !important;
+  gap: 10px !important;
+  overflow: visible !important;
+}
+
+.desktop-shell .food-list-card {
+  display: grid !important;
+  gap: 8px !important;
+  padding: 16px !important;
+  border: 0 !important;
+  outline: 0 !important;
+  border-radius: 26px !important;
+  background: var(--desktop-exec-surface) !important;
+  color: var(--desktop-exec-ink) !important;
+  box-shadow: var(--desktop-exec-shadow-soft) !important;
+  overflow: visible !important;
+  position: relative !important;
+}
+
+.desktop-shell .food-title-row h3,
+.desktop-shell .catalog-title-row h3,
+.desktop-shell .catalog-title-row h4 {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  overflow-wrap: normal !important;
+}
+
+.desktop-shell .food-card-description,
+.desktop-shell .food-card-note,
+.desktop-shell .catalog-card-description,
+.desktop-shell .activity-card-copy > p {
+  min-width: 0 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  color: var(--desktop-exec-muted) !important;
+}
+
+.desktop-shell .food-card-description {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin: 0 !important;
+  font-size: .86rem !important;
+}
+
+.desktop-shell .food-card-description span + span::before {
+  content: '·' !important;
+  margin-right: 8px !important;
+  color: color-mix(in srgb, var(--desktop-exec-muted) 64%, transparent) !important;
+}
+
+.desktop-shell .food-card-metrics,
+.desktop-shell .recipe-stat-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)) !important;
+  gap: 8px !important;
+  text-align: left !important;
+}
+
+.desktop-shell .food-card-metrics .mini-stat,
+.desktop-shell .recipe-stat-grid .mini-stat {
+  min-height: 58px !important;
+  display: grid !important;
+  align-content: center !important;
+  text-align: left !important;
+  border: 0 !important;
+  outline: 0 !important;
+  border-radius: 18px !important;
+  background: color-mix(in srgb, var(--desktop-exec-surface-soft) 78%, transparent) !important;
+  box-shadow: none !important;
+  padding: 10px 12px !important;
+}
+
+.desktop-shell .recipe-stat-grid-secondary .mini-stat {
+  opacity: .9 !important;
+}
+
+.desktop-shell .catalog-list-card,
+.desktop-shell .food-list-card,
+.desktop-shell .activity-card {
+  isolation: auto !important;
+}
+
+.desktop-shell .catalog-list-card-menu-open,
+.desktop-shell .catalog-list-card:has(.catalog-action-menu[open]),
+.desktop-shell .food-list-card:has(.catalog-action-menu[open]),
+.desktop-shell .activity-card:has(.catalog-action-menu[open]) {
+  z-index: 2147483600 !important;
+  position: relative !important;
+  transform: translateZ(0) !important;
+}
+
+.desktop-shell .catalog-action-menu {
+  z-index: 2147483601 !important;
+}
+
+.desktop-shell .catalog-action-menu[open] {
+  z-index: 2147483646 !important;
+}
+
+.desktop-shell .catalog-menu-popover {
+  z-index: 2147483647 !important;
+  position: absolute !important;
+  isolation: isolate !important;
+  contain: none !important;
+}
+
+.desktop-shell .danger-row-v040 {
+  background: transparent !important;
+  color: var(--desktop-exec-ink) !important;
+}
+
+.desktop-shell .danger-row-v040 .mobile-setting-icon {
+  background: color-mix(in srgb, var(--error) 13%, transparent) !important;
+  color: var(--error) !important;
+}
+
+.desktop-shell .danger-row-v040 .mobile-setting-copy b {
+  color: var(--desktop-exec-ink) !important;
+}
+
+.desktop-shell .danger-row-v040 .mobile-setting-copy small {
+  color: var(--desktop-exec-muted) !important;
+}
+
+.desktop-shell .danger-row-v040:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 7%, transparent) !important;
+}
+
+.desktop-shell .danger-row-v040:hover .mobile-setting-icon {
+  background: color-mix(in srgb, var(--error) 18%, transparent) !important;
+  color: var(--error) !important;
+}
+
+.desktop-shell .desktop-info-dialog {
+  width: min(760px, calc(100vw - 32px)) !important;
+  max-height: min(780px, calc(100vh - 48px)) !important;
+  overflow: auto !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--desktop-exec-popover) !important;
+  color: var(--desktop-exec-ink) !important;
+  box-shadow: var(--desktop-exec-shadow) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(1.12) !important;
+  backdrop-filter: blur(28px) saturate(1.12) !important;
+}
+
+.desktop-shell .desktop-info-dialog-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: start !important;
+  gap: 16px !important;
+}
+
+.desktop-shell .desktop-info-dialog-body {
+  display: grid !important;
+  gap: 14px !important;
+  margin-top: 16px !important;
+}
+
+.desktop-shell .desktop-info-dialog-body h3 {
+  margin: 0 !important;
+  color: var(--desktop-exec-ink) !important;
+  font-size: 1.2rem !important;
+  font-weight: 800 !important;
+}
+
+.desktop-shell .desktop-info-dialog-body p,
+.desktop-shell .desktop-info-dialog-body .muted {
+  color: var(--desktop-exec-muted) !important;
+  opacity: 1 !important;
+  line-height: 1.55 !important;
+}
+
+.desktop-shell .submodal-license-list {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)) !important;
+  gap: 10px !important;
+}
+
+.desktop-shell .submodal-license-list .license-card {
+  min-height: 72px !important;
+  display: grid !important;
+  grid-template-columns: 42px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 12px !important;
+  border: 0 !important;
+  border-radius: 22px !important;
+  background: var(--desktop-exec-surface-soft) !important;
+  color: var(--desktop-exec-ink) !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .submodal-license-list .license-card > strong {
+  grid-column: auto !important;
+  justify-self: end !important;
+}
+
+.desktop-shell .about-dialog-body .about-logo {
+  width: 76px !important;
+  height: 76px !important;
+  border-radius: 24px !important;
+  display: grid !important;
+  place-items: center !important;
+  background: var(--desktop-exec-surface-soft) !important;
+}
+
+.desktop-shell .settings-row-v040 .settings-row-chevron,
+.desktop-shell .mobile-setting-row .settings-row-chevron {
+  grid-column: 3 !important;
+  justify-self: end !important;
+  align-self: center !important;
+  margin-left: auto !important;
+}
+
+@media (min-width: 1180px) {
+  .desktop-shell .food-card-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .desktop-shell .recipe-stat-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+}
+
+/* v0.16.2 final senior UX pass: stable hover contrast, card-list catalogs, polished subdialogs. */
+:root {
+  --senior-bg: #f7faf3;
+  --senior-ink: #121812;
+  --senior-muted: #4f5d50;
+  --senior-surface: rgba(255, 255, 255, 0.66);
+  --senior-surface-soft: rgba(255, 255, 255, 0.42);
+  --senior-surface-strong: rgba(255, 255, 255, 0.88);
+  --senior-hover: rgba(4, 122, 58, 0.085);
+  --senior-hover-strong: rgba(4, 122, 58, 0.13);
+  --senior-danger-soft: rgba(186, 26, 26, 0.105);
+  --senior-danger-text: #9f1717;
+  --senior-shadow: 0 18px 52px rgba(18, 48, 28, 0.075), 0 2px 14px rgba(18, 48, 28, 0.035);
+  --senior-shadow-soft: 0 10px 30px rgba(18, 48, 28, 0.05);
+  --senior-popover: rgba(255, 255, 255, 0.96);
+}
+
+:root[data-theme='light'] {
+  --senior-bg: #f7faf3;
+  --senior-ink: #121812;
+  --senior-muted: #4f5d50;
+  --senior-surface: rgba(255, 255, 255, 0.66);
+  --senior-surface-soft: rgba(255, 255, 255, 0.42);
+  --senior-surface-strong: rgba(255, 255, 255, 0.88);
+  --senior-hover: rgba(4, 122, 58, 0.085);
+  --senior-hover-strong: rgba(4, 122, 58, 0.13);
+  --senior-danger-soft: rgba(186, 26, 26, 0.105);
+  --senior-danger-text: #9f1717;
+  --senior-shadow: 0 18px 52px rgba(18, 48, 28, 0.075), 0 2px 14px rgba(18, 48, 28, 0.035);
+  --senior-shadow-soft: 0 10px 30px rgba(18, 48, 28, 0.05);
+  --senior-popover: rgba(255, 255, 255, 0.96);
+}
+
+:root[data-theme='dark'] {
+  --senior-bg: #0f150f;
+  --senior-ink: #eef7eb;
+  --senior-muted: #b9c8b5;
+  --senior-surface: rgba(255, 255, 255, 0.055);
+  --senior-surface-soft: rgba(255, 255, 255, 0.035);
+  --senior-surface-strong: rgba(255, 255, 255, 0.075);
+  --senior-hover: rgba(153, 246, 170, 0.09);
+  --senior-hover-strong: rgba(153, 246, 170, 0.14);
+  --senior-danger-soft: rgba(255, 180, 171, 0.12);
+  --senior-danger-text: #ffb4ab;
+  --senior-shadow: 0 18px 52px rgba(0, 0, 0, 0.34), 0 2px 14px rgba(0, 0, 0, 0.18);
+  --senior-shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.24);
+  --senior-popover: rgba(23, 32, 23, 0.97);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --senior-bg: #0f150f;
+    --senior-ink: #eef7eb;
+    --senior-muted: #b9c8b5;
+    --senior-surface: rgba(255, 255, 255, 0.055);
+    --senior-surface-soft: rgba(255, 255, 255, 0.035);
+    --senior-surface-strong: rgba(255, 255, 255, 0.075);
+    --senior-hover: rgba(153, 246, 170, 0.09);
+    --senior-hover-strong: rgba(153, 246, 170, 0.14);
+    --senior-danger-soft: rgba(255, 180, 171, 0.12);
+    --senior-danger-text: #ffb4ab;
+    --senior-shadow: 0 18px 52px rgba(0, 0, 0, 0.34), 0 2px 14px rgba(0, 0, 0, 0.18);
+    --senior-shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.24);
+    --senior-popover: rgba(23, 32, 23, 0.97);
+  }
+}
+
+body,
+.desktop-shell {
+  background: var(--senior-bg) !important;
+  color: var(--senior-ink) !important;
+}
+
+.desktop-shell .space-y-4,
+.desktop-shell .space-y-5,
+.desktop-shell .space-y-6,
+.desktop-shell .grid,
+.desktop-shell .desktop-food-card-list,
+.desktop-shell .catalog-list-card,
+.desktop-shell .food-list-card,
+.desktop-shell .activity-card,
+.desktop-shell .catalog-card-head,
+.desktop-shell .catalog-title-row,
+.desktop-shell .activity-card-copy,
+.desktop-shell .activity-card-top {
+  overflow: visible !important;
+}
+
+.desktop-shell .food-list-card,
+.desktop-shell .ingredient-list-card,
+.desktop-shell .catalog-list-card,
+.desktop-shell .activity-card,
+.desktop-shell .settings-section-card,
+.modal-card,
+.desktop-backup-profile-card,
+.info-dialog-feature-card {
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--senior-surface) !important;
+  color: var(--senior-ink) !important;
+  box-shadow: var(--senior-shadow-soft) !important;
+}
+
+.desktop-shell .food-list-card:hover,
+.desktop-shell .ingredient-list-card:hover,
+.desktop-shell .catalog-list-card:hover,
+.desktop-shell .activity-card:hover,
+.desktop-shell .settings-row-v040:hover:not(:disabled),
+.desktop-shell .mobile-setting-row:hover:not(:disabled),
+.desktop-shell .language-option-button:hover:not(:disabled),
+.desktop-shell .language-option-button:focus-visible,
+.desktop-backup-profile-card:hover,
+.info-dialog-feature-card:hover,
+.license-card:hover {
+  background: var(--senior-hover) !important;
+  color: var(--senior-ink) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.desktop-shell .food-list-card:hover *,
+.desktop-shell .ingredient-list-card:hover *,
+.desktop-shell .catalog-list-card:hover *,
+.desktop-shell .activity-card:hover *,
+.desktop-shell .settings-row-v040:hover *,
+.desktop-shell .mobile-setting-row:hover *,
+.desktop-shell .language-option-button:hover *,
+.desktop-shell .language-option-button:focus-visible *,
+.desktop-backup-profile-card:hover *,
+.info-dialog-feature-card:hover *,
+.license-card:hover * {
+  color: inherit !important;
+  opacity: 1 !important;
+}
+
+.desktop-shell .food-card-description,
+.desktop-shell .food-card-note,
+.desktop-shell .catalog-card-description,
+.desktop-shell .activity-card-copy > p,
+.desktop-shell .mini-stat span,
+.desktop-shell .mobile-setting-copy small,
+.desktop-shell .language-option-button small,
+.desktop-backup-profile-card small,
+.info-dialog-feature-card small,
+.desktop-info-dialog-body p,
+.desktop-info-dialog-body .muted,
+.acknowledgement-list,
+.license-card small {
+  color: var(--senior-muted) !important;
+  opacity: 1 !important;
+}
+
+.desktop-shell .food-card-metrics .mini-stat,
+.desktop-shell .recipe-stat-grid .mini-stat {
+  background: var(--senior-surface-soft) !important;
+  color: var(--senior-ink) !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .food-card-metrics .mini-stat strong,
+.desktop-shell .recipe-stat-grid .mini-stat strong,
+.desktop-shell .catalog-title-row h3,
+.desktop-shell .catalog-title-row h4,
+.desktop-shell .language-option-button b,
+.desktop-shell .settings-row-v040 .mobile-setting-copy b,
+.info-dialog-feature-card b,
+.license-card b,
+.desktop-backup-profile-card b {
+  color: var(--senior-ink) !important;
+}
+
+.desktop-shell .desktop-food-card-list {
+  display: grid !important;
+  gap: 12px !important;
+}
+
+.desktop-shell .food-list-card,
+.desktop-shell .ingredient-list-card {
+  display: grid !important;
+  gap: 10px !important;
+  padding: 16px !important;
+  border-radius: 26px !important;
+  position: relative !important;
+  isolation: auto !important;
+  z-index: 0 !important;
+}
+
+.desktop-shell .catalog-title-row {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 44px !important;
+  gap: 12px !important;
+  align-items: center !important;
+}
+
+.desktop-shell .catalog-title-row h3,
+.desktop-shell .catalog-title-row h4 {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  margin: 0 !important;
+}
+
+.desktop-shell .food-card-description {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.desktop-shell .food-card-note {
+  margin: 0 !important;
+  line-height: 1.45 !important;
+}
+
+.desktop-shell .food-card-metrics,
+.desktop-shell .recipe-stat-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(124px, 1fr)) !important;
+  gap: 8px !important;
+}
+
+.desktop-shell .catalog-list-card:has(.catalog-action-menu[open]),
+.desktop-shell .food-list-card:has(.catalog-action-menu[open]),
+.desktop-shell .ingredient-list-card:has(.catalog-action-menu[open]),
+.desktop-shell .activity-card:has(.catalog-action-menu[open]),
+.desktop-shell .catalog-list-card-menu-open {
+  position: relative !important;
+  z-index: 2147483600 !important;
+}
+
+.desktop-shell .catalog-action-menu,
+.catalog-action-menu {
+  position: relative !important;
+  z-index: 2147483601 !important;
+  overflow: visible !important;
+}
+
+.desktop-shell .catalog-action-menu[open],
+.catalog-action-menu[open] {
+  z-index: 2147483646 !important;
+}
+
+.desktop-shell .catalog-menu-popover,
+.catalog-menu-popover {
+  position: absolute !important;
+  right: 0 !important;
+  top: calc(100% + 8px) !important;
+  z-index: 2147483647 !important;
+  min-width: 230px !important;
+  padding: 8px !important;
+  border-radius: 22px !important;
+  background: var(--senior-popover) !important;
+  color: var(--senior-ink) !important;
+  box-shadow: var(--senior-shadow) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(1.12) !important;
+  backdrop-filter: blur(28px) saturate(1.12) !important;
+  isolation: isolate !important;
+  contain: none !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button,
+.catalog-menu-popover .link-button {
+  width: 100% !important;
+  min-height: 42px !important;
+  justify-content: flex-start !important;
+  border-radius: 16px !important;
+  padding: 10px 12px !important;
+  background: transparent !important;
+  color: var(--senior-ink) !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button:hover:not(:disabled),
+.catalog-menu-popover .link-button:hover:not(:disabled) {
+  background: var(--senior-hover) !important;
+  color: var(--senior-ink) !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button.danger,
+.catalog-menu-popover .link-button.danger {
+  color: var(--senior-danger-text) !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button.danger:hover:not(:disabled),
+.catalog-menu-popover .link-button.danger:hover:not(:disabled) {
+  background: var(--senior-danger-soft) !important;
+  color: var(--senior-danger-text) !important;
+}
+
+.desktop-shell .language-option-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) !important;
+  gap: 10px !important;
+}
+
+.desktop-shell .language-option-button,
+.desktop-shell .language-option-button.active {
+  background: transparent !important;
+  color: var(--senior-ink) !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .language-option-button.active,
+.desktop-shell .language-option-button:hover:not(:disabled),
+.desktop-shell .language-option-button:focus-visible {
+  background: var(--senior-hover) !important;
+  color: var(--senior-ink) !important;
+}
+
+.desktop-shell .danger-row-v040,
+.desktop-shell .danger-row-v040 .mobile-setting-copy b,
+.desktop-shell .danger-row-v040:hover .mobile-setting-copy b {
+  color: var(--senior-ink) !important;
+}
+
+.desktop-shell .danger-row-v040 .mobile-setting-icon,
+.factory-reset-confirm-icon,
+.danger-info-card .mobile-setting-icon {
+  background: var(--senior-danger-soft) !important;
+  color: var(--senior-danger-text) !important;
+}
+
+.desktop-shell .danger-row-v040:hover:not(:disabled) {
+  background: var(--senior-danger-soft) !important;
+}
+
+.desktop-backup-profiles-dialog,
+.desktop-info-dialog,
+.factory-reset-confirm-dialog {
+  width: min(860px, calc(100vw - 32px)) !important;
+  max-height: min(820px, calc(100vh - 48px)) !important;
+  overflow: auto !important;
+  border: 0 !important;
+  border-radius: 30px !important;
+  background: var(--senior-popover) !important;
+  color: var(--senior-ink) !important;
+  box-shadow: var(--senior-shadow) !important;
+  padding: 22px !important;
+  -webkit-backdrop-filter: blur(30px) saturate(1.12) !important;
+  backdrop-filter: blur(30px) saturate(1.12) !important;
+}
+
+.desktop-info-dialog-head,
+.desktop-backup-profiles-head,
+.factory-reset-confirm-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  gap: 16px !important;
+  align-items: start !important;
+  margin-bottom: 18px !important;
+}
+
+.factory-reset-confirm-head {
+  grid-template-columns: 48px minmax(0, 1fr) !important;
+}
+
+.info-dialog-grid,
+.factory-reset-confirm-points {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)) !important;
+  gap: 12px !important;
+  margin-top: 16px !important;
+}
+
+.info-dialog-feature-wide {
+  grid-column: 1 / -1 !important;
+}
+
+.info-dialog-feature-card,
+.desktop-backup-profile-card {
+  display: grid !important;
+  grid-template-columns: 44px minmax(0, 1fr) !important;
+  gap: 12px !important;
+  align-items: center !important;
+  padding: 14px !important;
+  border-radius: 24px !important;
+}
+
+.about-identity-card {
+  grid-template-columns: 76px minmax(0, 1fr) !important;
+}
+
+.info-dialog-feature-card .mobile-setting-copy,
+.desktop-backup-profile-card > div:first-child {
+  min-width: 0 !important;
+  display: grid !important;
+  gap: 4px !important;
+}
+
+.submodal-license-list {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)) !important;
+  gap: 12px !important;
+}
+
+.submodal-license-list .license-card {
+  min-height: 76px !important;
+  display: grid !important;
+  grid-template-columns: 44px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 14px !important;
+  border-radius: 24px !important;
+  background: var(--senior-surface-soft) !important;
+  color: var(--senior-ink) !important;
+  box-shadow: none !important;
+}
+
+.submodal-license-list .license-card > strong {
+  justify-self: end !important;
+  color: var(--senior-ink) !important;
+}
+
+.acknowledgement-list {
+  display: grid !important;
+  gap: 8px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  list-style: none !important;
+}
+
+.acknowledgement-list li {
+  padding: 10px 12px !important;
+  border-radius: 18px !important;
+  background: var(--senior-surface-soft) !important;
+}
+
+.desktop-backup-profile-list {
+  display: grid !important;
+  gap: 12px !important;
+  margin-top: 18px !important;
+}
+
+.desktop-backup-profile-card {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  padding: 16px !important;
+  background: var(--senior-surface-soft) !important;
+}
+
+.desktop-backup-profile-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+}
+
+.desktop-backup-profile-actions .btn-secondary,
+.factory-reset-confirm-actions .btn-secondary,
+.factory-reset-confirm-actions .btn-primary {
+  min-height: 42px !important;
+  border-radius: 999px !important;
+  padding-inline: 16px !important;
+}
+
+.factory-reset-confirm-actions {
+  margin-top: 18px !important;
+}
+
+.danger-confirm-button {
+  background: var(--senior-danger-text) !important;
+  color: #fff !important;
+  box-shadow: 0 12px 34px color-mix(in srgb, var(--senior-danger-text) 22%, transparent) !important;
+}
+
+@media (max-width: 760px) {
+  .desktop-backup-profile-card,
+  .desktop-backup-profiles-head,
+  .desktop-info-dialog-head {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .desktop-backup-profile-actions {
+    justify-content: flex-start !important;
+  }
+
+  .submodal-license-list .license-card {
+    grid-template-columns: 44px minmax(0, 1fr) !important;
+  }
+
+  .submodal-license-list .license-card > strong {
+    grid-column: 2 !important;
+    justify-self: start !important;
+  }
+}

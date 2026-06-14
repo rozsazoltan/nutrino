@@ -432,6 +432,7 @@ const foodPreparationOilMl = ref<number | null>(null);
 const activityId = ref('');
 const activityMinutes = ref<number | null>(null);
 const activityKcal = ref<number | null>(null);
+const activityExtraInfo = ref('');
 const activitySource = ref<ActivityLog['source']>('activity_catalog');
 const fluidAmountDl = ref<number | null>(2);
 const fluidDrinkKind = ref<FluidDrinkKind>('fluid');
@@ -486,6 +487,8 @@ const noteDescription = ref('');
 const noteKcal = ref<number | null>(null);
 const catalogSearchScope = ref<CatalogSearchScope>('title');
 const catalogMenuOpen = ref(false);
+const catalogSourcesVisible = ref(false);
+const openCatalogActionId = ref('');
 const catalogFreshnessOpen = ref(false);
 const localEditorOpen = ref(false);
 const localEditorKind = ref<LocalEditorKind>('food');
@@ -1524,6 +1527,7 @@ function hasActiveMealSheetDraft(): boolean {
 
   return Boolean(
     activitySource.value !== 'activity_catalog' ||
+    activityExtraInfo.value.trim() ||
     activityId.value ||
     Number(activityMinutes.value || 0) > 0 ||
     Number(activityKcal.value || 0) > 0,
@@ -1876,6 +1880,7 @@ async function factoryResetMobile() {
     if (!window.confirm(`${t('backupProfileSaveFailed')}: ${String(error)}\n${t('continueFactoryResetWithoutBackup')}`))
       return;
   }
+  if (!window.confirm(t('factoryResetFinalConfirm'))) return;
 
   const fresh = defaultState();
   Object.assign(state, fresh);
@@ -10257,6 +10262,11 @@ const mobileVisibleTextTranslations: Record<string, Record<string, string>> = {
     catalogItemInactive: 'Catalog item marked inactive.',
     catalogItemActivated: 'Catalog item activated.',
     lockedCatalogDuplicateHint: 'Imported or locked items are duplicated before editing.',
+    catalogSourcesToggleShow: 'Show sources',
+    catalogSourcesToggleHide: 'Hide sources',
+    activityExtraInfoPlaceholder: 'Extra info for this activity, e.g. 60 km, zone 2, route, symptoms…',
+    activityExtraInfoHint: 'Optional context saved with this activity log for later review and AI health analysis.',
+    factoryResetFinalConfirm: 'A safety backup profile has been created. Delete all local app data now?',
     sourceCheckNoChange: 'Source check complete: no change found.',
     sourceCheckChanged: 'Source check complete: item was updated.',
     sourceCheckLocalOnly: 'This item is local, so there is no external source to check.',
@@ -10324,23 +10334,119 @@ const mobileVisibleTextTranslations: Record<string, Record<string, string>> = {
     catalogItemInactive: 'Katalógustétel inaktívvá téve.',
     catalogItemActivated: 'Katalógustétel aktiválva.',
     lockedCatalogDuplicateHint: 'Az importált vagy zárolt tételeket szerkesztés előtt lemásolom.',
+    catalogSourcesToggleShow: 'Források megjelenítése',
+    catalogSourcesToggleHide: 'Források elrejtése',
+    activityExtraInfoPlaceholder: 'Extra infó ehhez az aktivitáshoz, pl. 60 km, zóna 2, útvonal, tünetek…',
+    activityExtraInfoHint: 'Opcionális kontextus ehhez az aktivitásbejegyzéshez későbbi áttekintéshez és AI egészségelemzéshez.',
+    factoryResetFinalConfirm: 'A biztonsági backup profil elkészült. Most törlöd az összes helyi appadatot?',
     sourceCheckNoChange: 'Forrásellenőrzés kész: nincs változás.',
     sourceCheckChanged: 'Forrásellenőrzés kész: a tétel frissült.',
     sourceCheckLocalOnly: 'Ez helyi tétel, nincs külső forrása.',
   },
-  de: { version: 'Version' },
-  fr: { version: 'Version' },
-  ru: { version: 'Версия' },
-  uk: { version: 'Версія' },
-  zh: { version: '版本' },
-  sk: { version: 'Verzia' },
-  ro: { version: 'Versiune' },
-  cs: { version: 'Verze' },
-  sl: { version: 'Različica' },
-  hr: { version: 'Verzija' },
-  pl: { version: 'Wersja' },
-  es: { version: 'Versión' },
-  pt: { version: 'Versão' },
+  de: {
+    version: 'Version',
+    catalogSourcesToggleShow: 'Quellen anzeigen',
+    catalogSourcesToggleHide: 'Quellen ausblenden',
+    activityExtraInfoPlaceholder: 'Zusatzinfo zu dieser Aktivität, z. B. 60 km, Zone 2, Route, Symptome…',
+    activityExtraInfoHint: 'Optionaler Kontext, der mit diesem Aktivitätslog für spätere Auswertung und KI-Gesundheitsanalyse gespeichert wird.',
+    factoryResetFinalConfirm: 'Ein Sicherheits-Backup-Profil wurde erstellt. Jetzt alle lokalen App-Daten löschen?',
+  },
+  fr: {
+    version: 'Version',
+    catalogSourcesToggleShow: 'Afficher les sources',
+    catalogSourcesToggleHide: 'Masquer les sources',
+    activityExtraInfoPlaceholder: 'Infos supplémentaires pour cette activité, p. ex. 60 km, zone 2, trajet, symptômes…',
+    activityExtraInfoHint: 'Contexte facultatif enregistré avec cette activité pour une revue ultérieure et l’analyse santé IA.',
+    factoryResetFinalConfirm: 'Un profil de sauvegarde de sécurité a été créé. Supprimer maintenant toutes les données locales de l’app ?',
+  },
+  ru: {
+    version: 'Версия',
+    catalogSourcesToggleShow: 'Показать источники',
+    catalogSourcesToggleHide: 'Скрыть источники',
+    activityExtraInfoPlaceholder: 'Доп. информация об активности, например 60 км, зона 2, маршрут, симптомы…',
+    activityExtraInfoHint: 'Необязательный контекст сохраняется с записью активности для последующего просмотра и ИИ-анализа здоровья.',
+    factoryResetFinalConfirm: 'Создан резервный профиль безопасности. Удалить все локальные данные приложения сейчас?',
+  },
+  uk: {
+    version: 'Версія',
+    catalogSourcesToggleShow: 'Показати джерела',
+    catalogSourcesToggleHide: 'Приховати джерела',
+    activityExtraInfoPlaceholder: 'Додаткова інформація про активність, напр. 60 км, зона 2, маршрут, симптоми…',
+    activityExtraInfoHint: 'Необов’язковий контекст зберігається з активністю для подальшого перегляду та AI-аналізу здоров’я.',
+    factoryResetFinalConfirm: 'Резервний профіль безпеки створено. Видалити всі локальні дані застосунку зараз?',
+  },
+  zh: {
+    version: '版本',
+    catalogSourcesToggleShow: '显示来源',
+    catalogSourcesToggleHide: '隐藏来源',
+    activityExtraInfoPlaceholder: '此活动的额外信息，例如 60 km、2 区、路线、症状…',
+    activityExtraInfoHint: '随活动记录保存的可选上下文，用于之后查看和 AI 健康分析。',
+    factoryResetFinalConfirm: '已创建安全备份配置。现在删除所有本地应用数据吗？',
+  },
+  sk: {
+    version: 'Verzia',
+    catalogSourcesToggleShow: 'Zobraziť zdroje',
+    catalogSourcesToggleHide: 'Skryť zdroje',
+    activityExtraInfoPlaceholder: 'Extra info k aktivite, napr. 60 km, zóna 2, trasa, príznaky…',
+    activityExtraInfoHint: 'Voliteľný kontext uložený s aktivitou pre neskoršiu kontrolu a AI zdravotnú analýzu.',
+    factoryResetFinalConfirm: 'Bol vytvorený bezpečnostný záložný profil. Vymazať teraz všetky lokálne dáta appky?',
+  },
+  ro: {
+    version: 'Versiune',
+    catalogSourcesToggleShow: 'Afișează sursele',
+    catalogSourcesToggleHide: 'Ascunde sursele',
+    activityExtraInfoPlaceholder: 'Informații extra pentru activitate, ex. 60 km, zona 2, traseu, simptome…',
+    activityExtraInfoHint: 'Context opțional salvat cu această activitate pentru revizuire ulterioară și analiză AI de sănătate.',
+    factoryResetFinalConfirm: 'A fost creat un profil de backup de siguranță. Ștergi acum toate datele locale ale aplicației?',
+  },
+  cs: {
+    version: 'Verze',
+    catalogSourcesToggleShow: 'Zobrazit zdroje',
+    catalogSourcesToggleHide: 'Skrýt zdroje',
+    activityExtraInfoPlaceholder: 'Extra info k aktivitě, např. 60 km, zóna 2, trasa, symptomy…',
+    activityExtraInfoHint: 'Volitelný kontext uložený s aktivitou pro pozdější kontrolu a AI zdravotní analýzu.',
+    factoryResetFinalConfirm: 'Byl vytvořen bezpečnostní záložní profil. Smazat teď všechna lokální data aplikace?',
+  },
+  sl: {
+    version: 'Različica',
+    catalogSourcesToggleShow: 'Prikaži vire',
+    catalogSourcesToggleHide: 'Skrij vire',
+    activityExtraInfoPlaceholder: 'Dodatne informacije za aktivnost, npr. 60 km, cona 2, pot, simptomi…',
+    activityExtraInfoHint: 'Izbirni kontekst, shranjen z aktivnostjo za poznejši pregled in AI zdravstveno analizo.',
+    factoryResetFinalConfirm: 'Ustvarjen je bil varnostni profil varnostne kopije. Zdaj izbrišem vse lokalne podatke aplikacije?',
+  },
+  hr: {
+    version: 'Verzija',
+    catalogSourcesToggleShow: 'Prikaži izvore',
+    catalogSourcesToggleHide: 'Sakrij izvore',
+    activityExtraInfoPlaceholder: 'Dodatne informacije za aktivnost, npr. 60 km, zona 2, ruta, simptomi…',
+    activityExtraInfoHint: 'Opcionalni kontekst spremljen s aktivnošću za kasniji pregled i AI zdravstvenu analizu.',
+    factoryResetFinalConfirm: 'Stvoren je sigurnosni backup profil. Izbrisati sada sve lokalne podatke aplikacije?',
+  },
+  pl: {
+    version: 'Wersja',
+    catalogSourcesToggleShow: 'Pokaż źródła',
+    catalogSourcesToggleHide: 'Ukryj źródła',
+    activityExtraInfoPlaceholder: 'Dodatkowe informacje o aktywności, np. 60 km, strefa 2, trasa, objawy…',
+    activityExtraInfoHint: 'Opcjonalny kontekst zapisany z aktywnością do późniejszego przeglądu i analizy zdrowia AI.',
+    factoryResetFinalConfirm: 'Utworzono bezpieczny profil kopii zapasowej. Usunąć teraz wszystkie lokalne dane aplikacji?',
+  },
+  es: {
+    version: 'Versión',
+    catalogSourcesToggleShow: 'Mostrar fuentes',
+    catalogSourcesToggleHide: 'Ocultar fuentes',
+    activityExtraInfoPlaceholder: 'Información extra de esta actividad, p. ej. 60 km, zona 2, ruta, síntomas…',
+    activityExtraInfoHint: 'Contexto opcional guardado con esta actividad para revisión posterior y análisis de salud con IA.',
+    factoryResetFinalConfirm: 'Se creó un perfil de copia de seguridad. ¿Eliminar ahora todos los datos locales de la app?',
+  },
+  pt: {
+    version: 'Versão',
+    catalogSourcesToggleShow: 'Mostrar fontes',
+    catalogSourcesToggleHide: 'Ocultar fontes',
+    activityExtraInfoPlaceholder: 'Informação extra para esta atividade, ex. 60 km, zona 2, rota, sintomas…',
+    activityExtraInfoHint: 'Contexto opcional guardado com esta atividade para revisão posterior e análise de saúde por IA.',
+    factoryResetFinalConfirm: 'Foi criado um perfil de backup de segurança. Apagar agora todos os dados locais da app?',
+  },
 };
 for (const [language, values] of Object.entries(mobileVisibleTextTranslations)) {
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
@@ -16929,6 +17035,7 @@ async function openActivityAdd() {
   activityId.value = '';
   activityMinutes.value = null;
   activityKcal.value = null;
+  activityExtraInfo.value = '';
   activitySource.value = 'activity_catalog';
   activityPickerOpen.value = true;
 }
@@ -16991,6 +17098,7 @@ function closeSheet() {
   foodAmount.value = null;
   activityMinutes.value = null;
   activityKcal.value = null;
+  activityExtraInfo.value = '';
   resetFluidForm();
   resetPreparationForm();
   recipeCustomizeOpen.value = false;
@@ -17205,6 +17313,7 @@ function addActivityLog() {
     duration_min: duration,
     kcal,
     source: activitySource.value,
+    extra_info: activityExtraInfo.value.trim() || null,
     pending_sync: false,
     updated_at: now,
   };
@@ -19623,6 +19732,7 @@ function editActivityLog(entry: ActivityLog) {
   activityId.value = entry.activity_id ?? '';
   activityMinutes.value = entry.duration_min;
   activityKcal.value = entry.kcal;
+  activityExtraInfo.value = entry.extra_info ?? '';
   activityPickerOpen.value = false;
   search.value = '';
 }
@@ -20596,6 +20706,7 @@ function setTab(tab: Tab) {
               <div>
                 <b>{{ activity.activity_name }}</b
                 ><small>{{ activity.duration_min }} min · {{ activity.kcal }} kcal</small>
+                <small v-if="activity.extra_info" class="activity-extra-line">{{ activity.extra_info }}</small>
               </div>
               <div v-if="selectedDayUnlocked" class="entry-actions">
                 <button
@@ -20821,6 +20932,14 @@ function setTab(tab: Tab) {
             <button
               class="icon-button"
               type="button"
+              :aria-label="catalogSourcesVisible ? t('catalogSourcesToggleHide') : t('catalogSourcesToggleShow')"
+              :title="catalogSourcesVisible ? t('catalogSourcesToggleHide') : t('catalogSourcesToggleShow')"
+              @click="catalogSourcesVisible = !catalogSourcesVisible"
+              v-html="lucideSvg(catalogSourcesVisible ? 'eyeOff' : 'eye')"
+            ></button>
+            <button
+              class="icon-button"
+              type="button"
               :aria-label="t('catalogFreshness')"
               :title="t('catalogFreshness')"
               @click="catalogFreshnessOpen = true"
@@ -20879,51 +20998,32 @@ function setTab(tab: Tab) {
             </div>
             <small>{{ item.brand || catalogKindLabel(item) }} · {{ Math.round(item.kcal_per_100g) }} kcal / 100g</small
             ><small v-if="item.note" class="catalog-note">{{ item.note }}</small>
-            <div class="catalog-meta-row">
+            <div v-if="catalogSourcesVisible" class="catalog-meta-row">
               <span class="catalog-source-chip" :class="catalogSourceBadgeClass(item)">{{
                 catalogSourceTitle(item)
               }}</span
               ><small v-if="sourceCheckedText(item)">{{ sourceCheckedText(item) }}</small>
             </div>
           </div>
-          <div class="catalog-card-actions">
-            <span>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)} g / db` : 'g' }}</span>
-            <div class="catalog-icon-actions">
+          <div class="catalog-card-actions catalog-overflow-actions">
+            <span v-if="item.serving_size_g" class="catalog-serving-size">{{ `${Math.round(item.serving_size_g)} g / db` }}</span>
+            <div class="catalog-menu-wrap catalog-item-menu-wrap" :class="{ open: openCatalogActionId === item.id }">
               <button
-                class="entry-icon-button"
+                class="icon-button catalog-item-menu-button"
                 type="button"
-                :aria-label="t('duplicate')"
-                :title="t('duplicate')"
-                @click="duplicateCatalogItem(item)"
-                v-html="lucideSvg('copy')"
-              ></button
-              ><button
-                class="entry-icon-button"
-                type="button"
-                :disabled="catalogSourceCheckBusyId === item.id"
-                :aria-label="t('checkSource')"
-                :title="t('checkSource')"
-                @click="requestCatalogSourceCheck(item)"
-                v-html="lucideSvg('refreshCw')"
-              ></button
-              ><button
-                class="entry-icon-button"
-                type="button"
-                :aria-label="catalogItemIsLocked(item) ? t('unlock') : t('lock')"
-                :title="catalogItemIsLocked(item) ? t('unlock') : t('lock')"
-                @click="toggleCatalogItemLock(item)"
-                v-html="lucideSvg(catalogItemIsLocked(item) ? 'lock' : 'lockOpen')"
-              ></button
-              ><button
-                class="entry-icon-button"
-                type="button"
-                :aria-label="item.inactive ? t('activate') : t('markInactive')"
-                :title="item.inactive ? t('activate') : t('markInactive')"
-                @click="toggleCatalogItemInactive(item)"
-                v-html="lucideSvg(item.inactive ? 'eye' : 'eyeOff')"
-              ></button>
+                :aria-label="t('actions')"
+                @click.stop="openCatalogActionId = openCatalogActionId === item.id ? '' : item.id"
+              >
+                ⋯
+              </button>
+              <div v-if="openCatalogActionId === item.id" class="catalog-menu-popover catalog-item-popover">
+                <button type="button" @click.stop="duplicateCatalogItem(item); openCatalogActionId = ''">{{ t('duplicate') }}</button>
+                <button type="button" :disabled="catalogSourceCheckBusyId === item.id" @click.stop="requestCatalogSourceCheck(item); openCatalogActionId = ''">{{ t('checkSource') }}</button>
+                <button type="button" @click.stop="toggleCatalogItemLock(item); openCatalogActionId = ''">{{ catalogItemIsLocked(item) ? t('unlock') : t('lock') }}</button>
+                <button type="button" @click.stop="toggleCatalogItemInactive(item); openCatalogActionId = ''">{{ item.inactive ? t('activate') : t('markInactive') }}</button>
+                <button type="button" @click.stop="editCatalogItem(item); openCatalogActionId = ''">{{ t('edit') }}</button>
+              </div>
             </div>
-            <button class="text-button" @click="editCatalogItem(item)">{{ t('edit') }}</button>
           </div>
         </article>
         <div v-if="catalogSuggestedItems.length" class="search-result-heading suggested">{{ t('maybeYouMean') }}</div>
@@ -20941,51 +21041,32 @@ function setTab(tab: Tab) {
             </div>
             <small>{{ item.brand || catalogKindLabel(item) }} · {{ Math.round(item.kcal_per_100g) }} kcal / 100g</small
             ><small v-if="item.note" class="catalog-note">{{ item.note }}</small>
-            <div class="catalog-meta-row">
+            <div v-if="catalogSourcesVisible" class="catalog-meta-row">
               <span class="catalog-source-chip" :class="catalogSourceBadgeClass(item)">{{
                 catalogSourceTitle(item)
               }}</span
               ><small v-if="sourceCheckedText(item)">{{ sourceCheckedText(item) }}</small>
             </div>
           </div>
-          <div class="catalog-card-actions">
-            <span>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)} g / db` : 'g' }}</span>
-            <div class="catalog-icon-actions">
+          <div class="catalog-card-actions catalog-overflow-actions">
+            <span v-if="item.serving_size_g" class="catalog-serving-size">{{ `${Math.round(item.serving_size_g)} g / db` }}</span>
+            <div class="catalog-menu-wrap catalog-item-menu-wrap" :class="{ open: openCatalogActionId === item.id }">
               <button
-                class="entry-icon-button"
+                class="icon-button catalog-item-menu-button"
                 type="button"
-                :aria-label="t('duplicate')"
-                :title="t('duplicate')"
-                @click="duplicateCatalogItem(item)"
-                v-html="lucideSvg('copy')"
-              ></button
-              ><button
-                class="entry-icon-button"
-                type="button"
-                :disabled="catalogSourceCheckBusyId === item.id"
-                :aria-label="t('checkSource')"
-                :title="t('checkSource')"
-                @click="requestCatalogSourceCheck(item)"
-                v-html="lucideSvg('refreshCw')"
-              ></button
-              ><button
-                class="entry-icon-button"
-                type="button"
-                :aria-label="catalogItemIsLocked(item) ? t('unlock') : t('lock')"
-                :title="catalogItemIsLocked(item) ? t('unlock') : t('lock')"
-                @click="toggleCatalogItemLock(item)"
-                v-html="lucideSvg(catalogItemIsLocked(item) ? 'lock' : 'lockOpen')"
-              ></button
-              ><button
-                class="entry-icon-button"
-                type="button"
-                :aria-label="item.inactive ? t('activate') : t('markInactive')"
-                :title="item.inactive ? t('activate') : t('markInactive')"
-                @click="toggleCatalogItemInactive(item)"
-                v-html="lucideSvg(item.inactive ? 'eye' : 'eyeOff')"
-              ></button>
+                :aria-label="t('actions')"
+                @click.stop="openCatalogActionId = openCatalogActionId === item.id ? '' : item.id"
+              >
+                ⋯
+              </button>
+              <div v-if="openCatalogActionId === item.id" class="catalog-menu-popover catalog-item-popover">
+                <button type="button" @click.stop="duplicateCatalogItem(item); openCatalogActionId = ''">{{ t('duplicate') }}</button>
+                <button type="button" :disabled="catalogSourceCheckBusyId === item.id" @click.stop="requestCatalogSourceCheck(item); openCatalogActionId = ''">{{ t('checkSource') }}</button>
+                <button type="button" @click.stop="toggleCatalogItemLock(item); openCatalogActionId = ''">{{ catalogItemIsLocked(item) ? t('unlock') : t('lock') }}</button>
+                <button type="button" @click.stop="toggleCatalogItemInactive(item); openCatalogActionId = ''">{{ item.inactive ? t('activate') : t('markInactive') }}</button>
+                <button type="button" @click.stop="editCatalogItem(item); openCatalogActionId = ''">{{ t('edit') }}</button>
+              </div>
             </div>
-            <button class="text-button" @click="editCatalogItem(item)">{{ t('edit') }}</button>
           </div>
         </article>
         <p v-if="!catalogHasSearchResults" class="empty-card">{{ t('noSyncedItems') }}</p>
@@ -21005,51 +21086,32 @@ function setTab(tab: Tab) {
             </div>
             <small>{{ item.brand || catalogKindLabel(item) }} · {{ Math.round(item.kcal_per_100g) }} kcal / 100g</small
             ><small v-if="item.note" class="catalog-note">{{ item.note }}</small>
-            <div class="catalog-meta-row">
+            <div v-if="catalogSourcesVisible" class="catalog-meta-row">
               <span class="catalog-source-chip" :class="catalogSourceBadgeClass(item)">{{
                 catalogSourceTitle(item)
               }}</span
               ><small v-if="sourceCheckedText(item)">{{ sourceCheckedText(item) }}</small>
             </div>
           </div>
-          <div class="catalog-card-actions">
-            <span>{{ item.serving_size_g ? `${Math.round(item.serving_size_g)} g / db` : 'g' }}</span>
-            <div class="catalog-icon-actions">
+          <div class="catalog-card-actions catalog-overflow-actions">
+            <span v-if="item.serving_size_g" class="catalog-serving-size">{{ `${Math.round(item.serving_size_g)} g / db` }}</span>
+            <div class="catalog-menu-wrap catalog-item-menu-wrap" :class="{ open: openCatalogActionId === item.id }">
               <button
-                class="entry-icon-button"
+                class="icon-button catalog-item-menu-button"
                 type="button"
-                :aria-label="t('duplicate')"
-                :title="t('duplicate')"
-                @click="duplicateCatalogItem(item)"
-                v-html="lucideSvg('copy')"
-              ></button
-              ><button
-                class="entry-icon-button"
-                type="button"
-                :disabled="catalogSourceCheckBusyId === item.id"
-                :aria-label="t('checkSource')"
-                :title="t('checkSource')"
-                @click="requestCatalogSourceCheck(item)"
-                v-html="lucideSvg('refreshCw')"
-              ></button
-              ><button
-                class="entry-icon-button"
-                type="button"
-                :aria-label="catalogItemIsLocked(item) ? t('unlock') : t('lock')"
-                :title="catalogItemIsLocked(item) ? t('unlock') : t('lock')"
-                @click="toggleCatalogItemLock(item)"
-                v-html="lucideSvg(catalogItemIsLocked(item) ? 'lock' : 'lockOpen')"
-              ></button
-              ><button
-                class="entry-icon-button"
-                type="button"
-                :aria-label="item.inactive ? t('activate') : t('markInactive')"
-                :title="item.inactive ? t('activate') : t('markInactive')"
-                @click="toggleCatalogItemInactive(item)"
-                v-html="lucideSvg(item.inactive ? 'eye' : 'eyeOff')"
-              ></button>
+                :aria-label="t('actions')"
+                @click.stop="openCatalogActionId = openCatalogActionId === item.id ? '' : item.id"
+              >
+                ⋯
+              </button>
+              <div v-if="openCatalogActionId === item.id" class="catalog-menu-popover catalog-item-popover">
+                <button type="button" @click.stop="duplicateCatalogItem(item); openCatalogActionId = ''">{{ t('duplicate') }}</button>
+                <button type="button" :disabled="catalogSourceCheckBusyId === item.id" @click.stop="requestCatalogSourceCheck(item); openCatalogActionId = ''">{{ t('checkSource') }}</button>
+                <button type="button" @click.stop="toggleCatalogItemLock(item); openCatalogActionId = ''">{{ catalogItemIsLocked(item) ? t('unlock') : t('lock') }}</button>
+                <button type="button" @click.stop="toggleCatalogItemInactive(item); openCatalogActionId = ''">{{ item.inactive ? t('activate') : t('markInactive') }}</button>
+                <button type="button" @click.stop="editCatalogItem(item); openCatalogActionId = ''">{{ t('edit') }}</button>
+              </div>
             </div>
-            <button class="text-button" @click="editCatalogItem(item)">{{ t('edit') }}</button>
           </div>
         </article>
         <p v-if="!visibleCatalogItems.length" class="empty-card">{{ t('noSyncedItems') }}</p>
@@ -21935,10 +21997,7 @@ function setTab(tab: Tab) {
               <div class="selected-item-main">
                 <div class="catalog-title-line">
                   <b>{{ activityDisplayName(selectedActivity) }}</b
-                  ><span v-if="selectedActivity.inactive" class="catalog-status-chip inactive">{{ t('inactive') }}</span
-                  ><span v-if="catalogItemIsLocked(selectedActivity)" class="catalog-status-chip locked">{{
-                    t('locked')
-                  }}</span>
+                  ><span v-if="selectedActivity.inactive" class="catalog-status-chip inactive">{{ t('inactive') }}</span>
                 </div>
                 <small>{{ activityType(selectedActivity) }} · {{ selectedActivity.kcal_per_min }} kcal/min</small>
               </div>
@@ -21973,13 +22032,6 @@ function setTab(tab: Tab) {
                 :placeholder="t('activitySearch')"
                 @keydown.enter.prevent="hideKeyboard"
               />
-              <button
-                class="scan-button"
-                type="button"
-                :aria-label="t('scanQrAria')"
-                @click="openScanner('catalog')"
-                v-html="lucideSvg('scanLine')"
-              ></button>
             </div>
             <div v-if="activitySelectionInProgress" class="picker-list">
               <button
@@ -21992,10 +22044,7 @@ function setTab(tab: Tab) {
                 <span class="picker-row-main"
                   ><span class="catalog-title-line"
                     ><b>{{ activityDisplayName(activity) }}</b
-                    ><span v-if="activity.inactive" class="catalog-status-chip inactive">{{ t('inactive') }}</span
-                    ><span v-if="catalogItemIsLocked(activity)" class="catalog-status-chip locked">{{
-                      t('locked')
-                    }}</span></span
+                    ><span v-if="activity.inactive" class="catalog-status-chip inactive">{{ t('inactive') }}</span></span
                   ><small>{{ activityType(activity) }} · MET {{ activity.met }}</small></span
                 >
                 <strong>{{ activity.kcal_per_min }} kcal/min</strong>
@@ -22025,6 +22074,13 @@ function setTab(tab: Tab) {
                 @pointerdown="clearNumberInputOnDoubleTap"
                 inputmode="decimal"
               />
+              <textarea
+                v-model="activityExtraInfo"
+                class="input textarea-input activity-extra-input"
+                rows="2"
+                :placeholder="t('activityExtraInfoPlaceholder')"
+              ></textarea>
+              <small class="input-help">{{ t('activityExtraInfoHint') }}</small>
               <button class="filled-button wide" @click="addActivityLog">
                 {{ editingActivityLogId ? t('updateActivity') : t('addActivity') }}
               </button>

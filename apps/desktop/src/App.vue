@@ -64,6 +64,7 @@ const mobileHandoffRequests = ref<MobileHandoffRequest[]>([]);
 const desktopBackupProfiles = ref<DesktopBackupProfileSummary[]>([]);
 const desktopBackupProfilesOpen = ref(false);
 const desktopInfoDialog = ref<DesktopInfoDialogKind>(null);
+const factoryResetConfirmOpen = ref(false);
 const openCatalogMenuKey = ref<string | null>(null);
 const duplicateSuggestions = ref<CatalogDuplicateSuggestion[]>([]);
 const duplicateCanonicalSelections = ref<Record<string, string>>({});
@@ -4507,6 +4508,15 @@ const desktopThemeTranslations: Record<string, Record<string, string>> = {
     'ui.continueWithoutBackup': 'Continue without a safety backup?',
     'ui.continueFactoryResetWithoutBackup': 'Continue factory reset without a safety backup?',
     'ui.factoryResetAfterBackupConfirm': 'Safety backup is saved. Continue with factory reset now?',
+    'ui.factoryResetConfirmTitle': 'Confirm factory reset',
+    'ui.factoryResetConfirmBody': 'Nutrino will create a local safety backup first, then delete the desktop catalog, settings and onboarding state.',
+    'ui.factoryResetSafetyBackupTitle': 'Safety backup first',
+    'ui.factoryResetSafetyBackupBody': 'A local backup profile is saved before anything is deleted.',
+    'ui.factoryResetDeletesTitle': 'Deletes local desktop data',
+    'ui.confirmFactoryReset': 'Create backup and reset',
+    'ui.factoryResetCompleteWithBackup': 'Factory reset complete. A local backup profile is still available.',
+    'ui.desktopSetupSavedStartLanApi': 'Desktop setup saved. Start the LAN API server when you are ready to pair mobile.',
+    'ui.licenseDialogIntro': 'Open-source components used by Nutrino Desktop.',
   },
   hu: {
     theme: 'Téma',
@@ -4515,6 +4525,35 @@ const desktopThemeTranslations: Record<string, Record<string, string>> = {
     systemDefault: 'Rendszer alapértelmezett',
     'ui.appearance': 'Megjelenés',
     'ui.appearanceBody': 'Állítsd be, hogyan kövesse a Nutrino a desktop témát.',
+    'ui.backupProfiles': 'Backup profilok',
+    'ui.backupProfilesBody': 'Helyi visszaállítási pontok, amelyek a gyári visszaállítás után is megmaradnak.',
+    'ui.noBackupProfiles': 'Még nincs helyi backup profil.',
+    'ui.createBackupProfile': 'Backup profil létrehozása',
+    'ui.manualBackupProfile': 'Kézi backup profil',
+    'ui.exportBackupProfile': 'Export visszaállítási pont',
+    'ui.beforeFactoryResetBackupProfile': 'Gyári visszaállítás előtt',
+    'ui.beforeImportBackupProfile': 'Import előtt',
+    'ui.importBackupProfile': 'Importált backup',
+    'ui.beforeBackupProfileRestore': 'Backup profil visszaállítása előtt',
+    'ui.restoreBackupProfile': 'Helyi profil visszaállítása',
+    'ui.backupProfileCreated': 'Backup profil mentve.',
+    'ui.backupProfileDeleted': 'Backup profil törölve.',
+    'ui.backupProfileRestored': 'Backup profil visszaállítva.',
+    'ui.backupProfileMissing': 'A backup profil már nem elérhető.',
+    'ui.confirmRestoreBackupProfile': 'Visszaállítod ezt a helyi backup profilt? A jelenlegi desktop adatok előtte biztonsági visszaállítási pontként mentve lesznek.',
+    'ui.backupProfileSaveFailed': 'Nem sikerült helyi backup profilt menteni',
+    'ui.continueWithoutBackup': 'Folytatás biztonsági mentés nélkül?',
+    'ui.continueFactoryResetWithoutBackup': 'Folytatod a gyári visszaállítást biztonsági mentés nélkül?',
+    'ui.factoryResetAfterBackupConfirm': 'A biztonsági mentés elkészült. Folytatod most a gyári visszaállítást?',
+    'ui.factoryResetConfirmTitle': 'Gyári visszaállítás megerősítése',
+    'ui.factoryResetConfirmBody': 'A Nutrino először helyi biztonsági backup profilt készít, utána törli a desktop katalógust, beállításokat és onboarding állapotot.',
+    'ui.factoryResetSafetyBackupTitle': 'Először biztonsági mentés',
+    'ui.factoryResetSafetyBackupBody': 'Törlés előtt helyi backup profil készül.',
+    'ui.factoryResetDeletesTitle': 'Helyi desktop adatok törlése',
+    'ui.confirmFactoryReset': 'Mentés és visszaállítás',
+    'ui.factoryResetCompleteWithBackup': 'A gyári visszaállítás kész. A helyi backup profil továbbra is elérhető.',
+    'ui.desktopSetupSavedStartLanApi': 'Desktop beállítás mentve. Indítsd el a LAN API szervert, amikor párosítanád a mobilt.',
+    'ui.licenseDialogIntro': 'A Nutrino Desktop által használt open-source komponensek.',
   },
 };
 translations.en = { ...translations.en, ...desktopThemeTranslations.en };
@@ -7203,11 +7242,15 @@ async function finishDesktopOnboarding() {
   onboardingOpen.value = false;
   onboardingStep.value = 0;
   await refreshAll();
-  setMessage('Desktop setup saved. Start the LAN API server when you are ready to pair mobile.');
+  setMessage(t('ui.desktopSetupSavedStartLanApi'));
+}
+
+async function confirmFactoryResetDesktop() {
+  factoryResetConfirmOpen.value = false;
+  await factoryResetDesktop();
 }
 
 async function factoryResetDesktop() {
-  if (!window.confirm(t('ui.factoryResetDesktopConfirm'))) return;
   loading.value = true;
   try {
     try {
@@ -7245,7 +7288,7 @@ async function factoryResetDesktop() {
     refreshDesktopBackupProfiles();
     onboardingOpen.value = true;
     onboardingStep.value = 0;
-    setMessage('Factory reset complete. A local backup profile is still available.');
+    setMessage(t('ui.factoryResetCompleteWithBackup'));
   } catch (error) {
     setMessage(String(error));
   } finally {
@@ -7378,32 +7421,37 @@ onBeforeUnmount(() => {
             <code class="csv-header-code">{{ ingredientCsvHeader }}</code>
             <ul class="csv-note-list"><li v-for="note in csvImportNotes.slice(0, 3)" :key="note">{{ t(note) }}</li></ul>
           </article>
-          <article class="card min-w-0">
-            <div class="overflow-auto table-wrap">
-              <table class="min-w-[780px] w-full border-collapse">
-                <thead>
-                  <tr><th>{{ t('ui.name_49ee3') }}</th><th>{{ t('ui.id_b718a') }}</th><th>kcal</th><th>{{ t('ui.carbs_ee64f') }}</th><th>{{ t('ui.fat_4d09c') }}</th><th>{{ t('ui.protein_7e667') }}</th><th>{{ t('ui.actions_06df3') }}</th></tr>
-                </thead>
-                <tbody>
-                  <tr v-for="ingredient in sortedIngredients" :key="ingredient.id">
-                    <td><strong>{{ localizedName(ingredient) }}</strong><br /><span class="muted">{{ t('ui.ingredientNoBrandBarcode_b87ef') }}</span><small v-if="ingredient.note" class="block muted">{{ ingredient.note }}</small></td>
-                    <td class="font-mono text-xs">{{ ingredient.id }}</td>
-                    <td>{{ round(ingredient.kcal_per_100g) }}</td>
-                    <td>{{ round(ingredient.carbs_per_100g) }}g</td>
-                    <td>{{ round(ingredient.fat_per_100g) }}g</td>
-                    <td>{{ round(ingredient.protein_per_100g) }}g</td>
-                    <td>
-                      <button class="link-button icon-only-label" @click="openIngredientModal(ingredient)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
-                      <button class="link-button icon-only-label" @click="mergeCatalogInto('ingredient', ingredient.id, localizedName(ingredient))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button>
-                      <button class="link-button icon-only-label" @click="moveIngredientToFood(ingredient)">{{ t('ui.moveToFoods_e1a6b') }}</button>
-                      <button class="link-button icon-only-label" @click="showCatalogQr('ingredient', ingredient, localizedName(ingredient))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
-                      <button class="link-button danger icon-only-label" @click="removeIngredient(ingredient)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </article>
+          <section class="desktop-food-card-list desktop-ingredient-card-list">
+            <article v-for="ingredient in sortedIngredients" :key="ingredient.id" class="food-list-card ingredient-list-card catalog-list-card" :class="{ 'catalog-list-card-menu-open': openCatalogMenuKey === catalogMenuKey('ingredient', ingredient.id) }">
+              <div class="catalog-title-row food-title-row">
+                <h3>{{ localizedName(ingredient) }}</h3>
+                <details class="catalog-action-menu" :open="openCatalogMenuKey === catalogMenuKey('ingredient', ingredient.id)" @toggle="syncCatalogMenu(catalogMenuKey('ingredient', ingredient.id), $event)">
+                  <summary class="catalog-menu-trigger" :aria-label="t('ui.actions_06df3')">⋯</summary>
+                  <div class="catalog-menu-popover" @click="closeCatalogMenu">
+                    <button class="link-button icon-only-label" @click="openIngredientModal(ingredient)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
+                    <button class="link-button icon-only-label" @click="mergeCatalogInto('ingredient', ingredient.id, localizedName(ingredient))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button>
+                    <button class="link-button icon-only-label" @click="moveIngredientToFood(ingredient)">{{ t('ui.moveToFoods_e1a6b') }}</button>
+                    <button class="link-button icon-only-label" @click="showCatalogQr('ingredient', ingredient, localizedName(ingredient))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
+                    <button class="link-button danger icon-only-label" @click="removeIngredient(ingredient)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
+                  </div>
+                </details>
+              </div>
+              <p class="food-card-description muted">
+                <span>{{ t('ui.ingredient_59198') }}</span>
+                <span>{{ ingredient.default_unit }}</span>
+                <span v-if="ingredient.serving_size_g">{{ round(ingredient.serving_size_g) }}g</span>
+                <span class="font-mono">{{ ingredient.id }}</span>
+              </p>
+              <p v-if="ingredient.note" class="food-card-note muted">{{ ingredient.note }}</p>
+              <div class="food-card-metrics">
+                <div class="mini-stat"><strong>{{ round(ingredient.kcal_per_100g) }}</strong><span>kcal / 100g</span></div>
+                <div class="mini-stat"><strong>{{ round(ingredient.carbs_per_100g) }}g</strong><span>{{ t('ui.carbs_ee64f') }}</span></div>
+                <div class="mini-stat"><strong>{{ round(ingredient.fat_per_100g) }}g</strong><span>{{ t('ui.fat_4d09c') }}</span></div>
+                <div class="mini-stat"><strong>{{ round(ingredient.protein_per_100g) }}g</strong><span>{{ t('ui.protein_7e667') }}</span></div>
+              </div>
+            </article>
+          </section>
+
         </div>
 
         <div v-if="tab === 'foods'" class="space-y-4">
@@ -7883,7 +7931,7 @@ onBeforeUnmount(() => {
                   <span class="mobile-setting-copy"><b>{{ t('ui.importDataZip_04e73') }}</b><small>{{ t('ui.restoreIngredientsFoodsRecipesActivitiesAnd_9d762') }}</small></span>
                   <span class="settings-row-chevron" v-html="icon('chevronRight')"></span>
                 </button>
-                <button class="mobile-setting-row settings-row-v040 danger-row-v040" :disabled="loading" @click="factoryResetDesktop">
+                <button class="mobile-setting-row settings-row-v040 danger-row-v040" :disabled="loading" @click="factoryResetConfirmOpen = true">
                   <span class="mobile-setting-icon" v-html="icon('refresh')"></span>
                   <span class="mobile-setting-copy"><b>{{ t('ui.factoryReset_5dcd7') }}</b><small>{{ t('ui.deleteTheLocalDesktopCatalogAnd_3509d') }}</small></span>
                   <span class="settings-row-chevron" v-html="icon('chevronRight')"></span>
@@ -7921,6 +7969,35 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
+
+    <Teleport to="body">
+      <div v-if="factoryResetConfirmOpen" class="modal-backdrop" @click.self="factoryResetConfirmOpen = false">
+        <section class="modal-card factory-reset-confirm-dialog">
+          <div class="modal-header factory-reset-confirm-head">
+            <span class="mobile-setting-icon factory-reset-confirm-icon" v-html="icon('reset')"></span>
+            <div>
+              <p class="modal-kicker">{{ t('ui.dataAndRecovery_677d1') }}</p>
+              <h2 class="text-2xl font-bold">{{ t('ui.factoryResetConfirmTitle') }}</h2>
+              <p class="muted">{{ t('ui.factoryResetConfirmBody') }}</p>
+            </div>
+          </div>
+          <div class="factory-reset-confirm-points">
+            <article class="info-dialog-feature-card">
+              <span class="mobile-setting-icon" v-html="icon('database')"></span>
+              <span class="mobile-setting-copy"><b>{{ t('ui.factoryResetSafetyBackupTitle') }}</b><small>{{ t('ui.factoryResetSafetyBackupBody') }}</small></span>
+            </article>
+            <article class="info-dialog-feature-card danger-info-card">
+              <span class="mobile-setting-icon" v-html="icon('trash')"></span>
+              <span class="mobile-setting-copy"><b>{{ t('ui.factoryResetDeletesTitle') }}</b><small>{{ t('ui.deleteTheLocalDesktopCatalogAnd_3509d') }}</small></span>
+            </article>
+          </div>
+          <div class="dialog-actions factory-reset-confirm-actions">
+            <button class="btn-secondary" type="button" @click="factoryResetConfirmOpen = false">{{ t('ui.cancel_ea478') }}</button>
+            <button class="btn-primary danger-confirm-button" type="button" :disabled="loading" @click="confirmFactoryResetDesktop">{{ t('ui.confirmFactoryReset') }}</button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
 
     <Teleport to="body">
       <div v-if="desktopBackupProfilesOpen" class="modal-backdrop" @click.self="desktopBackupProfilesOpen = false">
@@ -7963,28 +8040,44 @@ onBeforeUnmount(() => {
             </div>
             <button class="link-button" type="button" @click="desktopInfoDialog = null">{{ t('ui.close_d3d2e') }}</button>
           </div>
-          <div v-if="desktopInfoDialog === 'privacy'" class="desktop-info-dialog-body">
-            <span class="mobile-info-icon" v-html="icon('shield')"></span>
-            <h3>{{ t('ui.localFirstByDesign_50f82') }}</h3>
-            <p>{{ t('ui.nutrinoDesktopStoresYourIngredientFood_8ab07') }}</p>
+          <div v-if="desktopInfoDialog === 'privacy'" class="desktop-info-dialog-body info-dialog-grid">
+            <article class="info-dialog-feature-card info-dialog-feature-wide">
+              <span class="mobile-setting-icon" v-html="icon('shield')"></span>
+              <span class="mobile-setting-copy"><b>{{ t('ui.localFirstByDesign_50f82') }}</b><small>{{ t('ui.nutrinoDesktopStoresYourIngredientFood_8ab07') }}</small></span>
+            </article>
+            <article class="info-dialog-feature-card">
+              <span class="mobile-setting-icon" v-html="icon('lockOpen')"></span>
+              <span class="mobile-setting-copy"><b>{{ t('ui.localFirst_f0903') }}</b><small>{{ t('ui.noPublicFoodDatabaseNoAccount_b4d78') }}</small></span>
+            </article>
+            <article class="info-dialog-feature-card">
+              <span class="mobile-setting-icon" v-html="icon('server')"></span>
+              <span class="mobile-setting-copy"><b>{{ t('ui.lanApi_0ee00') }}</b><small>{{ t('ui.mobileCanSyncCatalog') }}</small></span>
+            </article>
           </div>
-          <div v-else-if="desktopInfoDialog === 'licenses'" class="desktop-info-dialog-body">
-            <p class="muted">{{ t('ui.thirdPartyNoticesAndAcknowledgements_833ba') }}</p>
-            <article class="license-list submodal-license-list">
+          <div v-else-if="desktopInfoDialog === 'licenses'" class="desktop-info-dialog-body info-dialog-grid">
+            <article class="info-dialog-feature-card info-dialog-feature-wide">
+              <span class="mobile-setting-icon" v-html="icon('licenses')"></span>
+              <span class="mobile-setting-copy"><b>{{ t('ui.thirdPartyNoticesAndAcknowledgements_833ba') }}</b><small>{{ t('ui.licenseDialogIntro') }}</small></span>
+            </article>
+            <article class="license-list submodal-license-list info-dialog-feature-wide">
               <a v-for="notice in thirdPartyNotices" :key="notice.name" class="license-card" :href="notice.url" target="_blank" rel="noreferrer">
                 <span class="mobile-setting-icon" v-html="icon('licenses')"></span>
                 <span class="mobile-setting-copy"><b>{{ notice.name }}</b><small>{{ t(notice.purposeKey) }}</small><small v-if="notice.noteKey">{{ t(notice.noteKey) }}</small></span>
                 <strong>{{ notice.license }}</strong>
               </a>
             </article>
-            <ul class="acknowledgement-list"><li v-for="item in acknowledgements" :key="item">{{ t(item) }}</li></ul>
+            <ul class="acknowledgement-list info-dialog-feature-wide"><li v-for="item in acknowledgements" :key="item">{{ t(item) }}</li></ul>
           </div>
-          <div v-else class="desktop-info-dialog-body about-dialog-body">
-            <div class="about-logo" v-html="nutrinoLogoSvg"></div>
-            <h3>{{ appName }}</h3>
-            <p class="muted">{{ t('ui.versionLabel') }} {{ appVersion }} · {{ appChannel }} · AGPL-3.0-only</p>
-            <p>{{ t('ui.thanksToOpennutritrackerForThePrivacy_2e20e') }}</p>
-            <div class="mobile-info-actions">
+          <div v-else class="desktop-info-dialog-body about-dialog-body info-dialog-grid">
+            <article class="info-dialog-feature-card info-dialog-feature-wide about-identity-card">
+              <span class="about-logo" v-html="nutrinoLogoSvg"></span>
+              <span class="mobile-setting-copy"><b>{{ appName }}</b><small>{{ t('ui.versionLabel') }} {{ appVersion }} · {{ appChannel }} · AGPL-3.0-only</small></span>
+            </article>
+            <article class="info-dialog-feature-card info-dialog-feature-wide">
+              <span class="mobile-setting-icon" v-html="icon('info')"></span>
+              <span class="mobile-setting-copy"><b>{{ t('ui.about_8f7f4') }}</b><small>{{ t('ui.thanksToOpennutritrackerForThePrivacy_2e20e') }}</small></span>
+            </article>
+            <div class="mobile-info-actions info-dialog-feature-wide">
               <a :href="repositoryUrl" target="_blank" rel="noreferrer"><span class="inline-svg" v-html="icon('recipes')"></span>{{ t('ui.repository_33fcf') }}</a>
               <a :href="issueUrl" target="_blank" rel="noreferrer"><span class="inline-svg" v-html="icon('activities')"></span>{{ t('ui.reportIssue_92fd0') }}</a>
               <a :href="starUrl" target="_blank" rel="noreferrer"><span class="inline-svg" v-html="icon('star')"></span>{{ t('ui.star_26f93') }}</a>

@@ -260,6 +260,7 @@ export interface ActivityLog {
   duration_min: number;
   kcal: number;
   source: 'activity_catalog' | 'watch' | 'manual';
+  extra_info?: string | null;
   pending_sync: boolean;
   created_at: number;
   updated_at: number;
