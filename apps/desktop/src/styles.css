@@ -3620,3 +3620,375 @@ textarea:focus {
     0 16px 38px color-mix(in srgb, var(--primary) 8%, transparent),
     inset 0 1px 0 color-mix(in srgb, white 54%, transparent) !important;
 }
+
+/* v0.15.6 executive UI pass: Niagara-like calm lists, no legacy outlines */
+:root {
+  --executive-page-bg:
+    radial-gradient(circle at 14% -8%, color-mix(in srgb, var(--primary-container) 34%, transparent), transparent 30rem),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 96%, var(--primary-container) 4%) 0%, var(--surface-container) 100%);
+  --executive-surface: color-mix(in srgb, var(--surface) 82%, transparent);
+  --executive-surface-strong: color-mix(in srgb, var(--surface) 94%, var(--primary-container) 6%);
+  --executive-surface-soft: color-mix(in srgb, var(--surface-container-high) 68%, transparent);
+  --executive-hover: color-mix(in srgb, var(--primary-container) 42%, var(--surface) 58%);
+  --executive-field: color-mix(in srgb, var(--surface-container-high) 72%, var(--surface) 28%);
+  --executive-field-focus: color-mix(in srgb, var(--surface-container-high) 54%, var(--primary-container) 16%);
+  --executive-text: var(--on-surface);
+  --executive-muted: color-mix(in srgb, var(--on-surface-variant) 88%, var(--on-surface) 12%);
+  --executive-shadow: 0 24px 72px color-mix(in srgb, var(--primary) 9%, transparent), 0 6px 24px rgba(26, 28, 25, .055);
+  --executive-shadow-soft: 0 12px 36px color-mix(in srgb, var(--primary) 6%, transparent), 0 2px 12px rgba(26, 28, 25, .045);
+  --executive-focus-glow: 0 18px 48px color-mix(in srgb, var(--primary) 16%, transparent);
+  --executive-nav-pill: color-mix(in srgb, var(--primary-container) 70%, white 12%);
+  --executive-nav-pill-text: var(--primary);
+}
+
+:root[data-theme='light'] {
+  --executive-page-bg:
+    radial-gradient(circle at 14% -8%, color-mix(in srgb, var(--primary-container) 34%, transparent), transparent 30rem),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 96%, var(--primary-container) 4%) 0%, var(--surface-container) 100%);
+  --executive-surface: color-mix(in srgb, white 78%, transparent);
+  --executive-surface-strong: color-mix(in srgb, white 92%, var(--primary-container) 8%);
+  --executive-surface-soft: color-mix(in srgb, var(--surface-container-high) 68%, transparent);
+  --executive-hover: color-mix(in srgb, var(--primary-container) 42%, var(--surface) 58%);
+  --executive-field: color-mix(in srgb, white 76%, var(--surface-container-high) 24%);
+  --executive-field-focus: color-mix(in srgb, white 70%, var(--primary-container) 18%);
+  --executive-text: #171b16;
+  --executive-muted: #465044;
+  --executive-shadow: 0 24px 72px rgba(25, 62, 36, .09), 0 6px 24px rgba(25, 62, 36, .045);
+  --executive-shadow-soft: 0 12px 36px rgba(25, 62, 36, .065), 0 2px 12px rgba(25, 62, 36, .035);
+  --executive-focus-glow: 0 18px 48px rgba(0, 110, 43, .13);
+  --executive-nav-pill: color-mix(in srgb, var(--primary-container) 72%, white 10%);
+  --executive-nav-pill-text: #005b23;
+}
+
+:root[data-theme='dark'] {
+  --executive-page-bg:
+    radial-gradient(circle at 20% 0%, rgba(35, 225, 91, .13), transparent 32rem),
+    linear-gradient(180deg, #121a13 0%, #0d120e 100%);
+  --executive-surface: rgba(29, 39, 29, .76);
+  --executive-surface-strong: rgba(33, 45, 33, .86);
+  --executive-surface-soft: rgba(25, 34, 25, .72);
+  --executive-hover: rgba(221, 238, 214, .13);
+  --executive-field: rgba(27, 38, 27, .88);
+  --executive-field-focus: rgba(36, 55, 36, .94);
+  --executive-text: #edf5e9;
+  --executive-muted: #bccbb8;
+  --executive-shadow: 0 24px 72px rgba(0, 0, 0, .38), 0 6px 24px rgba(0, 0, 0, .22);
+  --executive-shadow-soft: 0 14px 42px rgba(0, 0, 0, .28), 0 2px 12px rgba(0, 0, 0, .2);
+  --executive-focus-glow: 0 18px 52px rgba(105, 255, 137, .12);
+  --executive-nav-pill: rgba(105, 255, 137, .16);
+  --executive-nav-pill-text: #9cf6a7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --executive-page-bg:
+      radial-gradient(circle at 20% 0%, rgba(35, 225, 91, .13), transparent 32rem),
+      linear-gradient(180deg, #121a13 0%, #0d120e 100%);
+    --executive-surface: rgba(29, 39, 29, .76);
+    --executive-surface-strong: rgba(33, 45, 33, .86);
+    --executive-surface-soft: rgba(25, 34, 25, .72);
+    --executive-hover: rgba(221, 238, 214, .13);
+    --executive-field: rgba(27, 38, 27, .88);
+    --executive-field-focus: rgba(36, 55, 36, .94);
+    --executive-text: #edf5e9;
+    --executive-muted: #bccbb8;
+    --executive-shadow: 0 24px 72px rgba(0, 0, 0, .38), 0 6px 24px rgba(0, 0, 0, .22);
+    --executive-shadow-soft: 0 14px 42px rgba(0, 0, 0, .28), 0 2px 12px rgba(0, 0, 0, .2);
+    --executive-focus-glow: 0 18px 52px rgba(105, 255, 137, .12);
+    --executive-nav-pill: rgba(105, 255, 137, .16);
+    --executive-nav-pill-text: #9cf6a7;
+  }
+}
+
+body {
+  background: var(--executive-page-bg) !important;
+}
+
+.desktop-shell,
+.desktop-shell * {
+  text-shadow: none;
+}
+
+.app-header,
+.card,
+.metric-card,
+.table-wrap,
+.activity-card,
+.setting-row,
+.modal-card,
+.settings-hero,
+.settings-section-card,
+.mobile-settings-list,
+.settings-group-list,
+.mobile-setting-row,
+.settings-row-v040,
+.mobile-info-card,
+.language-picker-panel,
+.language-option-button,
+.i18n-extra-panel,
+.i18n-row,
+.desktop-update-settings-panel,
+.desktop-update-status-card,
+.sync-inbox-card,
+.merge-candidate-row,
+.sync-review-section,
+.duplicate-suggestion-card,
+.duplicate-item-row,
+.merge-target-row,
+.sync-review-summary-row span,
+.csv-format-card,
+.licenses-section-card .license-card {
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--executive-surface) !important;
+  color: var(--executive-text) !important;
+  box-shadow: var(--executive-shadow-soft) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(1.16) !important;
+  backdrop-filter: blur(28px) saturate(1.16) !important;
+}
+
+.card,
+.metric-card,
+.modal-card,
+.settings-hero,
+.settings-section-card,
+.mobile-info-card {
+  box-shadow: var(--executive-shadow) !important;
+}
+
+.app-header,
+th,
+td,
+tr,
+table,
+.settings-module-section,
+.settings-row-v040,
+.settings-row-v040:last-child,
+.sync-review-section li,
+.settings-group-list,
+.mobile-settings-list,
+.desktop-dashboard-summary span,
+.csv-skip-toggle,
+.desktop-tour-index,
+.desktop-tour-step:not(:last-child)::after {
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.muted,
+.section-subtitle,
+.field-label,
+.metric-card p,
+.mini-stat span,
+.mobile-setting-copy small,
+.mobile-info-card p,
+.settings-section-head h3,
+.csv-note-list,
+.sync-inbox-head small,
+.merge-candidate-row small,
+.duplicate-item-copy small,
+.merge-target-row small {
+  color: var(--executive-muted) !important;
+  opacity: 1 !important;
+}
+
+.section-toolbar {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  align-items: start !important;
+  justify-content: start !important;
+  gap: 1rem !important;
+}
+
+.section-toolbar > :first-child,
+.settings-section-head > :first-child,
+.mobile-like-titlebar > :first-child {
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: min(100%, 820px) !important;
+}
+
+.section-toolbar > .flex,
+.section-toolbar > .flex.flex-wrap,
+.settings-top-actions,
+.desktop-update-actions,
+.download-folder-actions,
+.dialog-actions,
+.support-actions,
+.mobile-info-actions {
+  width: 100% !important;
+  justify-content: flex-start !important;
+  align-items: center !important;
+  gap: .65rem !important;
+}
+
+.settings-section-head,
+.mobile-like-titlebar,
+.sync-inbox-head,
+.duplicate-suggestion-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: .85rem !important;
+}
+
+.download-folder-row,
+.settings-row-v040,
+.mobile-setting-row {
+  grid-template-columns: 46px minmax(0, 1fr) !important;
+  row-gap: .8rem !important;
+}
+
+.download-folder-actions,
+.settings-row-v040 > .toggle,
+.settings-row-v040 > input[type='checkbox'],
+.settings-row-chevron {
+  grid-column: 2 !important;
+  justify-self: start !important;
+}
+
+.download-folder-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+}
+
+.input,
+.textarea-input,
+input,
+select,
+textarea,
+.compact-unit-field,
+.compact-unit-field input,
+.catalog-controls .input,
+.sync-payload-editor {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--executive-field) !important;
+  color: var(--executive-text) !important;
+  box-shadow: var(--executive-shadow-soft) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.14) !important;
+  backdrop-filter: blur(24px) saturate(1.14) !important;
+}
+
+.input:focus,
+.input:focus-visible,
+.textarea-input:focus,
+.textarea-input:focus-visible,
+input:focus,
+input:focus-visible,
+select:focus,
+select:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+.compact-unit-field:focus-within {
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--executive-field-focus) !important;
+  box-shadow: var(--executive-focus-glow) !important;
+}
+
+.input::placeholder,
+textarea::placeholder,
+input::placeholder {
+  color: color-mix(in srgb, var(--executive-muted) 88%, var(--executive-text) 12%) !important;
+  opacity: 1 !important;
+}
+
+.btn-primary,
+.btn-secondary,
+.link-button,
+.file-action,
+.repo-action,
+.support-actions a,
+.desktop-update-actions button,
+.dialog-actions button,
+.mobile-info-actions a,
+.qr-nav-button,
+.language-option-button,
+.csv-skip-toggle {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: var(--executive-shadow-soft) !important;
+}
+
+.btn-secondary,
+.link-button,
+.file-action,
+.repo-action,
+.support-actions a,
+.desktop-update-actions .btn-secondary,
+.dialog-actions .btn-secondary,
+.mobile-info-actions a,
+.qr-nav-button,
+.language-option-button,
+.csv-skip-toggle {
+  background: var(--executive-surface-soft) !important;
+  color: var(--executive-text) !important;
+}
+
+.btn-secondary:hover:not(:disabled),
+.link-button:hover:not(:disabled),
+.file-action:hover:not(:disabled),
+.repo-action:hover,
+.support-actions a:hover,
+.dialog-actions .btn-secondary:hover:not(:disabled),
+.mobile-info-actions a:hover,
+.language-option-button:hover:not(:disabled),
+.csv-skip-toggle:hover {
+  background: var(--executive-hover) !important;
+  color: var(--executive-text) !important;
+  transform: translateY(-1px) !important;
+}
+
+.desktop-nav .nav-button,
+.desktop-nav .nav-button:hover:not(:disabled),
+.desktop-nav .nav-button-active,
+.desktop-nav .nav-button-active:hover:not(:disabled) {
+  background: transparent !important;
+  color: var(--executive-muted) !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  outline: 0 !important;
+}
+
+.desktop-nav .nav-button:hover:not(:disabled) {
+  color: var(--executive-text) !important;
+}
+
+.desktop-nav .nav-button .nav-icon {
+  width: 2.7rem !important;
+  height: 2.15rem !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: currentColor !important;
+  transition: background-color .16s ease, color .16s ease, transform .16s ease !important;
+}
+
+.desktop-nav .nav-button:hover:not(:disabled) .nav-icon {
+  background: var(--executive-hover) !important;
+  color: var(--executive-text) !important;
+}
+
+.desktop-nav .nav-button-active .nav-icon,
+.desktop-nav .nav-button-active:hover:not(:disabled) .nav-icon {
+  background: var(--executive-nav-pill) !important;
+  color: var(--executive-nav-pill-text) !important;
+  box-shadow: none !important;
+}
+
+.desktop-nav .nav-button-active span:last-child,
+.desktop-nav .nav-button-active:hover:not(:disabled) span:last-child {
+  color: var(--executive-text) !important;
+}
+
+.language-option-grid,
+.theme-option-grid {
+  gap: .75rem !important;
+}
+
+.language-option-button.active {
+  background: color-mix(in srgb, var(--primary-container) 42%, var(--executive-surface-strong) 58%) !important;
+  color: var(--executive-text) !important;
+}

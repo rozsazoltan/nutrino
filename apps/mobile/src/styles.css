@@ -11268,3 +11268,226 @@ textarea::placeholder {
   color: color-mix(in srgb, var(--on-surface-variant) 86%, var(--on-surface) 14%) !important;
   opacity: 1 !important;
 }
+
+/* v0.15.6 executive mobile UI pass: spaced settings, no boxed legacy borders */
+:root {
+  --mobile-exec-surface: color-mix(in srgb, var(--surface) 84%, transparent);
+  --mobile-exec-surface-strong: color-mix(in srgb, var(--surface-container-high) 72%, var(--surface) 28%);
+  --mobile-exec-field: color-mix(in srgb, var(--surface-container-high) 74%, var(--surface) 26%);
+  --mobile-exec-field-focus: color-mix(in srgb, var(--surface-container-high) 58%, var(--primary-container) 18%);
+  --mobile-exec-shadow: 0 18px 54px color-mix(in srgb, var(--primary) 8%, transparent), 0 3px 16px rgba(26, 28, 25, .055);
+  --mobile-exec-shadow-soft: 0 10px 32px color-mix(in srgb, var(--primary) 5%, transparent), 0 2px 10px rgba(26, 28, 25, .04);
+  --mobile-exec-muted: color-mix(in srgb, var(--on-surface-variant) 90%, var(--on-surface) 10%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --mobile-exec-surface: rgba(29, 39, 29, .76);
+    --mobile-exec-surface-strong: rgba(34, 45, 34, .86);
+    --mobile-exec-field: rgba(27, 38, 27, .9);
+    --mobile-exec-field-focus: rgba(36, 55, 36, .94);
+    --mobile-exec-shadow: 0 18px 54px rgba(0, 0, 0, .34), 0 3px 16px rgba(0, 0, 0, .2);
+    --mobile-exec-shadow-soft: 0 10px 32px rgba(0, 0, 0, .24), 0 2px 10px rgba(0, 0, 0, .18);
+    --mobile-exec-muted: #bdcbb9;
+  }
+}
+
+:root[data-theme='dark'] {
+  --mobile-exec-surface: rgba(29, 39, 29, .76);
+  --mobile-exec-surface-strong: rgba(34, 45, 34, .86);
+  --mobile-exec-field: rgba(27, 38, 27, .9);
+  --mobile-exec-field-focus: rgba(36, 55, 36, .94);
+  --mobile-exec-shadow: 0 18px 54px rgba(0, 0, 0, .34), 0 3px 16px rgba(0, 0, 0, .2);
+  --mobile-exec-shadow-soft: 0 10px 32px rgba(0, 0, 0, .24), 0 2px 10px rgba(0, 0, 0, .18);
+  --mobile-exec-muted: #bdcbb9;
+}
+
+.card,
+.dashboard-card,
+.summary-card,
+.meal-card,
+.catalog-card,
+.selected-item-card,
+.profile-bmi-card,
+.day-edit-card,
+.recipe-ingredient-row,
+.permission-status-card,
+.source-settings-card,
+.github-source-row,
+.backup-profile-card,
+.backup-option-card,
+.license-card,
+.settings-dialog,
+.bottom-sheet,
+.settings-row,
+.dialog-option,
+.picker-row,
+.search-scope-control,
+.search-scope-row button,
+.note-entry-fields,
+.bottom-nav {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: var(--mobile-exec-shadow-soft) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.14) !important;
+  backdrop-filter: blur(24px) saturate(1.14) !important;
+}
+
+.card,
+.dashboard-card,
+.summary-card,
+.meal-card,
+.settings-dialog,
+.bottom-sheet {
+  box-shadow: var(--mobile-exec-shadow) !important;
+}
+
+.settings-screen {
+  background:
+    radial-gradient(circle at 14% -8%, color-mix(in srgb, var(--primary-container) 30%, transparent), transparent 24rem),
+    linear-gradient(180deg, var(--surface) 0%, var(--surface-container) 100%) !important;
+}
+
+.settings-header {
+  box-shadow: none !important;
+  background: color-mix(in srgb, var(--surface) 80%, transparent) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.14) !important;
+  backdrop-filter: blur(24px) saturate(1.14) !important;
+}
+
+.settings-list {
+  gap: 18px !important;
+  padding: 18px 14px calc(34px + env(safe-area-inset-bottom)) !important;
+}
+
+.settings-module-section {
+  gap: 10px !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.settings-module-section + .settings-module-section {
+  border: 0 !important;
+  margin-top: 2px !important;
+}
+
+.settings-section-label {
+  margin: 0 6px 2px !important;
+  color: var(--mobile-exec-muted) !important;
+  font-size: .74rem !important;
+  font-weight: 950 !important;
+  letter-spacing: .12em !important;
+  text-transform: uppercase !important;
+}
+
+.settings-row {
+  min-height: 78px !important;
+  grid-template-columns: 48px minmax(0, 1fr) auto !important;
+  gap: 12px 14px !important;
+  border-radius: 22px !important;
+  padding: 12px 14px !important;
+  background: var(--mobile-exec-surface) !important;
+  color: var(--on-surface) !important;
+  box-shadow: var(--mobile-exec-shadow-soft) !important;
+}
+
+.settings-row small {
+  grid-column: 2 / -1 !important;
+  margin-top: -4px !important;
+  color: var(--mobile-exec-muted) !important;
+  opacity: 1 !important;
+  line-height: 1.36 !important;
+}
+
+.settings-row > span,
+.settings-row-icon {
+  width: 42px !important;
+  height: 42px !important;
+  border-radius: 999px !important;
+  background: color-mix(in srgb, var(--primary-container) 32%, transparent) !important;
+  color: var(--primary) !important;
+}
+
+.settings-row input[type='checkbox'] {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.settings-divider {
+  display: none !important;
+}
+
+.settings-dialog {
+  padding: 24px !important;
+}
+
+.settings-dialog .dialog-option,
+.settings-dialog .language-dialog-option,
+.settings-dialog .advanced-transfer-option,
+.settings-dialog .meal-target-option,
+.settings-dialog .catalog-convert-option {
+  margin-top: 10px !important;
+  border-radius: 20px !important;
+  padding: 16px !important;
+  background: var(--mobile-exec-surface-strong) !important;
+  color: var(--on-surface) !important;
+  box-shadow: var(--mobile-exec-shadow-soft) !important;
+}
+
+.settings-dialog .dialog-option:first-of-type {
+  margin-top: 0 !important;
+}
+
+.settings-dialog .dialog-option.active,
+.settings-dialog .dialog-option:hover,
+.settings-dialog .dialog-option:focus-visible {
+  background: color-mix(in srgb, var(--primary-container) 46%, var(--mobile-exec-surface-strong) 54%) !important;
+  color: var(--on-surface) !important;
+}
+
+.input,
+.tile-input,
+.ingredient-inputs input,
+.note-textarea,
+textarea,
+select,
+.search-scope-select {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--mobile-exec-field) !important;
+  color: var(--on-surface) !important;
+  box-shadow: var(--mobile-exec-shadow-soft) !important;
+}
+
+.input:focus,
+.input:focus-visible,
+.tile-input:focus,
+.tile-input:focus-visible,
+.ingredient-inputs input:focus,
+.note-textarea:focus,
+textarea:focus,
+select:focus,
+.search-scope-select:focus {
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--mobile-exec-field-focus) !important;
+  box-shadow: 0 16px 44px color-mix(in srgb, var(--primary) 13%, transparent) !important;
+}
+
+.bottom-nav {
+  border-top: 0 !important;
+  background: color-mix(in srgb, var(--surface) 76%, transparent) !important;
+  box-shadow: 0 -18px 54px color-mix(in srgb, var(--primary) 7%, transparent) !important;
+}
+
+.bottom-nav button.active {
+  background: transparent !important;
+}
+
+.bottom-nav button.active .nav-svg {
+  background: color-mix(in srgb, var(--primary-container) 72%, transparent) !important;
+  color: var(--primary) !important;
+}

@@ -72,3 +72,11 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 - Desktop controls should follow the mobile visual language: pill-shaped, borderless, softly elevated, and theme-aware. Active navigation must not color the full row; only the icon capsule may carry the selected state.
 - Do not use light text on light cards or dark text on dark cards. Define separate light/dark text tokens for any new surface, chart, metric, or control state.
 - Prefer opacity for layered surfaces, not for essential typography. Labels, values, macros, and action text must remain fully readable in both light and dark mode.
+
+## Executive UI Quality Bar
+
+- Treat Nutrino UI polish as product-critical. Aim for a calm, premium, closed-source-app feel: minimal visible chrome, excellent spacing, sharp hierarchy, and no compressed labels.
+- Do not place desktop page actions beside titles/descriptions when that squeezes copy. The title and description own the row; actions wrap below with comfortable spacing.
+- Form fields must never show legacy top borders, hard outlines, or inset highlight lines. Use filled/glass surfaces, clear text contrast, and a diffuse focus glow.
+- Settings screens need generous margins between modules, rows, and theme choices on mobile and desktop. Avoid edge-to-edge cramped lists unless intentionally designed as a native grouped list.
+- Navigation selection should be subtle and icon-led, inspired by minimalist launchers: no full-row active slabs and no heavy selected borders.
