@@ -12646,11 +12646,318 @@ select:focus-visible,
   }
 }
 
-.app-shell.page-scrolled .top-appbar {
-  opacity: 0 !important;
-  transform: translateY(-10px) !important;
-  pointer-events: none !important;
-  max-height: 0 !important;
-  margin-bottom: 0 !important;
-  overflow: hidden !important;
+/* v0.16.2 mobile flat correction: no shadow/border chrome, real spacing, safer overflow menus. */
+.card,
+.bottom-sheet,
+.dialog-card,
+.sheet-card,
+.modal-card,
+.settings-dialog,
+.settings-screen,
+.catalog-card,
+.fluid-summary-card,
+.meal-card,
+.diary-card,
+.home-card,
+.profile-card,
+.analysis-card {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.bottom-sheet,
+.sheet-card,
+.dialog-card,
+.modal-card,
+.settings-dialog {
+  border-top: 0 !important;
+  box-shadow: none !important;
+}
+
+button,
+.icon-button,
+.scan-button,
+.plus-button,
+.meal-micro-button,
+.fluid-skip-inline-button,
+.entry-icon-button,
+.compact-action-button,
+.selection-action-button,
+.bottom-nav button,
+.catalog-menu-popover button,
+.catalog-item-popover button {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+button:hover,
+button:active,
+button:focus,
+button:focus-visible,
+.icon-button:hover,
+.icon-button:active,
+.icon-button:focus-visible,
+.scan-button:hover,
+.scan-button:active,
+.scan-button:focus-visible,
+.plus-button:hover,
+.plus-button:active,
+.plus-button:focus-visible,
+.meal-micro-button:hover,
+.meal-micro-button:active,
+.meal-micro-button:focus-visible,
+.fluid-skip-inline-button:hover,
+.fluid-skip-inline-button:active,
+.fluid-skip-inline-button:focus-visible,
+.entry-icon-button:hover,
+.entry-icon-button:active,
+.entry-icon-button:focus-visible,
+.compact-action-button:hover,
+.compact-action-button:active,
+.compact-action-button:focus-visible,
+.selection-action-button:hover,
+.selection-action-button:active,
+.selection-action-button:focus-visible,
+.bottom-nav button:hover,
+.bottom-nav button:active,
+.bottom-nav button:focus-visible {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+  transform: none !important;
+}
+
+.settings-header {
+  position: static !important;
+  min-height: auto !important;
+  padding: calc(12px + env(safe-area-inset-top)) 18px 10px !important;
+  background: var(--mobile-flat-bg) !important;
+}
+
+.settings-screen {
+  padding-top: 0 !important;
+}
+
+.fluid-summary-card .meal-header,
+.fluid-header-actions {
+  align-items: center !important;
+}
+
+.fluid-header-actions {
+  gap: 6px !important;
+}
+
+.fluid-header-actions .meal-micro-button,
+.fluid-header-actions .fluid-skip-inline-button,
+.fluid-header-actions .plus-button,
+.fluid-summary-card .meal-micro-button,
+.fluid-summary-card .fluid-skip-inline-button,
+.fluid-summary-card .plus-button {
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 34px !important;
+  border-radius: 14px !important;
+  background: var(--mobile-flat-surface-soft) !important;
+  color: var(--mobile-flat-text) !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.fluid-header-actions .plus-button,
+.fluid-summary-card .plus-button {
+  color: var(--mobile-flat-accent) !important;
+}
+
+.fluid-header-actions .fluid-skip-inline-button,
+.fluid-header-actions .fluid-skip-inline-button.active,
+.fluid-summary-card .fluid-skip-inline-button,
+.fluid-summary-card .fluid-skip-inline-button.active {
+  background: var(--mobile-flat-surface-soft) !important;
+  color: var(--mobile-flat-muted) !important;
+  box-shadow: none !important;
+}
+
+.bottom-nav button.active,
+.bottom-nav button.active:hover,
+.bottom-nav button.active:active,
+.bottom-nav button.active:focus-visible {
+  background: transparent !important;
+  color: var(--mobile-flat-accent) !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.bottom-nav button.active .nav-svg,
+.bottom-nav button.active:hover .nav-svg,
+.bottom-nav button.active:active .nav-svg,
+.bottom-nav button.active:focus-visible .nav-svg {
+  background: var(--mobile-flat-accent-soft) !important;
+  color: var(--mobile-flat-accent) !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.catalog-search-header {
+  gap: 12px !important;
+}
+
+.catalog-header-actions {
+  gap: 6px !important;
+  overflow: visible !important;
+}
+
+.catalog-header-scope {
+  width: 42px !important;
+  min-width: 42px !important;
+  max-width: 42px !important;
+  height: 36px !important;
+  padding: 0 8px !important;
+  color: transparent !important;
+  text-shadow: none !important;
+  background-color: var(--mobile-flat-surface-soft) !important;
+  background-position: center !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.catalog-header-scope option {
+  color: var(--mobile-flat-text) !important;
+}
+
+.catalog-card,
+.catalog-card-main,
+.catalog-card-actions,
+.catalog-menu-wrap,
+.catalog-item-menu-wrap,
+.page-stack,
+.catalog-search-card {
+  overflow: visible !important;
+}
+
+.catalog-card {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+.catalog-card-menu-open,
+.catalog-card:has(.catalog-item-menu-wrap.open),
+.catalog-card:has(.catalog-menu-popover) {
+  z-index: 2147483000 !important;
+}
+
+.catalog-menu-wrap,
+.catalog-item-menu-wrap {
+  position: relative !important;
+  isolation: isolate !important;
+  z-index: 100 !important;
+}
+
+.catalog-menu-wrap.open,
+.catalog-item-menu-wrap.open {
+  z-index: 2147483600 !important;
+}
+
+.catalog-menu-popover,
+.catalog-item-popover {
+  position: absolute !important;
+  right: 0 !important;
+  top: calc(100% + 6px) !important;
+  z-index: 2147483647 !important;
+  min-width: min(220px, calc(100vw - 32px)) !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: var(--mobile-flat-surface) !important;
+  color: var(--mobile-flat-text) !important;
+  overflow: visible !important;
+}
+
+.catalog-menu-popover button,
+.catalog-item-popover button,
+.catalog-menu-popover button:hover,
+.catalog-item-popover button:hover,
+.catalog-menu-popover button:active,
+.catalog-item-popover button:active,
+.catalog-menu-popover button:focus-visible,
+.catalog-item-popover button:focus-visible {
+  color: var(--mobile-flat-text) !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.input,
+.tile-input,
+.textarea-input,
+.note-textarea,
+textarea,
+select,
+.search-scope-select,
+.search-input,
+.ingredient-inputs input,
+.input:hover,
+.tile-input:hover,
+.textarea-input:hover,
+.note-textarea:hover,
+textarea:hover,
+select:hover,
+.search-scope-select:hover,
+.search-input:hover,
+.ingredient-inputs input:hover,
+.input:focus,
+.tile-input:focus,
+.textarea-input:focus,
+.note-textarea:focus,
+textarea:focus,
+select:focus,
+.search-scope-select:focus,
+.search-input:focus,
+.ingredient-inputs input:focus,
+.input:focus-visible,
+.tile-input:focus-visible,
+.textarea-input:focus-visible,
+.note-textarea:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.search-scope-select:focus-visible,
+.search-input:focus-visible,
+.ingredient-inputs input:focus-visible {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background-image: none !important;
+}
+
+.settings-module-section {
+  gap: 6px !important;
+  padding: 10px !important;
+}
+
+.settings-row {
+  padding: 8px 8px !important;
+  gap: 3px 10px !important;
+}
+
+.settings-row small {
+  margin-top: 0 !important;
+}
+
+.settings-dialog > .input[type='search'],
+.settings-dialog > input.input[type='search'],
+.language-search-input,
+.search-input + .language-option-list,
+.settings-dialog .language-option-grid {
+  margin-top: 0 !important;
+  margin-bottom: 12px !important;
 }

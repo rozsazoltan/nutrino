@@ -20988,7 +20988,7 @@ function setTab(tab: Tab) {
           v-for="item in catalogExactItems"
           :key="`exact-${item.id}`"
           class="card catalog-card"
-          :class="{ inactive: item.inactive === true, locked: catalogItemIsLocked(item) }"
+          :class="{ inactive: item.inactive === true, locked: catalogItemIsLocked(item), 'catalog-card-menu-open': openCatalogActionId === item.id }"
         >
           <div class="catalog-card-main">
             <div class="catalog-title-line">
@@ -21031,7 +21031,7 @@ function setTab(tab: Tab) {
           v-for="item in catalogSuggestedItems"
           :key="`suggested-${item.id}`"
           class="card catalog-card"
-          :class="{ inactive: item.inactive === true, locked: catalogItemIsLocked(item) }"
+          :class="{ inactive: item.inactive === true, locked: catalogItemIsLocked(item), 'catalog-card-menu-open': openCatalogActionId === item.id }"
         >
           <div class="catalog-card-main">
             <div class="catalog-title-line">
@@ -21076,7 +21076,7 @@ function setTab(tab: Tab) {
           v-for="item in visibleCatalogItems"
           :key="item.id"
           class="card catalog-card"
-          :class="{ inactive: item.inactive === true, locked: catalogItemIsLocked(item) }"
+          :class="{ inactive: item.inactive === true, locked: catalogItemIsLocked(item), 'catalog-card-menu-open': openCatalogActionId === item.id }"
         >
           <div class="catalog-card-main">
             <div class="catalog-title-line">

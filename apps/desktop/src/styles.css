@@ -6026,3 +6026,257 @@ body,
     justify-self: start !important;
   }
 }
+
+/* v0.16.2 hard fix: real top-layer catalog menus and cleaner desktop info panels. */
+.desktop-shell,
+.desktop-shell main,
+.desktop-shell section,
+.desktop-shell .grid,
+.desktop-shell .space-y-4,
+.desktop-shell .space-y-5,
+.desktop-shell .space-y-6,
+.desktop-shell .card,
+.desktop-shell .catalog-list-card,
+.desktop-shell .food-list-card,
+.desktop-shell .ingredient-list-card,
+.desktop-shell .activity-card,
+.desktop-shell .catalog-card-head,
+.desktop-shell .catalog-title-row,
+.desktop-shell .activity-card-top,
+.desktop-shell .activity-card-copy {
+  overflow: visible !important;
+}
+
+.desktop-shell .catalog-list-card,
+.desktop-shell .food-list-card,
+.desktop-shell .ingredient-list-card,
+.desktop-shell .activity-card {
+  position: relative !important;
+  isolation: auto !important;
+  z-index: 1 !important;
+}
+
+.desktop-shell .catalog-list-card-menu-open,
+.desktop-shell .catalog-list-card:has(.catalog-action-menu.open),
+.desktop-shell .food-list-card:has(.catalog-action-menu.open),
+.desktop-shell .ingredient-list-card:has(.catalog-action-menu.open),
+.desktop-shell .activity-card:has(.catalog-action-menu.open) {
+  z-index: 2147483000 !important;
+}
+
+.desktop-shell .catalog-action-menu,
+.catalog-action-menu {
+  position: relative !important;
+  display: grid !important;
+  place-items: center !important;
+  justify-self: end !important;
+  overflow: visible !important;
+  isolation: isolate !important;
+  z-index: 100 !important;
+}
+
+.desktop-shell .catalog-action-menu.open,
+.catalog-action-menu.open {
+  z-index: 2147483600 !important;
+}
+
+.desktop-shell .catalog-menu-trigger,
+.catalog-menu-trigger {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 42px !important;
+  height: 42px !important;
+  display: grid !important;
+  place-items: center !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: var(--senior-muted, currentColor) !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+  font-size: 1.55rem !important;
+  line-height: 1 !important;
+}
+
+.desktop-shell .catalog-menu-trigger:hover,
+.desktop-shell .catalog-menu-trigger:active,
+.desktop-shell .catalog-menu-trigger:focus,
+.desktop-shell .catalog-menu-trigger:focus-visible,
+.catalog-menu-trigger:hover,
+.catalog-menu-trigger:active,
+.catalog-menu-trigger:focus,
+.catalog-menu-trigger:focus-visible {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: var(--senior-surface-soft, transparent) !important;
+  color: var(--senior-ink, currentColor) !important;
+  text-decoration: none !important;
+  transform: none !important;
+}
+
+.desktop-shell .catalog-menu-popover,
+.catalog-menu-popover {
+  position: absolute !important;
+  right: 0 !important;
+  top: calc(100% + 6px) !important;
+  z-index: 2147483647 !important;
+  min-width: 236px !important;
+  max-width: min(320px, calc(100vw - 28px)) !important;
+  display: grid !important;
+  gap: 3px !important;
+  padding: 8px !important;
+  border: 0 !important;
+  outline: 0 !important;
+  border-radius: 20px !important;
+  background: var(--senior-popover, var(--surface)) !important;
+  color: var(--senior-ink, var(--on-surface)) !important;
+  box-shadow: 0 18px 48px rgba(0,0,0,.18) !important;
+  text-decoration: none !important;
+  overflow: visible !important;
+  transform: translateZ(0) !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button,
+.catalog-menu-popover .link-button {
+  width: 100% !important;
+  min-height: 40px !important;
+  justify-content: flex-start !important;
+  padding: 9px 11px !important;
+  border: 0 !important;
+  outline: 0 !important;
+  border-radius: 14px !important;
+  background: transparent !important;
+  color: var(--senior-ink, currentColor) !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+  transform: none !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button:hover:not(:disabled),
+.desktop-shell .catalog-menu-popover .link-button:focus-visible,
+.catalog-menu-popover .link-button:hover:not(:disabled),
+.catalog-menu-popover .link-button:focus-visible {
+  background: var(--senior-surface-soft, rgba(127,127,127,.08)) !important;
+  color: var(--senior-ink, currentColor) !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+  transform: none !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button.danger,
+.desktop-shell .catalog-menu-popover .link-button.danger:hover:not(:disabled),
+.catalog-menu-popover .link-button.danger,
+.catalog-menu-popover .link-button.danger:hover:not(:disabled) {
+  color: var(--senior-danger-text, #b42318) !important;
+}
+
+.desktop-info-dialog a,
+.desktop-info-dialog a:hover,
+.desktop-info-dialog a:focus,
+.desktop-info-dialog a:focus-visible,
+.submodal-license-list .license-card,
+.submodal-license-list .license-card:hover,
+.submodal-license-list .license-card:focus-visible {
+  text-decoration: none !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.submodal-license-list {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)) !important;
+  gap: 12px !important;
+  align-items: stretch !important;
+}
+
+.submodal-license-list .license-card {
+  display: grid !important;
+  grid-template-columns: 42px minmax(0, 1fr) !important;
+  grid-template-rows: auto auto !important;
+  gap: 8px 12px !important;
+  align-items: start !important;
+  padding: 14px !important;
+  background: var(--senior-surface-soft, rgba(127,127,127,.08)) !important;
+  color: var(--senior-ink, currentColor) !important;
+}
+
+.submodal-license-list .license-card .mobile-setting-icon {
+  grid-row: 1 / span 2 !important;
+}
+
+.submodal-license-list .license-card .mobile-setting-copy {
+  grid-column: 2 !important;
+  display: grid !important;
+  gap: 4px !important;
+  min-width: 0 !important;
+}
+
+.submodal-license-list .license-card b,
+.submodal-license-list .license-card small,
+.submodal-license-list .license-card strong {
+  display: block !important;
+  min-width: 0 !important;
+  overflow-wrap: anywhere !important;
+  text-decoration: none !important;
+}
+
+.submodal-license-list .license-card strong {
+  grid-column: 2 !important;
+  justify-self: start !important;
+  width: fit-content !important;
+  margin-top: 2px !important;
+  padding: 0 !important;
+  color: var(--senior-muted, currentColor) !important;
+  font-size: .76rem !important;
+  line-height: 1.2 !important;
+}
+
+.desktop-info-dialog .info-dialog-feature-card {
+  align-items: start !important;
+}
+
+.desktop-info-dialog .mobile-setting-copy {
+  display: grid !important;
+  gap: 4px !important;
+  min-width: 0 !important;
+}
+
+.desktop-shell button,
+.desktop-shell .btn-primary,
+.desktop-shell .btn-secondary,
+.desktop-shell .link-button,
+.desktop-shell .mobile-setting-row,
+.desktop-shell .settings-row-v040,
+.desktop-shell .language-option-button {
+  border: 0 !important;
+  outline: 0 !important;
+  text-decoration: none !important;
+}
+
+.desktop-shell button:hover,
+.desktop-shell button:focus,
+.desktop-shell button:focus-visible,
+.desktop-shell .btn-primary:hover,
+.desktop-shell .btn-primary:focus-visible,
+.desktop-shell .btn-secondary:hover,
+.desktop-shell .btn-secondary:focus-visible,
+.desktop-shell .link-button:hover,
+.desktop-shell .link-button:focus-visible,
+.desktop-shell .mobile-setting-row:hover,
+.desktop-shell .mobile-setting-row:focus-visible,
+.desktop-shell .settings-row-v040:hover,
+.desktop-shell .settings-row-v040:focus-visible,
+.desktop-shell .language-option-button:hover,
+.desktop-shell .language-option-button:focus-visible {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+  transform: none !important;
+}

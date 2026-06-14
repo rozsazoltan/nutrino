@@ -121,3 +121,12 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 - Desktop food catalog entries should not render as spreadsheet-like tables. Use card/list rows with the title and overflow menu on the first line, one full-width description/identity line, and one scannable data line for nutrition.
 - Recipe nutrition metadata may use responsive multi-column grids when space allows. Do not force two-column layouts on wide desktop screens.
 - Overflow menus must behave like top-layer UI. The open card/menu must receive the highest practical z-index and all relevant wrappers must remain overflow-visible.
+
+## Flat mobile and menu layering rules
+
+- Mobile controls should stay flat: no decorative shadows, no hover rings, no hard outlines, and no colored shadow glows on routine card actions.
+- Mobile fluid card actions must share one calm flat visual language. Avoid separate green/red raised button treatments unless the destructive state is part of a confirmation flow.
+- Mobile sheets, add-item dialogs, inputs, and pickers must not show legacy top borders or white inset highlight lines.
+- Compact mobile filters may use an icon-sized select affordance when the surrounding context already explains the search scope; avoid truncated labels like “Kata”.
+- Overflow menus on mobile and desktop must be able to escape parent card clipping and must render above following DOM content. Prefer explicit open classes, overflow-visible wrappers, and top-layer z-index values over relying on native details stacking.
+- License, Privacy, and About subdialogs should use icon/title/body hierarchy. Do not underline license cards or compress title, description, and license into one row.

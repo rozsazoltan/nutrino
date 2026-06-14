@@ -4597,6 +4597,10 @@ function syncCatalogMenu(key: string, event: Event) {
   openCatalogMenuKey.value = details.open ? key : openCatalogMenuKey.value === key ? null : openCatalogMenuKey.value;
 }
 
+function toggleCatalogMenu(key: string) {
+  openCatalogMenuKey.value = openCatalogMenuKey.value === key ? null : key;
+}
+
 function closeCatalogMenu() {
   openCatalogMenuKey.value = null;
 }
@@ -7425,16 +7429,16 @@ onBeforeUnmount(() => {
             <article v-for="ingredient in sortedIngredients" :key="ingredient.id" class="food-list-card ingredient-list-card catalog-list-card" :class="{ 'catalog-list-card-menu-open': openCatalogMenuKey === catalogMenuKey('ingredient', ingredient.id) }">
               <div class="catalog-title-row food-title-row">
                 <h3>{{ localizedName(ingredient) }}</h3>
-                <details class="catalog-action-menu" :open="openCatalogMenuKey === catalogMenuKey('ingredient', ingredient.id)" @toggle="syncCatalogMenu(catalogMenuKey('ingredient', ingredient.id), $event)">
-                  <summary class="catalog-menu-trigger" :aria-label="t('ui.actions_06df3')">⋯</summary>
-                  <div class="catalog-menu-popover" @click="closeCatalogMenu">
+                <div class="catalog-action-menu" :class="{ open: openCatalogMenuKey === catalogMenuKey('ingredient', ingredient.id) }">
+                  <button class="catalog-menu-trigger" type="button" :aria-label="t('ui.actions_06df3')" @click.stop="toggleCatalogMenu(catalogMenuKey('ingredient', ingredient.id))">⋯</button>
+                  <div v-if="openCatalogMenuKey === catalogMenuKey('ingredient', ingredient.id)" class="catalog-menu-popover" @click="closeCatalogMenu">
                     <button class="link-button icon-only-label" @click="openIngredientModal(ingredient)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
                     <button class="link-button icon-only-label" @click="mergeCatalogInto('ingredient', ingredient.id, localizedName(ingredient))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button>
                     <button class="link-button icon-only-label" @click="moveIngredientToFood(ingredient)">{{ t('ui.moveToFoods_e1a6b') }}</button>
                     <button class="link-button icon-only-label" @click="showCatalogQr('ingredient', ingredient, localizedName(ingredient))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
                     <button class="link-button danger icon-only-label" @click="removeIngredient(ingredient)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
                   </div>
-                </details>
+                </div>
               </div>
               <p class="food-card-description muted">
                 <span>{{ t('ui.ingredient_59198') }}</span>
@@ -7483,16 +7487,16 @@ onBeforeUnmount(() => {
             <article v-for="food in sortedFoods" :key="food.id" class="food-list-card catalog-list-card" :class="{ 'catalog-list-card-menu-open': openCatalogMenuKey === catalogMenuKey('food', food.id) }">
               <div class="catalog-title-row food-title-row">
                 <h3>{{ localizedName(food) }}</h3>
-                <details class="catalog-action-menu" :open="openCatalogMenuKey === catalogMenuKey('food', food.id)" @toggle="syncCatalogMenu(catalogMenuKey('food', food.id), $event)">
-                  <summary class="catalog-menu-trigger" aria-label="Műveletek">⋯</summary>
-                  <div class="catalog-menu-popover" @click="closeCatalogMenu">
+                <div class="catalog-action-menu" :class="{ open: openCatalogMenuKey === catalogMenuKey('food', food.id) }">
+                  <button class="catalog-menu-trigger" type="button" :aria-label="t('ui.actions_06df3')" @click.stop="toggleCatalogMenu(catalogMenuKey('food', food.id))">⋯</button>
+                  <div v-if="openCatalogMenuKey === catalogMenuKey('food', food.id)" class="catalog-menu-popover" @click="closeCatalogMenu">
                     <button class="link-button icon-only-label" @click="openFoodModal(food)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
                     <button class="link-button icon-only-label" @click="mergeCatalogInto('food', food.id, localizedName(food))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button>
                     <button class="link-button icon-only-label" @click="moveFoodToIngredient(food)">{{ t('ui.moveToIngredients_39253') }}</button>
                     <button class="link-button icon-only-label" @click="showCatalogQr('food', food, localizedName(food))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
                     <button class="link-button danger icon-only-label" @click="removeFood(food)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
                   </div>
-                </details>
+                </div>
               </div>
               <p class="food-card-description muted"><span>{{ t('ui.food_0a38e') }}</span><span>{{ food.brand || t('ui.noBrand') }}</span><span v-if="food.barcode">{{ food.barcode }}</span><span class="font-mono">{{ food.id }}</span></p>
               <p v-if="food.note" class="food-card-note muted">{{ food.note }}</p>
@@ -7531,15 +7535,15 @@ onBeforeUnmount(() => {
               <div class="catalog-card-head">
                 <div class="catalog-title-row">
                   <h3 class="text-lg font-bold">{{ localizedName(recipe.recipe) }}</h3>
-                  <details class="catalog-action-menu" :open="openCatalogMenuKey === catalogMenuKey('recipe', recipe.recipe.id)" @toggle="syncCatalogMenu(catalogMenuKey('recipe', recipe.recipe.id), $event)">
-                    <summary class="catalog-menu-trigger" aria-label="Műveletek">⋯</summary>
-                    <div class="catalog-menu-popover" @click="closeCatalogMenu">
+                  <div class="catalog-action-menu" :class="{ open: openCatalogMenuKey === catalogMenuKey('recipe', recipe.recipe.id) }">
+                    <button class="catalog-menu-trigger" type="button" :aria-label="t('ui.actions_06df3')" @click.stop="toggleCatalogMenu(catalogMenuKey('recipe', recipe.recipe.id))">⋯</button>
+                    <div v-if="openCatalogMenuKey === catalogMenuKey('recipe', recipe.recipe.id)" class="catalog-menu-popover" @click="closeCatalogMenu">
                       <button class="link-button icon-only-label" @click="openRecipeModal(recipe)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
                       <button class="link-button icon-only-label" @click="mergeCatalogInto('recipe', recipe.recipe.id, recipe.recipe.name)"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button>
                       <button class="link-button icon-only-label" @click="showCatalogQr('recipe', recipe, recipe.recipe.name)"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
                       <button class="link-button danger icon-only-label" @click="removeRecipe(recipe)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
                     </div>
-                  </details>
+                  </div>
                 </div>
                 <p class="catalog-card-description muted">{{ recipe.recipe.description || 'No description' }}</p>
                 <small v-if="recipe.recipe.note" class="catalog-card-description block muted">{{ recipe.recipe.note }}</small>
@@ -7596,15 +7600,15 @@ onBeforeUnmount(() => {
                   <div class="activity-card-copy">
                     <div class="catalog-title-row">
                       <h4 class="font-bold">{{ localizedName(activity) }}</h4>
-                      <details class="catalog-action-menu" :open="openCatalogMenuKey === catalogMenuKey('activity', activity.id)" @toggle="syncCatalogMenu(catalogMenuKey('activity', activity.id), $event)">
-                        <summary class="catalog-menu-trigger" aria-label="Műveletek">⋯</summary>
-                        <div class="catalog-menu-popover" @click="closeCatalogMenu">
+                      <div class="catalog-action-menu" :class="{ open: openCatalogMenuKey === catalogMenuKey('activity', activity.id) }">
+                        <button class="catalog-menu-trigger" type="button" :aria-label="t('ui.actions_06df3')" @click.stop="toggleCatalogMenu(catalogMenuKey('activity', activity.id))">⋯</button>
+                        <div v-if="openCatalogMenuKey === catalogMenuKey('activity', activity.id)" class="catalog-menu-popover" @click="closeCatalogMenu">
                           <button class="link-button icon-only-label" @click="openActivityModal(activity)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
                           <button class="link-button icon-only-label" @click="mergeCatalogInto('activity', activity.id, localizedName(activity))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button>
                           <button class="link-button icon-only-label" @click="showCatalogQr('activity', activity, localizedName(activity))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
                           <button class="link-button danger icon-only-label" @click="removeActivity(activity)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
                         </div>
-                      </details>
+                      </div>
                     </div>
                     <p class="muted text-sm">{{ activity.description || 'No description' }}</p>
                     <p class="mt-2 text-xs font-bold uppercase tracking-wide text-nutri-700">{{ t('ui.code_ca0db') }} {{ activity.code }} · MET {{ round(activity.met) }} · {{ round(activity.kcal_per_min) }} kcal/min</p>
