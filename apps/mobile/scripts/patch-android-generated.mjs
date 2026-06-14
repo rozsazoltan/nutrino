@@ -407,6 +407,15 @@ function findAndroidAppGradlePath() {
   return androidAppGradlePaths.find((candidate) => fs.existsSync(candidate));
 }
 
+function requireAndroidAppGradlePath() {
+  const gradlePath = findAndroidAppGradlePath();
+  if (gradlePath) return gradlePath;
+
+  console.error(`Android generated project is incomplete: missing app/build.gradle.kts or app/build.gradle under ${androidDir}`);
+  console.error('Run `aube reset:android`, then retry `aube dev:android` or `aube build:android`.');
+  process.exit(1);
+}
+
 function setGradleStringProperty(source, property, value, blockName = 'android') {
   const assignmentRegex = new RegExp(`${property}\\s*=\\s*"[^"]+"`, 'g');
   const groovyRegex = new RegExp(`${property}\\s+"[^"]+"`, 'g');
@@ -596,8 +605,7 @@ function patchNotificationManagerNutrinoActions() {
 }
 
 function patchAndroidApplicationId(config) {
-  const gradlePath = findAndroidAppGradlePath();
-  if (!gradlePath) return false;
+  const gradlePath = requireAndroidAppGradlePath();
 
   let source = fs.readFileSync(gradlePath, 'utf8');
   const original = source;
@@ -612,8 +620,7 @@ function patchAndroidApplicationId(config) {
 }
 
 function patchReleaseSigning() {
-  const gradlePath = findAndroidAppGradlePath();
-  if (!gradlePath) return false;
+  const gradlePath = requireAndroidAppGradlePath();
 
   const keystorePropertiesPath = path.join(androidDir, 'keystore.properties');
   const hasRealKeystore = fs.existsSync(keystorePropertiesPath);
@@ -1303,7 +1310,6 @@ function normalizedAndroidRustBuildTaskSource(source) {
 
   lines.push(
     'import java.io.File',
-    'import org.apache.tools.ant.taskdefs.condition.Os',
     'import org.gradle.api.DefaultTask',
     'import org.gradle.api.GradleException',
     'import org.gradle.api.logging.LogLevel',
@@ -1322,27 +1328,12 @@ function normalizedAndroidRustBuildTaskSource(source) {
     '',
     '    @TaskAction',
     '    fun assemble() {',
-    "        // Tauri's generated Android Rust task can incorrectly execute",
-    '        // Node plus the Tauri command on Windows. In that case Node tries to load a local',
-    '        // src-tauri/tauri module and the Gradle build fails after Cargo has',
-    '        // already produced the Android shared library. Execute the Tauri CLI',
-    '        // directly instead. On Windows we go through cmd.exe so the local',
-    '        // node_modules/.bin/tauri.cmd shim is resolved through PATH.',
-    '        val executable = if (Os.isFamily(Os.FAMILY_WINDOWS)) "cmd.exe" else "tauri"',
-    '        runTauriCli(executable)',
-    '    }',
-    '',
-    '    fun runTauriCli(executable: String) {',
     '        val rootDirRel = rootDirRel ?: throw GradleException("rootDirRel cannot be null")',
     '        val target = target ?: throw GradleException("target cannot be null")',
     '        val release = release ?: throw GradleException("release cannot be null")',
-    '        val args = mutableListOf<String>()',
-    '',
-    '        if (Os.isFamily(Os.FAMILY_WINDOWS)) {',
-    '            args.addAll(listOf("/d", "/s", "/c", "tauri"))',
-    '        }',
-    '',
-    '        args.addAll(listOf("android", "android-studio-script", "--target", target))',
+    '        val workingDirectory = File(project.projectDir, rootDirRel)',
+    '        val tauriCliScript = findRepoTauriCliScript(workingDirectory)',
+    '        val args = mutableListOf(tauriCliScript.absolutePath, "android", "android-studio-script", "--target", target)',
     '',
     '        if (release) {',
     '            args.add("--release")',
@@ -1355,16 +1346,29 @@ function normalizedAndroidRustBuildTaskSource(source) {
     '        }',
     '',
     '        project.exec {',
-    '            workingDir(File(project.projectDir, rootDirRel))',
-    '            executable(executable)',
+    '            workingDir(workingDirectory)',
+    '            executable("node")',
     '            args(args)',
     '        }.assertNormalExitValue()',
+    '    }',
+    '',
+    '    private fun findRepoTauriCliScript(start: File): File {',
+    '        var current: File? = start.canonicalFile',
+    '        while (current != null) {',
+    '            val candidate = File(current, "scripts/tauri-cli.mjs")',
+    '            if (candidate.isFile) {',
+    '                return candidate',
+    '            }',
+    '            current = current.parentFile',
+    '        }',
+    '',
+    '        throw GradleException("Could not find scripts/tauri-cli.mjs from ${start.absolutePath}")',
     '    }',
     '}',
     ''
   );
 
-  return lines.join('\n');
+  return `${lines.join('\n')}\n`;
 }
 
 function patchBuildSrcAndroidRustBuildTask() {

@@ -68,3 +68,7 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 - Bottom navigation active state should color the icon capsule only, not the entire tab button.
 - Update prompts must respect same-day dismissals across the header badge, chip and dialog; do not keep resurfacing an update after the user postponed it.
 - Fluid-day skip should be a compact decline affordance, while resuming tracking should be an explicit enable-style action.
+
+- Desktop controls should follow the mobile visual language: pill-shaped, borderless, softly elevated, and theme-aware. Active navigation should color the icon capsule, not the full row.
+- Do not use light text on light cards or dark text on dark cards. Define separate light/dark text tokens for any new surface, chart, metric, or control state.
+- Prefer opacity for layered surfaces, not for essential typography. Labels, values, macros, and action text must remain fully readable in both light and dark mode.

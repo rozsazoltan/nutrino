@@ -177,6 +177,7 @@ for (const file of [
   'apps/mobile/scripts/android-doctor.mjs',
   'apps/mobile/scripts/patch-android-generated.mjs',
   'scripts/tauri-env.mjs',
+  'scripts/tauri-cli.mjs',
   '.github/workflows/test.yml',
   '.github/workflows/release.yml',
   '.github/release/nutrino-desktop.tauri-release.toml',
@@ -192,8 +193,8 @@ expectContains(
 );
 expectContains(
   'apps/mobile/scripts/patch-android-generated.mjs',
-  'cmd.exe',
-  'Android patch script should use cmd.exe for the Windows Tauri CLI shim.',
+  'scripts/tauri-cli.mjs',
+  'Android patch script should call the project-local Tauri CLI wrapper instead of a global tauri command.',
 );
 expectContains(
   'apps/mobile/scripts/patch-android-generated.mjs',
@@ -203,13 +204,23 @@ expectContains(
 
 expectContains(
   'scripts/tauri-env.mjs',
-  "packageName: '@tauri-apps/cli'",
-  'Tauri env script should resolve the local @tauri-apps/cli package instead of relying on a global tauri command.',
+  'tauri-cli.mjs',
+  'Tauri env script should delegate to the project-local Tauri CLI wrapper.',
 );
 expectContains(
-  'scripts/tauri-env.mjs',
+  'scripts/tauri-cli.mjs',
+  '@tauri-apps/cli',
+  'Tauri CLI wrapper should resolve the local @tauri-apps/cli package instead of relying on a global tauri command.',
+);
+expectContains(
+  'scripts/tauri-cli.mjs',
   'NUTRINO_TAURI_CLI',
-  'Tauri env script should allow an explicit Tauri CLI override for debugging.',
+  'Tauri CLI wrapper should allow an explicit Tauri CLI override for debugging.',
+);
+expectContains(
+  'scripts/tauri-cli.mjs',
+  'Nutrino intentionally does not use a global `tauri` command.',
+  'Tauri CLI wrapper should fail clearly instead of falling back to a global tauri command.',
 );
 
 expectContains('README.md', '## Installation', 'README should focus on user installation.');
@@ -275,7 +286,7 @@ expect(
   !Object.prototype.hasOwnProperty.call(rootPackage.scripts, 'pre-push'),
   'Root package should let hk own pre-push directly.',
 );
-for (const dependency of ['esbuild', 'oxlint', 'oxfmt', 'vitest']) {
+for (const dependency of ['esbuild', 'oxlint', 'oxfmt', 'vitest', '@tauri-apps/cli']) {
   expect(
     rootPackage.devDependencies?.[dependency] === 'catalog:',
     `Root package should include ${dependency} from the catalog.`,

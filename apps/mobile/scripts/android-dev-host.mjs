@@ -8,6 +8,32 @@ import { mobileCargoTargetDir, mobileGradleUserHome, pruneAndroidPackageOutputs,
 
 const projectRoot = process.cwd();
 const androidDir = path.join(projectRoot, 'src-tauri', 'gen', 'android');
+const androidAppBuildGradlePaths = [
+  path.join(androidDir, 'app', 'build.gradle.kts'),
+  path.join(androidDir, 'app', 'build.gradle'),
+];
+const androidRequiredProjectFiles = [
+  path.join(androidDir, 'settings.gradle'),
+  process.platform === 'win32' ? path.join(androidDir, 'gradlew.bat') : path.join(androidDir, 'gradlew'),
+];
+
+function androidAppBuildFileExists() {
+  return androidAppBuildGradlePaths.some((candidate) => fs.existsSync(candidate));
+}
+
+function androidGeneratedProjectIsUsable() {
+  return fs.existsSync(androidDir)
+    && androidAppBuildFileExists()
+    && androidRequiredProjectFiles.every((candidate) => fs.existsSync(candidate));
+}
+
+function androidProjectRepairReason() {
+  if (!fs.existsSync(androidDir)) return 'missing generated Android project';
+  if (!androidAppBuildFileExists()) return 'missing app/build.gradle.kts or app/build.gradle';
+  const missing = androidRequiredProjectFiles.find((candidate) => !fs.existsSync(candidate));
+  return missing ? `missing ${path.relative(androidDir, missing)}` : 'generated Android project is incomplete';
+}
+
 
 function parseExplicitHost(argv) {
   const args = argv.slice(2).filter(Boolean);
@@ -86,12 +112,19 @@ function runAndroidInit(channel) {
 }
 
 async function ensureAndroidProjectExists(channel) {
-  if (fs.existsSync(androidDir)) return;
+  if (androidGeneratedProjectIsUsable()) return;
 
   const config = channelConfig(channel);
-  console.log(`\nAndroid project is missing, generating ${config.channel} project first: ${androidDir}`);
+  console.log(`\nAndroid project needs regeneration: ${androidProjectRepairReason()}`);
+  console.log(`Generating ${config.channel} project: ${androidDir}`);
   const initCode = await runAndroidInit(channel);
   if (initCode !== 0) process.exit(initCode);
+
+  if (!androidGeneratedProjectIsUsable()) {
+    console.error(`\nAndroid project generation finished, but the generated project is still incomplete: ${androidProjectRepairReason()}`);
+    console.error('Run `aube reset:android`, then retry the same command.');
+    process.exit(1);
+  }
 }
 
 function androidGeneratedKotlinDir(applicationId) {

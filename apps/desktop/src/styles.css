@@ -3088,3 +3088,305 @@ th,
 td {
   border-bottom-color: rgba(64, 80, 70, 0.045) !important;
 }
+
+
+/* v0.15.3 desktop glass controls and borderless theme polish */
+:root {
+  --desktop-control-text: #172018;
+  --desktop-control-muted: #415148;
+  --desktop-control-surface: color-mix(in srgb, white 76%, var(--primary-container) 8%);
+  --desktop-control-surface-strong: color-mix(in srgb, white 88%, var(--primary-container) 6%);
+  --desktop-control-hover: color-mix(in srgb, var(--primary-container) 54%, white 38%);
+  --desktop-control-active: color-mix(in srgb, var(--primary) 88%, #12351d 12%);
+  --desktop-control-shadow:
+    0 12px 34px rgba(25, 62, 36, 0.075),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  --desktop-control-shadow-hover:
+    0 18px 42px rgba(25, 62, 36, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  --desktop-danger-glass: color-mix(in srgb, var(--error-container) 76%, white 18%);
+}
+
+:root[data-theme='light'] {
+  --desktop-control-text: #172018;
+  --desktop-control-muted: #415148;
+  --desktop-control-surface: color-mix(in srgb, white 76%, var(--primary-container) 8%);
+  --desktop-control-surface-strong: color-mix(in srgb, white 88%, var(--primary-container) 6%);
+  --desktop-control-hover: color-mix(in srgb, var(--primary-container) 54%, white 38%);
+  --desktop-control-active: color-mix(in srgb, var(--primary) 88%, #12351d 12%);
+  --desktop-danger-glass: color-mix(in srgb, var(--error-container) 76%, white 18%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --desktop-control-text: #e7f0e4;
+    --desktop-control-muted: #b9c8b5;
+    --desktop-control-surface: color-mix(in srgb, var(--surface-container-high) 76%, transparent);
+    --desktop-control-surface-strong: color-mix(in srgb, var(--surface-container-highest) 54%, var(--surface-container) 46%);
+    --desktop-control-hover: color-mix(in srgb, var(--primary-container) 48%, var(--surface-container-high) 52%);
+    --desktop-control-active: color-mix(in srgb, var(--primary) 82%, #dff8dc 18%);
+    --desktop-danger-glass: color-mix(in srgb, var(--error-container) 58%, var(--surface-container-high) 42%);
+    --desktop-control-shadow:
+      0 16px 42px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    --desktop-control-shadow-hover:
+      0 22px 48px rgba(0, 0, 0, 0.34),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+}
+
+:root[data-theme='dark'] {
+  --desktop-control-text: #e7f0e4;
+  --desktop-control-muted: #b9c8b5;
+  --desktop-control-surface: color-mix(in srgb, var(--surface-container-high) 76%, transparent);
+  --desktop-control-surface-strong: color-mix(in srgb, var(--surface-container-highest) 54%, var(--surface-container) 46%);
+  --desktop-control-hover: color-mix(in srgb, var(--primary-container) 48%, var(--surface-container-high) 52%);
+  --desktop-control-active: color-mix(in srgb, var(--primary) 82%, #dff8dc 18%);
+  --desktop-danger-glass: color-mix(in srgb, var(--error-container) 58%, var(--surface-container-high) 42%);
+  --desktop-control-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --desktop-control-shadow-hover:
+    0 22px 48px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.btn-primary,
+.btn-secondary,
+.link-button,
+.nav-button,
+.language-option-button,
+.qr-nav-button,
+.file-action,
+.repo-action,
+.support-actions a,
+.desktop-update-chip,
+.desktop-update-modal-actions button,
+.dialog-actions button,
+.settings-top-actions button,
+.mobile-info-actions a {
+  border: 0 !important;
+  outline: 0;
+  -webkit-backdrop-filter: blur(18px) saturate(1.16) !important;
+  backdrop-filter: blur(18px) saturate(1.16) !important;
+}
+
+.btn-secondary,
+.link-button,
+.qr-nav-button,
+.file-action,
+.repo-action,
+.support-actions a,
+.desktop-update-chip,
+.desktop-update-modal-actions .btn-secondary,
+.dialog-actions .btn-secondary,
+.settings-top-actions .btn-secondary,
+.mobile-info-actions a {
+  background: var(--desktop-control-surface) !important;
+  color: var(--desktop-control-text) !important;
+  box-shadow: var(--desktop-control-shadow) !important;
+}
+
+.btn-primary,
+.desktop-update-modal-actions .btn-primary,
+.dialog-actions .btn-primary,
+.settings-top-actions .btn-primary {
+  background: var(--desktop-control-active) !important;
+  color: var(--on-primary) !important;
+  box-shadow:
+    0 18px 42px color-mix(in srgb, var(--primary) 22%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 22%, transparent) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .btn-primary,
+  :root:not([data-theme='light']) .desktop-update-modal-actions .btn-primary,
+  :root:not([data-theme='light']) .dialog-actions .btn-primary,
+  :root:not([data-theme='light']) .settings-top-actions .btn-primary {
+    color: #06250f !important;
+  }
+}
+
+:root[data-theme='dark'] .btn-primary,
+:root[data-theme='dark'] .desktop-update-modal-actions .btn-primary,
+:root[data-theme='dark'] .dialog-actions .btn-primary,
+:root[data-theme='dark'] .settings-top-actions .btn-primary {
+  color: #06250f !important;
+}
+
+.btn-secondary:hover:not(:disabled),
+.link-button:hover:not(:disabled),
+.qr-nav-button:hover:not(:disabled),
+.file-action:hover:not(:disabled),
+.repo-action:hover,
+.support-actions a:hover,
+.desktop-update-chip:hover:not(:disabled),
+.desktop-update-modal-actions .btn-secondary:hover:not(:disabled),
+.dialog-actions .btn-secondary:hover:not(:disabled),
+.settings-top-actions .btn-secondary:hover:not(:disabled),
+.mobile-info-actions a:hover {
+  background: var(--desktop-control-hover) !important;
+  color: var(--desktop-control-text) !important;
+  box-shadow: var(--desktop-control-shadow-hover) !important;
+  transform: translateY(-1px);
+}
+
+
+
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.link-button:focus-visible,
+.nav-button:focus-visible,
+.language-option-button:focus-visible,
+.qr-nav-button:focus-visible,
+.file-action:focus-visible,
+.repo-action:focus-visible,
+.support-actions a:focus-visible,
+.desktop-update-chip:focus-visible,
+.desktop-update-modal-actions button:focus-visible,
+.dialog-actions button:focus-visible,
+.settings-top-actions button:focus-visible,
+.mobile-info-actions a:focus-visible {
+  outline: 0 !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--primary) 16%, transparent),
+    var(--desktop-control-shadow-hover) !important;
+}
+.btn-primary:hover:not(:disabled),
+.desktop-update-modal-actions .btn-primary:hover:not(:disabled),
+.dialog-actions .btn-primary:hover:not(:disabled),
+.settings-top-actions .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.04) saturate(1.06);
+  box-shadow:
+    0 22px 48px color-mix(in srgb, var(--primary) 26%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 26%, transparent) !important;
+  transform: translateY(-1px);
+}
+
+.link-button.danger,
+.btn-secondary.danger-lite,
+.activity-card-actions .link-button.danger {
+  background: var(--desktop-danger-glass) !important;
+  color: var(--error) !important;
+  box-shadow: var(--desktop-control-shadow) !important;
+}
+
+.link-button.danger:hover:not(:disabled),
+.btn-secondary.danger-lite:hover:not(:disabled),
+.activity-card-actions .link-button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error-container) 86%, white 8%) !important;
+  color: var(--on-error-container) !important;
+}
+
+.nav-button {
+  background: transparent !important;
+  color: var(--desktop-control-muted) !important;
+  box-shadow: none !important;
+}
+
+.nav-button:hover:not(:disabled) {
+  background: var(--desktop-control-surface) !important;
+  color: var(--desktop-control-text) !important;
+  box-shadow: var(--desktop-control-shadow) !important;
+}
+
+.nav-button-active,
+.nav-button-active:hover:not(:disabled) {
+  background: transparent !important;
+  color: var(--primary) !important;
+  box-shadow: none !important;
+}
+
+.nav-button-active .nav-icon {
+  width: 42px;
+  height: 32px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: var(--secondary-container) !important;
+  color: var(--on-secondary-container) !important;
+  box-shadow:
+    0 10px 26px color-mix(in srgb, var(--primary) 12%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 28%, transparent) !important;
+}
+
+:root[data-theme='dark'] .nav-button-active .nav-icon {
+  background: color-mix(in srgb, var(--primary-container) 66%, var(--surface-container-high) 34%) !important;
+  color: var(--on-primary-container) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .nav-button-active .nav-icon {
+    background: color-mix(in srgb, var(--primary-container) 66%, var(--surface-container-high) 34%) !important;
+    color: var(--on-primary-container) !important;
+  }
+}
+
+.card,
+.metric-card,
+.activity-card,
+.mobile-info-card,
+.desktop-home-card,
+.settings-section-card,
+.desktop-update-status-card,
+.table-wrap,
+.modal-card,
+.language-picker-panel,
+.mobile-settings-list,
+.mobile-setting-row,
+.source-choice-card,
+.connected-device-card,
+.mobile-handoff-card,
+.download-folder-row,
+.recipe-picker-option,
+.sync-review-section,
+.sync-edit-card,
+.duplicate-item-card,
+.merge-target-row,
+.inbox-review-row {
+  border: 0 !important;
+  -webkit-backdrop-filter: blur(26px) saturate(1.18) !important;
+  backdrop-filter: blur(26px) saturate(1.18) !important;
+}
+
+.input,
+input,
+select,
+textarea {
+  border: 0 !important;
+  background: var(--field-surface) !important;
+  color: var(--on-surface) !important;
+  box-shadow:
+    0 10px 28px color-mix(in srgb, var(--primary) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 46%, transparent) !important;
+}
+
+.input:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  border: 0 !important;
+  background: var(--field-surface-focus) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--primary) 16%, transparent),
+    0 16px 36px color-mix(in srgb, var(--primary) 9%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 54%, transparent) !important;
+}
+
+.text-neutral-600,
+.text-neutral-500,
+.muted,
+.field-label,
+.section-subtitle,
+.metric-card p,
+.metric-card-meta,
+.mini-stat span,
+.desktop-status-gauge small,
+.desktop-gauge-center small,
+.language-option-button small,
+.mobile-setting-copy small,
+.mobile-handoff-saved-path,
+td {
+  color: var(--desktop-control-muted) !important;
+  opacity: 1 !important;
+}

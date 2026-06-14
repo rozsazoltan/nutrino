@@ -24,8 +24,8 @@ if (!/configureEdgeToEdgeWindow/.test(source) || !/statusBarColor\s*=\s*Color\.T
 if (!/function\s+patchBuildSrcAndroidRustBuildTask/.test(source)) {
   errors.push('patch-android-generated.mjs must patch the generated Android BuildTask CLI invocation.');
 }
-if (!/cmd\.exe/.test(source) || !/android-studio-script/.test(source)) {
-  errors.push('patch-android-generated.mjs must keep the Windows-safe Tauri Android BuildTask command.');
+if (!/scripts\/tauri-cli\.mjs/.test(source) || !/android-studio-script/.test(source)) {
+  errors.push('patch-android-generated.mjs must keep the project-local Tauri Android BuildTask command.');
 }
 
 if (errors.length > 0) {
