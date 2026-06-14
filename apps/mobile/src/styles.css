@@ -10839,3 +10839,151 @@ textarea:focus {
 .scanner-dialog {
   border: 0 !important;
 }
+
+/* v0.15.3 interaction polish: readable dashboard, calmer navigation and consistent sheets */
+.dashboard-card,
+.dashboard-card * {
+  color: #f4fbf1 !important;
+}
+.dashboard-card .home-weight-chip,
+.dashboard-card .home-fluid-chip,
+.dashboard-card .deficit-dashboard-note small,
+.dashboard-card .macro-copy span,
+.dashboard-card .side-stat small,
+.dashboard-card .kcal-center span {
+  color: rgba(244, 251, 241, 0.84) !important;
+  opacity: 1 !important;
+}
+.dashboard-card .side-stat b,
+.dashboard-card .kcal-center strong,
+.dashboard-card .deficit-status-row b,
+.dashboard-card .macro-copy b {
+  color: #ffffff !important;
+  opacity: 1 !important;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.16);
+}
+.dashboard-card .side-stat .arrow {
+  color: rgba(244, 251, 241, 0.9) !important;
+}
+
+.bottom-nav button.active {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.bottom-nav button.active .nav-svg {
+  background: color-mix(in srgb, var(--primary) 16%, var(--primary-container) 68%) !important;
+  color: var(--primary) !important;
+  box-shadow:
+    0 8px 22px color-mix(in srgb, var(--primary) 12%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62) !important;
+}
+:root[data-theme='dark'] .bottom-nav button.active .nav-svg {
+  background: color-mix(in srgb, var(--primary) 22%, transparent) !important;
+  color: var(--primary) !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .bottom-nav button.active .nav-svg {
+    background: color-mix(in srgb, var(--primary) 22%, transparent) !important;
+    color: var(--primary) !important;
+  }
+}
+
+.quick-add-backdrop {
+  background: rgba(11, 18, 13, 0.24) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(1.18) !important;
+  backdrop-filter: blur(28px) saturate(1.18) !important;
+}
+.quick-add-sheet {
+  border-radius: 30px 30px 0 0 !important;
+  background: color-mix(in srgb, var(--surface-container) 78%, transparent) !important;
+  box-shadow:
+    0 -26px 76px rgba(12, 30, 18, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62) !important;
+  -webkit-backdrop-filter: blur(34px) saturate(1.24) !important;
+  backdrop-filter: blur(34px) saturate(1.24) !important;
+  gap: 10px !important;
+}
+.quick-add-option {
+  min-height: 72px !important;
+  padding: 12px 14px !important;
+  border: 0 !important;
+  background: var(--glass-surface-soft) !important;
+  box-shadow: var(--glass-subtle-shadow) !important;
+}
+.quick-add-option:not(:last-child) {
+  border-bottom: 0 !important;
+}
+.quick-add-option .material-icon {
+  display: grid;
+  place-items: center;
+  width: 46px !important;
+  height: 46px !important;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--primary-container) 58%, transparent);
+  color: var(--primary) !important;
+}
+.quick-add-option b {
+  font-size: 1.08rem !important;
+}
+.quick-add-option small {
+  color: var(--readable-muted) !important;
+  font-size: 0.9rem !important;
+  opacity: 1 !important;
+}
+
+.fluid-card-actions {
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 14px 14px !important;
+}
+.fluid-skip-icon-button {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  color: var(--readable-muted) !important;
+  background: color-mix(in srgb, var(--surface-container-high) 72%, transparent) !important;
+  border-radius: 999px;
+}
+.fluid-skip-icon-button svg {
+  width: 18px;
+  height: 18px;
+}
+.fluid-resume-button.compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 999px;
+}
+.fluid-resume-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.note-entry-suggestions {
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 4px;
+}
+.note-entry-suggestions .picker-group-title {
+  padding-inline: 2px;
+}
+.note-entry-suggestions .picker-row {
+  width: 100%;
+}
+
+:root[data-theme='light'] .input,
+:root[data-theme='light'] .tile-input,
+:root[data-theme='light'] .note-textarea,
+:root[data-theme='light'] select,
+:root[data-theme='light'] textarea {
+  background: rgba(255, 255, 255, 0.96) !important;
+  box-shadow:
+    0 8px 22px rgba(25, 62, 36, 0.045),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82) !important;
+}

@@ -542,6 +542,10 @@ const updateCheckResult = ref<UpdateCheckResult | null>(null);
 const updateAvailable = computed(
   () => updateCheckResult.value?.status === 'available' && Boolean(updateCheckResult.value.release),
 );
+const updatePromptVisible = computed(() => {
+  const result = updateCheckResult.value;
+  return updateAvailable.value && result !== null && !updateRemindLaterActive(result);
+});
 const analysisOpen = ref(false);
 const activityAnalysisOpen = ref(false);
 const fluidAnalysisOpen = ref(false);
@@ -906,7 +910,7 @@ const settingsModules = computed<SettingsModuleConfig[]>(() => [
           updateCheckResult.value?.release
             ? `${t('updateAvailable')} · ${updateCheckResult.value.release.version}`
             : t('appUpdatesBody'),
-        { className: 'update-settings-entry', attention: () => updateAvailable.value },
+        { className: 'update-settings-entry', attention: () => updatePromptVisible.value },
       ),
     ],
   },
@@ -2593,8 +2597,8 @@ function mealNoteSuggestionKey(entry: Intake): string {
   return `${title}|${description}|${kcal}`;
 }
 
-const reusableMealNoteSuggestions = computed<MealNoteSuggestion[]>(() => {
-  const q = search.value.trim();
+function mealNoteSuggestionsForQuery(query: string): MealNoteSuggestion[] {
+  const q = query.trim();
   const byKey = new Map<string, MealNoteSuggestion>();
 
   for (const entry of state.intakes) {
@@ -2617,7 +2621,14 @@ const reusableMealNoteSuggestions = computed<MealNoteSuggestion[]>(() => {
   }
 
   return [...byKey.values()].sort((a, b) => b.lastUsedAt - a.lastUsedAt).slice(0, 8);
-});
+}
+
+const reusableMealNoteSuggestions = computed<MealNoteSuggestion[]>(() =>
+  mealNoteSuggestionsForQuery(search.value),
+);
+const noteEntryMealNoteSuggestions = computed<MealNoteSuggestion[]>(() =>
+  mealNoteSuggestionsForQuery(`${noteTitle.value} ${noteDescription.value}`),
+);
 
 const visibleCatalogItems = computed(() => {
   if (catalogSearchActive.value) return [...catalogExactItems.value, ...catalogSuggestedItems.value];
@@ -19637,14 +19648,14 @@ function setTab(tab: Tab) {
       <div class="brand-lockup">
         <button
           class="app-logo-mark app-logo-update-button"
-          :class="{ 'update-available': updateAvailable }"
+          :class="{ 'update-available': updatePromptVisible }"
           type="button"
           :aria-label="t('checkUpdates')"
           :title="t('checkUpdates')"
           @click="openUpdateCenter"
         >
           <span class="app-logo-mark-content" v-html="nutrinoLogoSvg"></span
-          ><span v-if="updateAvailable" class="app-logo-update-icon" v-html="lucideSvg('refreshCw')"></span>
+          ><span v-if="updatePromptVisible" class="app-logo-update-icon" v-html="lucideSvg('refreshCw')"></span>
         </button>
         <div>
           <small>nutrino<span v-if="appChannel === 'dev'" class="brand-channel-suffix"> · dev</span></small>
@@ -19682,7 +19693,7 @@ function setTab(tab: Tab) {
           <em v-if="pendingDesktopHandoffNotificationCount">{{ pendingDesktopHandoffNotificationCount }}</em>
         </button>
         <button
-          v-if="updateAvailable"
+          v-if="updatePromptVisible"
           class="appbar-update-chip"
           type="button"
           :aria-label="updateReleaseTitle()"
@@ -20051,9 +20062,23 @@ function setTab(tab: Tab) {
           <span v-if="!currentDayFluidSkipped" class="plus-button">+</span>
         </button>
         <div v-if="currentDayFluidSkipped || !currentDayStoredFluidLogs.length" class="fluid-card-actions">
-          <button class="text-button" type="button" @click="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)">
-            {{ currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday') }}
+          <button
+            v-if="currentDayFluidSkipped"
+            class="filled-button compact fluid-resume-button"
+            type="button"
+            @click="setFluidSkippedForCurrentDay(false)"
+          >
+            <span v-html="lucideSvg('glassWater')"></span>{{ t('fluidResumeToday') }}
           </button>
+          <button
+            v-else
+            class="icon-button fluid-skip-icon-button"
+            type="button"
+            :aria-label="t('fluidSkipToday')"
+            :title="t('fluidSkipToday')"
+            @click="setFluidSkippedForCurrentDay(true)"
+            v-html="lucideSvg('x')"
+          ></button>
         </div>
         <div v-if="!currentDayFluidSkipped" class="entry-list home-fluid-entry-list">
           <div
@@ -21493,6 +21518,25 @@ function setTab(tab: Tab) {
                 @pointerdown="clearNumberInputOnDoubleTap"
                 inputmode="decimal"
               />
+              <div v-if="noteEntryMealNoteSuggestions.length" class="note-entry-suggestions">
+                <div class="picker-group-title">{{ t('previousMealNotes') }}</div>
+                <button
+                  v-for="note in noteEntryMealNoteSuggestions"
+                  :key="`note-entry-suggestion-${note.key}`"
+                  class="picker-row note-suggestion-row"
+                  type="button"
+                  @click="useMealNoteSuggestion(note)"
+                >
+                  <span
+                    ><b>{{ note.title }}</b
+                    ><small
+                      >{{ note.kcal }} kcal · {{ formatDateTime(note.lastUsedAt)
+                      }}<template v-if="note.count > 1"> · ×{{ note.count }}</template></small
+                    ><small v-if="note.description" class="catalog-note">{{ note.description }}</small></span
+                  >
+                  <strong>{{ t('useNote') }}</strong>
+                </button>
+              </div>
               <button class="filled-button wide" type="button" @click="addMealNoteFromForm">
                 {{ editingIntakeId ? t('update') : t('add') }}
               </button>
@@ -22975,7 +23019,7 @@ function setTab(tab: Tab) {
               <section class="app-update-settings-panel">
                 <article
                   class="app-update-status-card"
-                  :class="{ attention: updateAvailable, latest: updateCheckResult?.status === 'latest' }"
+                  :class="{ attention: updatePromptVisible, latest: updateCheckResult?.status === 'latest' }"
                 >
                   <span
                     class="app-update-status-icon"

@@ -64,3 +64,7 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 - Prefer filled/glass fields and soft elevation over visible framed borders. Inputs should look calm and modern, not like boxed legacy form controls.
 - Avoid stacking borders on cards, rows, sheets and dialogs. Use blur, translucency, shadow and spacing to separate surfaces.
 - Activity picker rows should not show catalog source chips for every activity. Source metadata is useful for catalog management, not for routine activity logging.
+- The home quick-add menu must visually follow the same glass sheet/list pattern as other app menus; avoid a separate legacy action sheet style.
+- Bottom navigation active state should color the icon capsule only, not the entire tab button.
+- Update prompts must respect same-day dismissals across the header badge, chip and dialog; do not keep resurfacing an update after the user postponed it.
+- Fluid-day skip should be a compact decline affordance, while resuming tracking should be an explicit enable-style action.
