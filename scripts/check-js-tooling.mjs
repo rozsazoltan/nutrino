@@ -176,6 +176,7 @@ for (const file of [
   'apps/mobile/scripts/android-init.mjs',
   'apps/mobile/scripts/android-doctor.mjs',
   'apps/mobile/scripts/patch-android-generated.mjs',
+  'scripts/tauri-env.mjs',
   '.github/workflows/test.yml',
   '.github/workflows/release.yml',
   '.github/release/nutrino-desktop.tauri-release.toml',
@@ -198,6 +199,17 @@ expectContains(
   'apps/mobile/scripts/patch-android-generated.mjs',
   'android-studio-script',
   'Android patch script should keep the Tauri Android studio script invocation.',
+);
+
+expectContains(
+  'scripts/tauri-env.mjs',
+  "packageName: '@tauri-apps/cli'",
+  'Tauri env script should resolve the local @tauri-apps/cli package instead of relying on a global tauri command.',
+);
+expectContains(
+  'scripts/tauri-env.mjs',
+  'NUTRINO_TAURI_CLI',
+  'Tauri env script should allow an explicit Tauri CLI override for debugging.',
 );
 
 expectContains('README.md', '## Installation', 'README should focus on user installation.');
