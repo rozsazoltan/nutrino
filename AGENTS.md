@@ -80,3 +80,12 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 - Form fields must never show legacy top borders, hard outlines, or inset highlight lines. Use filled/glass surfaces, clear text contrast, and a diffuse focus glow.
 - Settings screens need generous margins between modules, rows, and theme choices on mobile and desktop. Avoid edge-to-edge cramped lists unless intentionally designed as a native grouped list.
 - Navigation selection should be subtle and icon-led, inspired by minimalist launchers: no full-row active slabs and no heavy selected borders.
+
+## Niagara-like Calm UI Guardrail
+
+- Use Niagara Launcher as inspiration only for interaction and visual principles: list-first hierarchy, very low chrome, one-handed clarity on mobile, and fast scannable rows. Do not copy proprietary assets, screens, names, or exact layouts.
+- Avoid “background soup”: do not stack many differently tinted cards inside each other. Prefer one calm page background, transparent/list rows, and only a few elevated hero/modal surfaces.
+- Catalog management on desktop should read as a clean list, not an old spreadsheet. Use row spacing, soft hover, readable columns, and compact inline actions; avoid full-width green hover slabs or boxed action pills.
+- Inputs, selects, tables, settings rows, chips, and nav items must stay borderless. No top inset lines, no hard outlines, no visible table grid, no selected full-row slabs.
+- Buttons should not sit beside long titles/descriptions on desktop when that compresses copy. Page actions wrap below; row actions stay compact and secondary.
+- Light and dark mode must have separate high-contrast text tokens. Decorative opacity is allowed on surfaces, not on essential text.

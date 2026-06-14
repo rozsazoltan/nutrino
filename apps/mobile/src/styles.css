@@ -11491,3 +11491,343 @@ select:focus,
   background: color-mix(in srgb, var(--primary-container) 72%, transparent) !important;
   color: var(--primary) !important;
 }
+
+/* v0.15.7 Niagara calm reset for mobile: fewer nested tinted backgrounds, stronger spacing */
+:root {
+  --mobile-niagara-bg: #f8fbf5;
+  --mobile-niagara-ink: #141b15;
+  --mobile-niagara-muted: #536154;
+  --mobile-niagara-soft: rgba(255, 255, 255, 0.56);
+  --mobile-niagara-soft-strong: rgba(255, 255, 255, 0.72);
+  --mobile-niagara-hover: rgba(4, 122, 58, 0.08);
+  --mobile-niagara-field: rgba(255, 255, 255, 0.72);
+  --mobile-niagara-field-focus: rgba(255, 255, 255, 0.9);
+  --mobile-niagara-accent-soft: rgba(4, 122, 58, 0.12);
+  --mobile-niagara-accent-text: #02642f;
+  --mobile-niagara-danger-soft: rgba(186, 26, 26, 0.1);
+  --mobile-niagara-danger-text: #a31313;
+  --mobile-niagara-shadow: 0 14px 42px rgba(25, 62, 36, 0.065), 0 2px 10px rgba(25, 62, 36, 0.035);
+  --mobile-niagara-focus: 0 0 0 4px rgba(4, 122, 58, 0.12), 0 12px 34px rgba(4, 122, 58, 0.09);
+}
+
+:root[data-theme='light'] {
+  --mobile-niagara-bg: #f8fbf5;
+  --mobile-niagara-ink: #141b15;
+  --mobile-niagara-muted: #536154;
+  --mobile-niagara-soft: rgba(255, 255, 255, 0.56);
+  --mobile-niagara-soft-strong: rgba(255, 255, 255, 0.72);
+  --mobile-niagara-hover: rgba(4, 122, 58, 0.08);
+  --mobile-niagara-field: rgba(255, 255, 255, 0.72);
+  --mobile-niagara-field-focus: rgba(255, 255, 255, 0.9);
+  --mobile-niagara-accent-soft: rgba(4, 122, 58, 0.12);
+  --mobile-niagara-accent-text: #02642f;
+  --mobile-niagara-danger-soft: rgba(186, 26, 26, 0.1);
+  --mobile-niagara-danger-text: #a31313;
+  --mobile-niagara-shadow: 0 14px 42px rgba(25, 62, 36, 0.065), 0 2px 10px rgba(25, 62, 36, 0.035);
+  --mobile-niagara-focus: 0 0 0 4px rgba(4, 122, 58, 0.12), 0 12px 34px rgba(4, 122, 58, 0.09);
+}
+
+:root[data-theme='dark'] {
+  --mobile-niagara-bg: #0e140f;
+  --mobile-niagara-ink: #eef6eb;
+  --mobile-niagara-muted: #b9c8b6;
+  --mobile-niagara-soft: rgba(255, 255, 255, 0.035);
+  --mobile-niagara-soft-strong: rgba(255, 255, 255, 0.06);
+  --mobile-niagara-hover: rgba(221, 238, 214, 0.075);
+  --mobile-niagara-field: rgba(255, 255, 255, 0.055);
+  --mobile-niagara-field-focus: rgba(255, 255, 255, 0.08);
+  --mobile-niagara-accent-soft: rgba(105, 255, 137, 0.12);
+  --mobile-niagara-accent-text: #9cf6a7;
+  --mobile-niagara-danger-soft: rgba(255, 180, 171, 0.12);
+  --mobile-niagara-danger-text: #ffb4ab;
+  --mobile-niagara-shadow: 0 14px 42px rgba(0, 0, 0, 0.26), 0 2px 10px rgba(0, 0, 0, 0.18);
+  --mobile-niagara-focus: 0 0 0 4px rgba(105, 255, 137, 0.12), 0 12px 34px rgba(105, 255, 137, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --mobile-niagara-bg: #0e140f;
+    --mobile-niagara-ink: #eef6eb;
+    --mobile-niagara-muted: #b9c8b6;
+    --mobile-niagara-soft: rgba(255, 255, 255, 0.035);
+    --mobile-niagara-soft-strong: rgba(255, 255, 255, 0.06);
+    --mobile-niagara-hover: rgba(221, 238, 214, 0.075);
+    --mobile-niagara-field: rgba(255, 255, 255, 0.055);
+    --mobile-niagara-field-focus: rgba(255, 255, 255, 0.08);
+    --mobile-niagara-accent-soft: rgba(105, 255, 137, 0.12);
+    --mobile-niagara-accent-text: #9cf6a7;
+    --mobile-niagara-danger-soft: rgba(255, 180, 171, 0.12);
+    --mobile-niagara-danger-text: #ffb4ab;
+    --mobile-niagara-shadow: 0 14px 42px rgba(0, 0, 0, 0.26), 0 2px 10px rgba(0, 0, 0, 0.18);
+    --mobile-niagara-focus: 0 0 0 4px rgba(105, 255, 137, 0.12), 0 12px 34px rgba(105, 255, 137, 0.08);
+  }
+}
+
+html,
+body,
+#app,
+.mobile-shell,
+.app-screen,
+.settings-screen {
+  background: var(--mobile-niagara-bg) !important;
+  color: var(--mobile-niagara-ink) !important;
+}
+
+.mobile-shell,
+.app-screen,
+.settings-screen {
+  background:
+    radial-gradient(circle at 16% -10%, color-mix(in srgb, var(--primary) 8%, transparent), transparent 24rem),
+    var(--mobile-niagara-bg) !important;
+}
+
+.card,
+.dashboard-card,
+.summary-card,
+.meal-card,
+.catalog-card,
+.selected-item-card,
+.profile-bmi-card,
+.day-edit-card,
+.permission-status-card,
+.source-settings-card,
+.github-source-row,
+.backup-profile-card,
+.backup-option-card,
+.license-card,
+.settings-dialog,
+.bottom-sheet {
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--mobile-niagara-soft) !important;
+  color: var(--mobile-niagara-ink) !important;
+  box-shadow: var(--mobile-niagara-shadow) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.08) !important;
+  backdrop-filter: blur(22px) saturate(1.08) !important;
+}
+
+.settings-header,
+.bottom-nav {
+  border: 0 !important;
+  background: color-mix(in srgb, var(--mobile-niagara-bg) 72%, transparent) !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: blur(26px) saturate(1.08) !important;
+  backdrop-filter: blur(26px) saturate(1.08) !important;
+}
+
+.settings-list {
+  gap: 22px !important;
+  padding: 20px 16px calc(38px + env(safe-area-inset-bottom)) !important;
+}
+
+.settings-module-section {
+  gap: 12px !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.settings-section-label {
+  margin: 0 8px 0 !important;
+  color: var(--mobile-niagara-muted) !important;
+  opacity: 1 !important;
+}
+
+.settings-row,
+.dialog-option,
+.language-dialog-option,
+.advanced-transfer-option,
+.meal-target-option,
+.catalog-convert-option,
+.picker-row,
+.recipe-ingredient-row,
+.search-scope-control,
+.search-scope-row button,
+.note-entry-fields,
+.source-choice-card,
+.update-status-card,
+.update-release-card {
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  color: var(--mobile-niagara-ink) !important;
+  box-shadow: none !important;
+}
+
+.settings-row,
+.dialog-option,
+.language-dialog-option,
+.advanced-transfer-option,
+.meal-target-option,
+.catalog-convert-option,
+.picker-row,
+.source-choice-card {
+  border-radius: 22px !important;
+}
+
+.settings-row {
+  min-height: 76px !important;
+  padding: 12px 10px !important;
+  grid-template-columns: 46px minmax(0, 1fr) auto !important;
+  gap: 12px 14px !important;
+}
+
+.settings-row:hover,
+.dialog-option:hover,
+.language-dialog-option:hover,
+.dialog-option.active,
+.language-dialog-option.active,
+.advanced-transfer-option:hover,
+.meal-target-option:hover,
+.catalog-convert-option:hover,
+.picker-row:hover,
+.source-choice-card:hover,
+.search-scope-row button.active {
+  background: var(--mobile-niagara-hover) !important;
+  color: var(--mobile-niagara-ink) !important;
+}
+
+.settings-row small,
+.dialog-option small,
+.language-dialog-option small,
+.advanced-transfer-option small,
+.meal-target-option small,
+.catalog-convert-option small,
+.muted,
+.helper-text,
+.tile-subtitle,
+.meal-meta,
+.card small,
+.card p,
+.bottom-sheet small {
+  color: var(--mobile-niagara-muted) !important;
+  opacity: 1 !important;
+}
+
+.settings-row > span,
+.settings-row-icon,
+.nav-svg,
+.activity-icon,
+.selected-icon,
+.permission-icon,
+.source-icon {
+  background: var(--mobile-niagara-accent-soft) !important;
+  color: var(--mobile-niagara-accent-text) !important;
+  box-shadow: none !important;
+}
+
+.input,
+.tile-input,
+.ingredient-inputs input,
+.note-textarea,
+textarea,
+select,
+.search-scope-select,
+.search-input {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--mobile-niagara-field) !important;
+  color: var(--mobile-niagara-ink) !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: blur(18px) saturate(1.06) !important;
+  backdrop-filter: blur(18px) saturate(1.06) !important;
+}
+
+.input:focus,
+.input:focus-visible,
+.tile-input:focus,
+.tile-input:focus-visible,
+.ingredient-inputs input:focus,
+.ingredient-inputs input:focus-visible,
+.note-textarea:focus,
+.note-textarea:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible,
+.search-scope-select:focus,
+.search-input:focus {
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--mobile-niagara-field-focus) !important;
+  box-shadow: var(--mobile-niagara-focus) !important;
+}
+
+.input::placeholder,
+.tile-input::placeholder,
+.note-textarea::placeholder,
+textarea::placeholder,
+.search-input::placeholder {
+  color: color-mix(in srgb, var(--mobile-niagara-muted) 86%, var(--mobile-niagara-ink) 14%) !important;
+  opacity: 1 !important;
+}
+
+.primary-button,
+.secondary-button,
+.text-button,
+.info-button,
+.icon-button,
+.delete-button,
+.entry-icon-button,
+.health-inline-icon-button,
+.update-install-info-button,
+.bottom-sheet button,
+.settings-dialog button {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.secondary-button,
+.text-button,
+.info-button,
+.icon-button,
+.health-inline-icon-button,
+.update-install-info-button {
+  background: transparent !important;
+  color: var(--mobile-niagara-ink) !important;
+}
+
+.secondary-button:hover,
+.text-button:hover,
+.info-button:hover,
+.icon-button:hover,
+.health-inline-icon-button:hover,
+.update-install-info-button:hover {
+  background: var(--mobile-niagara-hover) !important;
+  color: var(--mobile-niagara-ink) !important;
+}
+
+.delete-button,
+.entry-icon-button.danger,
+.health-inline-icon-button.danger {
+  background: transparent !important;
+  color: var(--mobile-niagara-danger-text) !important;
+}
+
+.delete-button:hover,
+.entry-icon-button.danger:hover,
+.health-inline-icon-button.danger:hover {
+  background: var(--mobile-niagara-danger-soft) !important;
+  color: var(--mobile-niagara-danger-text) !important;
+}
+
+.bottom-nav button.active,
+.bottom-nav button:hover {
+  background: transparent !important;
+}
+
+.bottom-nav button.active .nav-svg,
+.bottom-nav button:hover .nav-svg {
+  background: var(--mobile-niagara-accent-soft) !important;
+  color: var(--mobile-niagara-accent-text) !important;
+}
+
+.theme-option-grid,
+.language-option-list,
+.dialog-option-list {
+  gap: 12px !important;
+}

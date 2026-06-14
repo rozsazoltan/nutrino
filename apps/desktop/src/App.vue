@@ -7339,7 +7339,7 @@ onBeforeUnmount(() => {
           <article class="card">
             <h2 class="text-xl font-bold">{{ t('ui.lanApiServer_2738b') }}</h2>
             <p class="mt-2 muted">{{ t('ui.setAnOptionalServerPasswordIf_5e0e9') }}</p>
-            <div class="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto_auto] sm:items-end">
+            <div class="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto_auto] sm:items-end server-controls-grid">
               <div><label class="field-label">{{ t('ui.port_60aaf') }}</label><input v-model.number="port" class="input mt-1" type="number" min="1024" /></div>
               <div><label class="field-label">{{ t('ui.serverPassword_7dfb3') }}</label><input v-model="serverPassword" class="input mt-1" type="password" autocomplete="new-password" :placeholder="t('ui.leaveEmptyForNoPassword_c6e10')" /></div>
               <button class="btn-primary" :disabled="loading || serverRunning" @click="startServer">{{ t('ui.start_a6122') }}</button>
