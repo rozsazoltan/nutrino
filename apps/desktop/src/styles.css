@@ -2715,3 +2715,376 @@ th {
 td {
   color: var(--on-surface-variant) !important;
 }
+
+/* v0.15.1 modern glass polish: softer borders, stronger blur, calmer light mode */
+:root {
+  --primary: #047a3a;
+  --on-primary: #ffffff;
+  --primary-container: #dff7e5;
+  --on-primary-container: #063d1a;
+  --secondary: #526756;
+  --secondary-container: #edf5eb;
+  --error: #ba1a1a;
+  --error-container: #ffdad6;
+  --surface: #f7faf4;
+  --surface-container: #ffffff;
+  --surface-container-high: #f3f8f0;
+  --surface-container-highest: #eaf2e7;
+  --on-surface: #142019;
+  --on-surface-variant: #667468;
+  --outline: #9ba89d;
+  --outline-variant: #dce7da;
+  --border-subtle: rgba(65, 92, 69, 0.075);
+  --soft-hover: color-mix(in srgb, var(--primary) 8%, transparent);
+  --shadow:
+    0 22px 70px rgba(25, 62, 36, 0.1),
+    0 2px 8px rgba(25, 62, 36, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --desktop-bg: var(--surface);
+  --desktop-surface: rgba(255, 255, 255, 0.76);
+  --desktop-surface-2: rgba(241, 248, 239, 0.74);
+  --desktop-text: var(--on-surface);
+  --desktop-muted: var(--on-surface-variant);
+  --desktop-border: var(--border-subtle);
+  --desktop-accent: var(--primary);
+  --desktop-hover: color-mix(in srgb, var(--primary-container) 78%, white 22%);
+  --desktop-hover-text: var(--on-primary-container);
+  --glass-surface: color-mix(in srgb, white 74%, var(--primary-container) 9%);
+  --glass-surface-strong: color-mix(in srgb, white 86%, var(--primary-container) 7%);
+  --glass-surface-soft: color-mix(in srgb, white 58%, var(--surface-container-high) 42%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --border-subtle: rgba(177, 204, 177, 0.08);
+    --desktop-border: var(--border-subtle);
+    --desktop-surface: color-mix(in srgb, var(--surface-container) 72%, transparent);
+    --desktop-surface-2: color-mix(in srgb, var(--surface-container-high) 78%, transparent);
+    --glass-surface: color-mix(in srgb, var(--surface-container) 72%, transparent);
+    --glass-surface-strong: color-mix(in srgb, var(--surface-container-high) 86%, transparent);
+    --glass-surface-soft: color-mix(in srgb, var(--surface-container) 58%, transparent);
+    --shadow:
+      0 24px 72px rgba(0, 0, 0, 0.42),
+      0 2px 10px rgba(0, 0, 0, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  }
+}
+
+:root[data-theme='light'] {
+  --primary: #047a3a;
+  --on-primary: #ffffff;
+  --primary-container: #dff7e5;
+  --on-primary-container: #063d1a;
+  --secondary: #526756;
+  --secondary-container: #edf5eb;
+  --error: #ba1a1a;
+  --error-container: #ffdad6;
+  --surface: #f7faf4;
+  --surface-container: #ffffff;
+  --surface-container-high: #f3f8f0;
+  --surface-container-highest: #eaf2e7;
+  --on-surface: #142019;
+  --on-surface-variant: #667468;
+  --outline: #9ba89d;
+  --outline-variant: #dce7da;
+  --border-subtle: rgba(65, 92, 69, 0.075);
+  --soft-hover: color-mix(in srgb, var(--primary) 8%, transparent);
+  --shadow:
+    0 22px 70px rgba(25, 62, 36, 0.1),
+    0 2px 8px rgba(25, 62, 36, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --desktop-bg: var(--surface);
+  --desktop-surface: rgba(255, 255, 255, 0.76);
+  --desktop-surface-2: rgba(241, 248, 239, 0.74);
+  --desktop-text: var(--on-surface);
+  --desktop-muted: var(--on-surface-variant);
+  --desktop-border: var(--border-subtle);
+  --desktop-accent: var(--primary);
+  --desktop-hover: color-mix(in srgb, var(--primary-container) 78%, white 22%);
+  --desktop-hover-text: var(--on-primary-container);
+  --glass-surface: color-mix(in srgb, white 74%, var(--primary-container) 9%);
+  --glass-surface-strong: color-mix(in srgb, white 86%, var(--primary-container) 7%);
+  --glass-surface-soft: color-mix(in srgb, white 58%, var(--surface-container-high) 42%);
+}
+
+:root[data-theme='dark'] {
+  --border-subtle: rgba(177, 204, 177, 0.08);
+  --desktop-border: var(--border-subtle);
+  --desktop-surface: color-mix(in srgb, var(--surface-container) 72%, transparent);
+  --desktop-surface-2: color-mix(in srgb, var(--surface-container-high) 78%, transparent);
+  --glass-surface: color-mix(in srgb, var(--surface-container) 72%, transparent);
+  --glass-surface-strong: color-mix(in srgb, var(--surface-container-high) 86%, transparent);
+  --glass-surface-soft: color-mix(in srgb, var(--surface-container) 58%, transparent);
+  --shadow:
+    0 24px 72px rgba(0, 0, 0, 0.42),
+    0 2px 10px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+.desktop-shell {
+  background:
+    radial-gradient(circle at 10% -16%, color-mix(in srgb, var(--primary) 15%, transparent), transparent 36rem),
+    radial-gradient(circle at 92% 2%, color-mix(in srgb, #d7f2f0 52%, transparent), transparent 32rem),
+    linear-gradient(180deg, var(--surface) 0%, color-mix(in srgb, var(--surface-container-high) 70%, var(--surface)) 100%) !important;
+}
+
+.app-header {
+  border-bottom-color: transparent !important;
+  background: color-mix(in srgb, var(--surface-container) 68%, transparent) !important;
+  box-shadow:
+    0 16px 50px rgba(25, 62, 36, 0.08),
+    inset 0 -1px 0 var(--border-subtle) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(1.24) !important;
+  backdrop-filter: blur(32px) saturate(1.24) !important;
+}
+
+.card,
+.metric-card,
+.activity-card,
+.mobile-info-card,
+.desktop-home-card,
+.settings-section-card,
+.desktop-update-status-card,
+.table-wrap,
+.modal-card,
+.language-picker-panel {
+  border-color: transparent !important;
+  background: var(--glass-surface) !important;
+  box-shadow: var(--shadow) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(1.24) !important;
+  backdrop-filter: blur(28px) saturate(1.24) !important;
+}
+
+.mobile-setting-row,
+.language-option-button,
+.source-choice-card,
+.connected-device-card,
+.mobile-handoff-card,
+.download-folder-row {
+  border-color: transparent !important;
+  background: var(--glass-surface-soft) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--border-subtle),
+    0 8px 24px rgba(25, 62, 36, 0.045) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(1.15) !important;
+  backdrop-filter: blur(18px) saturate(1.15) !important;
+}
+
+.language-option-button.active,
+.nav-button-active,
+.mobile-setting-row:hover,
+.language-option-button:hover,
+.language-option-button:focus-visible {
+  border-color: transparent !important;
+  background: color-mix(in srgb, var(--primary-container) 76%, white 24%) !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent),
+    0 12px 32px color-mix(in srgb, var(--primary) 11%, transparent) !important;
+}
+
+.input,
+input,
+select,
+textarea {
+  border-color: transparent !important;
+  background: var(--glass-surface-strong) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--border-subtle),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+}
+
+.input:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: transparent !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--primary) 11%, transparent) !important;
+}
+
+.btn-secondary,
+.link-button,
+.desktop-update-chip,
+.server-pill {
+  border-color: transparent !important;
+  background: color-mix(in srgb, var(--glass-surface-strong) 78%, transparent) !important;
+  box-shadow: inset 0 0 0 1px var(--border-subtle) !important;
+}
+
+.btn-primary {
+  box-shadow:
+    0 14px 30px color-mix(in srgb, var(--primary) 22%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 22%, transparent) !important;
+}
+
+th,
+td {
+  border-bottom-color: rgba(65, 92, 69, 0.07) !important;
+}
+
+/* v0.15.2 readability and soft chrome polish: fewer frames, clearer light-mode text */
+:root {
+  --on-surface-variant: #405046;
+  --outline: #87998b;
+  --outline-variant: rgba(64, 80, 70, 0.12);
+  --border-subtle: rgba(64, 80, 70, 0.04);
+  --desktop-muted: #46574b;
+  --desktop-border: rgba(64, 80, 70, 0.04);
+  --desktop-surface: rgba(255, 255, 255, 0.82);
+  --desktop-surface-2: rgba(244, 250, 241, 0.78);
+  --glass-surface: color-mix(in srgb, white 82%, var(--primary-container) 7%);
+  --glass-surface-strong: color-mix(in srgb, white 92%, var(--primary-container) 4%);
+  --glass-surface-soft: color-mix(in srgb, white 70%, var(--surface-container-high) 30%);
+  --field-surface: rgba(255, 255, 255, 0.92);
+  --field-surface-focus: rgba(255, 255, 255, 0.98);
+  --shadow:
+    0 22px 68px rgba(25, 62, 36, 0.095),
+    0 2px 8px rgba(25, 62, 36, 0.035),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+:root[data-theme='light'] {
+  --on-surface-variant: #405046;
+  --outline: #87998b;
+  --outline-variant: rgba(64, 80, 70, 0.12);
+  --border-subtle: rgba(64, 80, 70, 0.04);
+  --desktop-muted: #46574b;
+  --desktop-border: rgba(64, 80, 70, 0.04);
+  --desktop-surface: rgba(255, 255, 255, 0.82);
+  --desktop-surface-2: rgba(244, 250, 241, 0.78);
+  --glass-surface: color-mix(in srgb, white 82%, var(--primary-container) 7%);
+  --glass-surface-strong: color-mix(in srgb, white 92%, var(--primary-container) 4%);
+  --glass-surface-soft: color-mix(in srgb, white 70%, var(--surface-container-high) 30%);
+  --field-surface: rgba(255, 255, 255, 0.92);
+  --field-surface-focus: rgba(255, 255, 255, 0.98);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --field-surface: color-mix(in srgb, var(--surface-container-high) 82%, transparent);
+    --field-surface-focus: color-mix(in srgb, var(--surface-container-high) 92%, transparent);
+  }
+}
+
+:root[data-theme='dark'] {
+  --field-surface: color-mix(in srgb, var(--surface-container-high) 82%, transparent);
+  --field-surface-focus: color-mix(in srgb, var(--surface-container-high) 92%, transparent);
+}
+
+.text-neutral-600,
+.text-neutral-500,
+.muted,
+.mobile-setting-copy small,
+.mobile-handoff-saved-path,
+td,
+.setting-row small,
+.desktop-status-gauge small,
+.desktop-gauge-center small,
+.connected-device-main small,
+.language-option-button small,
+.update-release-copy small,
+.desktop-update-status-card small,
+.desktop-update-release-details small,
+.mobile-handoff-card small,
+.download-folder-row .mobile-setting-copy small,
+.recipe-selected-item small,
+.recipe-picker-option small,
+.sync-review-section li small,
+.duplicate-item-copy small,
+.merge-target-row small,
+.inbox-review-main small {
+  color: var(--desktop-muted) !important;
+  opacity: 1 !important;
+}
+
+.card,
+.metric-card,
+.activity-card,
+.mobile-info-card,
+.desktop-home-card,
+.settings-section-card,
+.desktop-update-status-card,
+.table-wrap,
+.modal-card,
+.language-picker-panel {
+  border: 0 !important;
+  box-shadow: var(--shadow) !important;
+}
+
+.mobile-setting-row,
+.language-option-button,
+.source-choice-card,
+.connected-device-card,
+.mobile-handoff-card,
+.download-folder-row,
+.recipe-picker-option,
+.sync-review-section,
+.sync-edit-card,
+.duplicate-item-card,
+.merge-target-row,
+.inbox-review-row {
+  border: 0 !important;
+  background: var(--glass-surface-soft) !important;
+  box-shadow:
+    0 10px 30px rgba(25, 62, 36, 0.055),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58) !important;
+}
+
+.language-option-button.active,
+.nav-button-active,
+.mobile-setting-row:hover,
+.language-option-button:hover,
+.language-option-button:focus-visible {
+  border: 0 !important;
+  background: color-mix(in srgb, var(--primary-container) 82%, white 18%) !important;
+  box-shadow:
+    0 14px 36px color-mix(in srgb, var(--primary) 12%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7) !important;
+}
+
+.input,
+input,
+select,
+textarea {
+  border: 0 !important;
+  background: var(--field-surface) !important;
+  color: var(--on-surface) !important;
+  box-shadow:
+    0 10px 28px rgba(25, 62, 36, 0.055),
+    inset 0 1px 0 rgba(255, 255, 255, 0.74) !important;
+}
+
+.input::placeholder,
+input::placeholder,
+textarea::placeholder {
+  color: #5c6f61 !important;
+  opacity: 1 !important;
+}
+
+.input:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  border: 0 !important;
+  background: var(--field-surface-focus) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent),
+    0 12px 32px rgba(25, 62, 36, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+}
+
+.btn-secondary,
+.link-button,
+.desktop-update-chip,
+.server-pill {
+  border: 0 !important;
+  box-shadow:
+    0 8px 24px rgba(25, 62, 36, 0.045),
+    inset 0 1px 0 rgba(255, 255, 255, 0.56) !important;
+}
+
+th,
+td {
+  border-bottom-color: rgba(64, 80, 70, 0.045) !important;
+}

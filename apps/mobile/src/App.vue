@@ -21904,12 +21904,6 @@ function setTab(tab: Tab) {
                   }}</span>
                 </div>
                 <small>{{ activityType(selectedActivity) }} · {{ selectedActivity.kcal_per_min }} kcal/min</small>
-                <div class="catalog-meta-row compact">
-                  <span class="catalog-source-chip" :class="catalogSourceBadgeClass(selectedActivity)">{{
-                    catalogSourceTitle(selectedActivity)
-                  }}</span
-                  ><small v-if="sourceCheckedText(selectedActivity)">{{ sourceCheckedText(selectedActivity) }}</small>
-                </div>
               </div>
               <div class="selected-item-actions selected-activity-actions">
                 <button
@@ -21965,13 +21959,7 @@ function setTab(tab: Tab) {
                     ><span v-if="catalogItemIsLocked(activity)" class="catalog-status-chip locked">{{
                       t('locked')
                     }}</span></span
-                  ><small>{{ activityType(activity) }} · MET {{ activity.met }}</small
-                  ><span class="catalog-meta-row compact"
-                    ><span class="catalog-source-chip" :class="catalogSourceBadgeClass(activity)">{{
-                      catalogSourceTitle(activity)
-                    }}</span
-                    ><small v-if="sourceCheckedText(activity)">{{ sourceCheckedText(activity) }}</small></span
-                  ></span
+                  ><small>{{ activityType(activity) }} · MET {{ activity.met }}</small></span
                 >
                 <strong>{{ activity.kcal_per_min }} kcal/min</strong>
               </button>

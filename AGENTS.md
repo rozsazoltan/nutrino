@@ -50,7 +50,17 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 ## UI Design Direction
 
 - Maintain a clean iOS/macOS-inspired interface: calm surfaces, restrained contrast, soft system shadows, consistent spacing, and compact readable controls.
+- Prefer modern glass surfaces over heavy bordered boxes. Borders should be subtle hairlines or inset highlights, not visible outlines around every component.
+- In light mode, use airy warm-green surfaces, soft tinted cards, high readability, and restrained Nutrino green accents instead of flat gray panels.
+- Use blur, translucency, and layered opacity for app bars, dialogs, sheets, navigation, and elevated cards when it improves depth without reducing readability.
 - Support system, light, and dark theme modes.
 - Keep the current Lucide-based icon pack and Nutrino primary green as the brand color.
 - Avoid unrelated visual redesigns, decorative noise, and inconsistent one-off component styles.
 - After meaningful frontend changes, verify the affected app visually when a local target is available.
+
+## UI polish guardrails
+
+- In light mode, helper, muted, placeholder and secondary text must remain readable. Do not use low-opacity text for essential labels, form hints or row metadata.
+- Prefer filled/glass fields and soft elevation over visible framed borders. Inputs should look calm and modern, not like boxed legacy form controls.
+- Avoid stacking borders on cards, rows, sheets and dialogs. Use blur, translucency, shadow and spacing to separate surfaces.
+- Activity picker rows should not show catalog source chips for every activity. Source metadata is useful for catalog management, not for routine activity logging.

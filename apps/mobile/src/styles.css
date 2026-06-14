@@ -10359,3 +10359,483 @@ select:focus {
   background: color-mix(in srgb, var(--primary-container) 72%, var(--surface-container)) !important;
   color: var(--on-primary-container) !important;
 }
+
+/* v0.15.1 modern glass polish: softer borders, stronger blur, calmer light mode */
+:root {
+  --primary: #047a3a;
+  --on-primary: #ffffff;
+  --primary-container: #dff7e5;
+  --on-primary-container: #063d1a;
+  --secondary: #526756;
+  --secondary-container: #edf5eb;
+  --tertiary: #467177;
+  --tertiary-container: #e3f4f6;
+  --surface: #f7faf4;
+  --surface-dim: #eef4eb;
+  --surface-container: #ffffff;
+  --surface-container-high: #f3f8f0;
+  --surface-container-highest: #eaf2e7;
+  --on-surface: #142019;
+  --on-surface-variant: #667468;
+  --outline: #9ba89d;
+  --outline-variant: #dce7da;
+  --shadow: rgba(21, 55, 31, 0.1);
+  --card: rgba(255, 255, 255, 0.76);
+  --soft: rgba(241, 248, 239, 0.72);
+  --border: rgba(65, 92, 69, 0.1);
+  --border-subtle: rgba(65, 92, 69, 0.075);
+  --glass-surface: color-mix(in srgb, white 74%, var(--primary-container) 9%);
+  --glass-surface-strong: color-mix(in srgb, white 86%, var(--primary-container) 7%);
+  --glass-surface-soft: color-mix(in srgb, white 58%, var(--surface-container-high) 42%);
+  --glass-elevated-shadow:
+    0 22px 70px rgba(25, 62, 36, 0.1),
+    0 2px 8px rgba(25, 62, 36, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --glass-subtle-shadow:
+    0 12px 38px rgba(25, 62, 36, 0.075),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --border: rgba(177, 204, 177, 0.1);
+    --border-subtle: rgba(177, 204, 177, 0.08);
+    --glass-surface: color-mix(in srgb, var(--surface-container) 72%, transparent);
+    --glass-surface-strong: color-mix(in srgb, var(--surface-container-high) 86%, transparent);
+    --glass-surface-soft: color-mix(in srgb, var(--surface-container) 58%, transparent);
+    --glass-elevated-shadow:
+      0 24px 72px rgba(0, 0, 0, 0.42),
+      0 2px 10px rgba(0, 0, 0, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.055);
+    --glass-subtle-shadow:
+      0 14px 42px rgba(0, 0, 0, 0.32),
+      inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  }
+}
+
+:root[data-theme='light'] {
+  --primary: #047a3a;
+  --on-primary: #ffffff;
+  --primary-container: #dff7e5;
+  --on-primary-container: #063d1a;
+  --secondary: #526756;
+  --secondary-container: #edf5eb;
+  --tertiary: #467177;
+  --tertiary-container: #e3f4f6;
+  --surface: #f7faf4;
+  --surface-dim: #eef4eb;
+  --surface-container: #ffffff;
+  --surface-container-high: #f3f8f0;
+  --surface-container-highest: #eaf2e7;
+  --on-surface: #142019;
+  --on-surface-variant: #667468;
+  --outline: #9ba89d;
+  --outline-variant: #dce7da;
+  --shadow: rgba(21, 55, 31, 0.1);
+  --card: rgba(255, 255, 255, 0.76);
+  --soft: rgba(241, 248, 239, 0.72);
+  --border: rgba(65, 92, 69, 0.1);
+  --border-subtle: rgba(65, 92, 69, 0.075);
+  --glass-surface: color-mix(in srgb, white 74%, var(--primary-container) 9%);
+  --glass-surface-strong: color-mix(in srgb, white 86%, var(--primary-container) 7%);
+  --glass-surface-soft: color-mix(in srgb, white 58%, var(--surface-container-high) 42%);
+  --glass-elevated-shadow:
+    0 22px 70px rgba(25, 62, 36, 0.1),
+    0 2px 8px rgba(25, 62, 36, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --glass-subtle-shadow:
+    0 12px 38px rgba(25, 62, 36, 0.075),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+:root[data-theme='dark'] {
+  --border: rgba(177, 204, 177, 0.1);
+  --border-subtle: rgba(177, 204, 177, 0.08);
+  --glass-surface: color-mix(in srgb, var(--surface-container) 72%, transparent);
+  --glass-surface-strong: color-mix(in srgb, var(--surface-container-high) 86%, transparent);
+  --glass-surface-soft: color-mix(in srgb, var(--surface-container) 58%, transparent);
+  --glass-elevated-shadow:
+    0 24px 72px rgba(0, 0, 0, 0.42),
+    0 2px 10px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  --glass-subtle-shadow:
+    0 14px 42px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+.app-shell {
+  background:
+    radial-gradient(circle at 14% -10%, color-mix(in srgb, var(--primary) 15%, transparent), transparent 30rem),
+    radial-gradient(circle at 92% 10%, color-mix(in srgb, var(--tertiary-container) 58%, transparent), transparent 26rem),
+    linear-gradient(180deg, var(--surface) 0%, color-mix(in srgb, var(--surface-container-high) 68%, var(--surface)) 100%) !important;
+}
+
+.card,
+.dashboard-card,
+.meal-card,
+.calendar-card,
+.catalog-card,
+.profile-bmi-card,
+.selected-item-card,
+.settings-module-section,
+.analysis-card,
+.analysis-summary-card,
+.health-summary-card,
+.home-health-card,
+.health-analysis-card,
+.health-search-card,
+.health-entry-card,
+.home-fluid-summary-card,
+.fluid-analysis-summary div,
+.permission-status-card,
+.tracking-toggle-card,
+.tracking-input-card,
+.tracking-range-card,
+.source-choice-card,
+.source-connection-card,
+.backup-profile-card,
+.backup-option-card,
+.license-card {
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--glass-surface) !important;
+  box-shadow: var(--glass-elevated-shadow) !important;
+  -webkit-backdrop-filter: blur(26px) saturate(1.22) !important;
+  backdrop-filter: blur(26px) saturate(1.22) !important;
+}
+
+.settings-row,
+.dialog-option,
+.language-dialog-option,
+.fluid-kind-button,
+.health-period-card,
+.health-time-card,
+.purpose-choice-card,
+.activity-day-pie-card {
+  border-color: transparent !important;
+  background: var(--glass-surface-soft) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--border-subtle),
+    0 8px 22px rgba(25, 62, 36, 0.045) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(1.15) !important;
+  backdrop-filter: blur(18px) saturate(1.15) !important;
+}
+
+.dialog-option.active,
+.settings-row.update-settings-entry.attention,
+.language-dialog-option:hover,
+.language-dialog-option:focus-visible,
+.health-period-card.active,
+.purpose-choice-card.selected,
+.activity-day-pie-card.selected {
+  border-color: transparent !important;
+  background: color-mix(in srgb, var(--primary-container) 70%, white 30%) !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 20%, transparent),
+    0 12px 30px color-mix(in srgb, var(--primary) 11%, transparent) !important;
+}
+
+.input,
+.tile-input,
+.note-textarea,
+select {
+  border-color: transparent !important;
+  background: var(--glass-surface-strong) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--border-subtle),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+}
+
+.input:focus,
+.tile-input:focus,
+.note-textarea:focus,
+select:focus {
+  border-color: transparent !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--primary) 11%, transparent) !important;
+}
+
+.outlined-button,
+.text-button,
+.btn-secondary {
+  border-color: transparent !important;
+  background: color-mix(in srgb, var(--glass-surface-strong) 78%, transparent) !important;
+  box-shadow: inset 0 0 0 1px var(--border-subtle) !important;
+}
+
+.filled-button,
+.btn-primary {
+  box-shadow:
+    0 14px 30px color-mix(in srgb, var(--primary) 22%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 22%, transparent) !important;
+}
+
+.sheet-backdrop,
+.dialog-backdrop {
+  background: rgba(11, 18, 13, 0.28) !important;
+  -webkit-backdrop-filter: blur(26px) saturate(1.18) !important;
+  backdrop-filter: blur(26px) saturate(1.18) !important;
+}
+
+.bottom-sheet,
+.settings-dialog,
+.local-editor-dialog,
+.scanner-dialog {
+  border-color: transparent !important;
+  background: color-mix(in srgb, var(--surface-container) 80%, transparent) !important;
+  box-shadow:
+    0 -28px 78px rgba(12, 30, 18, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+  -webkit-backdrop-filter: blur(34px) saturate(1.24) !important;
+  backdrop-filter: blur(34px) saturate(1.24) !important;
+}
+
+.bottom-nav {
+  border-color: transparent !important;
+  background: color-mix(in srgb, var(--surface-container) 66%, transparent) !important;
+  box-shadow:
+    0 20px 60px rgba(12, 30, 18, 0.14),
+    inset 0 0 0 1px var(--border-subtle),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
+  -webkit-backdrop-filter: blur(34px) saturate(1.24) !important;
+  backdrop-filter: blur(34px) saturate(1.24) !important;
+}
+
+.bottom-nav button.active {
+  background: color-mix(in srgb, var(--primary-container) 78%, white 22%) !important;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--primary) 12%, transparent) !important;
+}
+
+.statusbar-scrim,
+.app-shell::before {
+  -webkit-backdrop-filter: blur(22px) saturate(1.18) !important;
+  backdrop-filter: blur(22px) saturate(1.18) !important;
+}
+
+/* v0.15.2 readability and soft chrome polish: fewer frames, clearer light-mode text */
+:root {
+  --on-surface-variant: #405046;
+  --outline: #87998b;
+  --outline-variant: rgba(64, 80, 70, 0.12);
+  --border: rgba(64, 80, 70, 0.055);
+  --border-subtle: rgba(64, 80, 70, 0.04);
+  --glass-surface: color-mix(in srgb, white 82%, var(--primary-container) 7%);
+  --glass-surface-strong: color-mix(in srgb, white 92%, var(--primary-container) 4%);
+  --glass-surface-soft: color-mix(in srgb, white 70%, var(--surface-container-high) 30%);
+  --readable-muted: #46574b;
+  --readable-faint: #5c6f61;
+  --field-surface: rgba(255, 255, 255, 0.92);
+  --field-surface-focus: rgba(255, 255, 255, 0.98);
+  --glass-elevated-shadow:
+    0 22px 68px rgba(25, 62, 36, 0.095),
+    0 2px 8px rgba(25, 62, 36, 0.035),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --glass-subtle-shadow:
+    0 10px 30px rgba(25, 62, 36, 0.055),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58);
+}
+
+:root[data-theme='light'] {
+  --on-surface-variant: #405046;
+  --outline: #87998b;
+  --outline-variant: rgba(64, 80, 70, 0.12);
+  --border: rgba(64, 80, 70, 0.055);
+  --border-subtle: rgba(64, 80, 70, 0.04);
+  --glass-surface: color-mix(in srgb, white 82%, var(--primary-container) 7%);
+  --glass-surface-strong: color-mix(in srgb, white 92%, var(--primary-container) 4%);
+  --glass-surface-soft: color-mix(in srgb, white 70%, var(--surface-container-high) 30%);
+  --readable-muted: #46574b;
+  --readable-faint: #5c6f61;
+  --field-surface: rgba(255, 255, 255, 0.92);
+  --field-surface-focus: rgba(255, 255, 255, 0.98);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --readable-muted: var(--on-surface-variant);
+    --readable-faint: color-mix(in srgb, var(--on-surface-variant) 86%, var(--on-surface));
+    --field-surface: color-mix(in srgb, var(--surface-container-high) 82%, transparent);
+    --field-surface-focus: color-mix(in srgb, var(--surface-container-high) 92%, transparent);
+  }
+}
+
+:root[data-theme='dark'] {
+  --readable-muted: var(--on-surface-variant);
+  --readable-faint: color-mix(in srgb, var(--on-surface-variant) 86%, var(--on-surface));
+  --field-surface: color-mix(in srgb, var(--surface-container-high) 82%, transparent);
+  --field-surface-focus: color-mix(in srgb, var(--surface-container-high) 92%, transparent);
+}
+
+.helper,
+.field-label,
+.muted,
+.card > .helper,
+.weight-prompt p,
+.section-subtitle,
+.selected-item-card small,
+.picker-row small,
+.settings-row small,
+.dialog-option small,
+.language-dialog-option small,
+.source-choice-card small,
+.tracking-toggle-card small,
+.permission-copy small,
+.health-entry-main small,
+.home-health-mini-list small,
+.fluid-analysis-summary small,
+.catalog-card small,
+.license-card small,
+.update-release-copy small,
+.app-update-status-card small,
+.local-i18n-panel summary small,
+.source-details > summary small,
+.github-source-row small,
+.recipe-picker-option small,
+.recipe-row-nutrition small,
+.meal-note-review-row small,
+.backup-profile-card small {
+  color: var(--readable-muted) !important;
+  opacity: 1 !important;
+}
+
+[style*='opacity'],
+.side-stat small,
+.calendar-day-stats small,
+.diary-stats small,
+.calorie-bar-wrap small,
+.weight-bar-wrap small,
+.today-nutrient-row small,
+.nutrient-insight-row small,
+.nutrient-pie-legend-row small {
+  color: var(--readable-faint) !important;
+}
+
+.card,
+.dashboard-card,
+.meal-card,
+.calendar-card,
+.catalog-card,
+.profile-bmi-card,
+.selected-item-card,
+.settings-module-section,
+.analysis-card,
+.analysis-summary-card,
+.health-summary-card,
+.home-health-card,
+.health-analysis-card,
+.health-search-card,
+.health-entry-card,
+.home-fluid-summary-card,
+.fluid-analysis-summary div,
+.permission-status-card,
+.tracking-toggle-card,
+.tracking-input-card,
+.tracking-range-card,
+.source-choice-card,
+.source-connection-card,
+.backup-profile-card,
+.backup-option-card,
+.license-card {
+  border: 0 !important;
+  box-shadow: var(--glass-elevated-shadow) !important;
+}
+
+.settings-row,
+.dialog-option,
+.language-dialog-option,
+.fluid-kind-button,
+.health-period-card,
+.health-time-card,
+.purpose-choice-card,
+.activity-day-pie-card,
+.picker-row,
+.catalog-meta-row,
+.entry-row,
+.health-attachment-row,
+.source-connection-toggle,
+.source-details > summary,
+.github-source-row,
+.local-i18n-panel summary,
+.recipe-picker-option,
+.meal-note-review-row,
+.backup-option-card {
+  border: 0 !important;
+  background: var(--glass-surface-soft) !important;
+  box-shadow: var(--glass-subtle-shadow) !important;
+}
+
+.dialog-option.active,
+.settings-row.update-settings-entry.attention,
+.language-dialog-option:hover,
+.language-dialog-option:focus-visible,
+.health-period-card.active,
+.purpose-choice-card.selected,
+.activity-day-pie-card.selected,
+.picker-row.selected {
+  border: 0 !important;
+  background: color-mix(in srgb, var(--primary-container) 82%, white 18%) !important;
+  box-shadow:
+    0 14px 36px color-mix(in srgb, var(--primary) 12%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7) !important;
+}
+
+.input,
+.tile-input,
+.note-textarea,
+select,
+textarea {
+  border: 0 !important;
+  background: var(--field-surface) !important;
+  color: var(--on-surface) !important;
+  box-shadow:
+    0 10px 28px rgba(25, 62, 36, 0.055),
+    inset 0 1px 0 rgba(255, 255, 255, 0.74) !important;
+}
+
+.input::placeholder,
+.tile-input::placeholder,
+.note-textarea::placeholder,
+textarea::placeholder {
+  color: var(--readable-faint) !important;
+  opacity: 1 !important;
+}
+
+.input:focus,
+.tile-input:focus,
+.note-textarea:focus,
+select:focus,
+textarea:focus {
+  border: 0 !important;
+  background: var(--field-surface-focus) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent),
+    0 12px 32px rgba(25, 62, 36, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+}
+
+.outlined-button,
+.text-button,
+.btn-secondary,
+.scan-button,
+.entry-icon-button,
+.icon-button,
+.settings-button,
+.sync-chip,
+.unit-toggle button {
+  border: 0 !important;
+  box-shadow: var(--glass-subtle-shadow) !important;
+}
+
+.bottom-nav {
+  border: 0 !important;
+  box-shadow:
+    0 20px 64px rgba(12, 30, 18, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62) !important;
+}
+
+.bottom-sheet,
+.settings-dialog,
+.local-editor-dialog,
+.scanner-dialog {
+  border: 0 !important;
+}
