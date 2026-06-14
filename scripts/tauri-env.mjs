@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { gitShortCommit } from './version-info.mjs';
 
 function findRepoRoot(startDir) {
@@ -30,6 +30,24 @@ function ensureDir(dir) {
   return dir;
 }
 
+function stopLockedDesktopDevBinary({ appName, args }) {
+  if (process.platform !== 'win32') return;
+  if (appName !== 'desktop') return;
+  if (args[0] !== 'dev') return;
+
+  const executable = 'nutrino_desktop.exe';
+  const result = spawnSync('taskkill', ['/F', '/T', '/IM', executable], {
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+
+  // taskkill exits non-zero when the process is not running. That is the common
+  // clean state, so only log when a process was actually terminated.
+  if (result.status === 0) {
+    console.log(`Tauri dev: stopped stale ${executable} before rebuilding.`);
+  }
+}
+
 function quoteForShell(value) {
   const text = String(value);
   if (/^[A-Za-z0-9_./:=+\\-]+$/.test(text)) return text;
@@ -52,6 +70,7 @@ if (appName === 'mobile' || process.argv.slice(2).includes('android')) {
 }
 
 const args = process.argv.slice(2);
+stopLockedDesktopDevBinary({ appName, args });
 const requestedChannel = env.NUTRINO_APP_CHANNEL || env.VITE_NUTRINO_CHANNEL || (args[0] === 'dev' || args.includes('--config') && args.some((arg) => String(arg).includes('tauri.dev.conf')) ? 'dev' : 'stable');
 env.NUTRINO_APP_CHANNEL = requestedChannel === 'dev' ? 'dev' : 'stable';
 env.VITE_NUTRINO_CHANNEL = env.VITE_NUTRINO_CHANNEL || env.NUTRINO_APP_CHANNEL;

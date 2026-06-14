@@ -11092,3 +11092,63 @@ textarea:focus {
   color: var(--on-error) !important;
   background: var(--error) !important;
 }
+
+/* v0.15.5 fluid card header action alignment */
+.fluid-summary-card .meal-header {
+  grid-template-columns: auto minmax(0, 1fr) auto auto !important;
+  align-items: start;
+}
+.fluid-header-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  align-self: start;
+  justify-self: end;
+  min-width: max-content;
+}
+.fluid-header-actions .meal-micro-button,
+.fluid-header-actions .fluid-skip-inline-button,
+.fluid-header-actions .plus-button {
+  margin-top: 0 !important;
+  align-self: center;
+  flex: 0 0 auto;
+}
+.fluid-header-actions .plus-button {
+  color: var(--primary) !important;
+  background: color-mix(in srgb, var(--primary-container) 82%, transparent) !important;
+  box-shadow:
+    0 10px 24px color-mix(in srgb, var(--primary) 15%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+  border: 0 !important;
+}
+.fluid-header-actions .fluid-skip-inline-button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  color: #ba1a1a !important;
+  background: color-mix(in srgb, var(--error-container) 76%, transparent) !important;
+  box-shadow:
+    0 8px 20px color-mix(in srgb, #ba1a1a 13%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58) !important;
+}
+.fluid-header-actions .fluid-skip-inline-button.active {
+  color: #ba1a1a !important;
+  background: color-mix(in srgb, var(--error-container) 88%, transparent) !important;
+}
+.fluid-header-actions .fluid-skip-inline-button svg {
+  width: 17px;
+  height: 17px;
+}
+@media (max-width: 380px) {
+  .fluid-header-actions {
+    gap: 6px;
+  }
+  .fluid-header-actions .meal-micro-button,
+  .fluid-header-actions .fluid-skip-inline-button,
+  .fluid-header-actions .plus-button {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+  }
+}

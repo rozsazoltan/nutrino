@@ -10770,7 +10770,7 @@ const fluidTrackingTranslations: Record<string, Partial<Record<string, string>>>
     fluids: 'Fluids',
     addFluid: 'I drank fluids',
     addFluidHint: 'Log water, drinks or alcohol in dl.',
-    fluidHomeHint: 'Daily fluid total',
+    fluidHomeHint: "Today's drinks",
     fluidSheetHint:
       'Enter the amount in dl. Soft drinks and alcohol add estimated kcal; water counts fully toward the daily target.',
     fluidAmountDl: 'Amount (dl)',
@@ -10854,7 +10854,7 @@ const fluidTrackingTranslations: Record<string, Partial<Record<string, string>>>
     fluids: 'Folyadék',
     addFluid: 'Folyadékot ittam',
     addFluidHint: 'Víz, ital vagy alkohol rögzítése dl-ben.',
-    fluidHomeHint: 'Napi folyadék összesen',
+    fluidHomeHint: 'Mai italok',
     fluidSheetHint:
       'Add meg a mennyiséget dl-ben. Üdítő és alkohol esetén becsült kcal is bekerül; a víz teljesen számít a napi célba.',
     fluidAmountDl: 'Mennyiség (dl)',
@@ -20040,36 +20040,34 @@ function setTab(tab: Tab) {
       </article>
 
       <article v-if="fluidTrackingEnabled" class="card meal-card fluid-summary-card home-fluid-summary-card">
-        <button
-          class="meal-header"
-          type="button"
-          @click="currentDayFluidSkipped ? setFluidSkippedForCurrentDay(false) : openFluidAdd()"
-        >
+        <button class="meal-header" type="button" @click="!currentDayFluidSkipped && openFluidAdd()">
           <span class="material-icon" v-html="lucideSvg('glassWater')"></span>
           <span
             ><b>{{ t('fluids') }}</b
             ><small>{{ currentDayFluidSkipped ? t('fluidSkippedToday') : t('fluidHomeHint') }}</small></span
           >
           <span class="section-summary-text">{{ fluidSummaryText }}</span>
-          <span
-            class="meal-micro-button"
-            role="button"
-            :aria-label="t('fluidAnalysis')"
-            :title="t('fluidAnalysis')"
-            @click.stop.prevent="openFluidAnalysis"
-            v-html="lucideSvg('chartPie')"
-          ></span>
-          <span
-            v-if="currentDayFluidSkipped || !currentDayStoredFluidLogs.length"
-            class="fluid-skip-inline-button"
-            :class="{ active: currentDayFluidSkipped }"
-            role="button"
-            :aria-label="currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday')"
-            :title="currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday')"
-            @click.stop.prevent="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)"
-            v-html="lucideSvg('ban')"
-          ></span>
-          <span v-if="!currentDayFluidSkipped" class="plus-button">+</span>
+          <span class="fluid-header-actions">
+            <span
+              v-if="currentDayFluidSkipped || !currentDayStoredFluidLogs.length"
+              class="fluid-skip-inline-button"
+              :class="{ active: currentDayFluidSkipped }"
+              role="button"
+              :aria-label="currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday')"
+              :title="currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday')"
+              @click.stop.prevent="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)"
+              v-html="lucideSvg('ban')"
+            ></span>
+            <span
+              class="meal-micro-button"
+              role="button"
+              :aria-label="t('fluidAnalysis')"
+              :title="t('fluidAnalysis')"
+              @click.stop.prevent="openFluidAnalysis"
+              v-html="lucideSvg('chartPie')"
+            ></span>
+            <span v-if="!currentDayFluidSkipped" class="plus-button">+</span>
+          </span>
         </button>
         <div v-if="!currentDayFluidSkipped" class="entry-list home-fluid-entry-list">
           <div
@@ -20488,24 +20486,28 @@ function setTab(tab: Tab) {
               }}</small></span
             >
             <span class="section-summary-text">{{ fluidSummaryText }}</span>
-            <span
-              class="meal-micro-button"
-              role="button"
-              :aria-label="t('fluidAnalysis')"
-              :title="t('fluidAnalysis')"
-              @click.stop.prevent="openFluidAnalysis"
-              v-html="lucideSvg('chartPie')"
-            ></span>
-            <span v-if="selectedDayUnlocked && !currentDayFluidSkipped" class="plus-button">+</span>
+            <span class="fluid-header-actions">
+              <span
+                v-if="selectedDayUnlocked && (currentDayFluidSkipped || !currentDayStoredFluidLogs.length)"
+                class="fluid-skip-inline-button"
+                :class="{ active: currentDayFluidSkipped }"
+                role="button"
+                :aria-label="currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday')"
+                :title="currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday')"
+                @click.stop.prevent="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)"
+                v-html="lucideSvg('ban')"
+              ></span>
+              <span
+                class="meal-micro-button"
+                role="button"
+                :aria-label="t('fluidAnalysis')"
+                :title="t('fluidAnalysis')"
+                @click.stop.prevent="openFluidAnalysis"
+                v-html="lucideSvg('chartPie')"
+              ></span>
+              <span v-if="selectedDayUnlocked && !currentDayFluidSkipped" class="plus-button">+</span>
+            </span>
           </button>
-          <div
-            v-if="selectedDayUnlocked && (currentDayFluidSkipped || !currentDayStoredFluidLogs.length)"
-            class="fluid-card-actions"
-          >
-            <button class="text-button" type="button" @click="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)">
-              {{ currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday') }}
-            </button>
-          </div>
           <div class="entry-list">
             <p v-if="currentDayFluidSkipped" class="empty-line">{{ t('fluidSkippedTodayHint') }}</p>
             <div
