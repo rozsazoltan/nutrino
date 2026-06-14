@@ -16,6 +16,18 @@ type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 type RecipeCatalogItem = Food & { catalog_source: 'ingredient' | 'food' | 'recipe' };
 type ModalKind = CatalogKind | null;
 type ThemeMode = 'system' | 'light' | 'dark';
+type DesktopBackupProfileKind = 'factory_reset' | 'manual' | 'export' | 'import' | 'restore';
+type DesktopInfoDialogKind = 'licenses' | 'privacy' | 'about' | null;
+type DesktopBackupProfileSummary = {
+  id: string;
+  kind: DesktopBackupProfileKind;
+  name: string;
+  createdAt: number;
+  version: string;
+  byteLength: number;
+  counts: { ingredients: number; foods: number; recipes: number; activities: number };
+};
+type StoredDesktopBackupProfile = DesktopBackupProfileSummary & { zipBase64: string };
 
 type OptionalNutrientDefinition = {
   key: string;
@@ -49,6 +61,10 @@ const recipes = ref<RecipeDetail[]>([]);
 const activities = ref<ActivityDefinition[]>([]);
 const syncInbox = ref<SyncInboxEntry[]>([]);
 const mobileHandoffRequests = ref<MobileHandoffRequest[]>([]);
+const desktopBackupProfiles = ref<DesktopBackupProfileSummary[]>([]);
+const desktopBackupProfilesOpen = ref(false);
+const desktopInfoDialog = ref<DesktopInfoDialogKind>(null);
+const openCatalogMenuKey = ref<string | null>(null);
 const duplicateSuggestions = ref<CatalogDuplicateSuggestion[]>([]);
 const duplicateCanonicalSelections = ref<Record<string, string>>({});
 const mergePicker = ref<{ kind: CatalogKind; aliasId: string; aliasName: string; query: string; selectedId: string } | null>(null);
@@ -90,6 +106,7 @@ const savedMobileHandoffResultIds = new Set<string>((() => {
   }
 })());
 const updateRemindLaterKey = `nutrino.desktop.${appChannel}.update.remindLater.v1`;
+const desktopBackupProfilesKey = `nutrino.desktop.${appChannel}.backupProfiles.v1`;
 let updateCheckUnlisten: UnlistenFn | null = null;
 let mobileHandoffUnlisten: UnlistenFn | null = null;
 let lastMobileRequestedUpdateCheckAt = 0;
@@ -4470,6 +4487,26 @@ const desktopThemeTranslations: Record<string, Record<string, string>> = {
     systemDefault: 'System default',
     'ui.appearance': 'Appearance',
     'ui.appearanceBody': 'Choose how Nutrino follows your desktop theme.',
+    'ui.backupProfiles': 'Backup profiles',
+    'ui.backupProfilesBody': 'Local restore points that survive desktop factory reset.',
+    'ui.noBackupProfiles': 'No local backup profiles yet.',
+    'ui.createBackupProfile': 'Create backup profile',
+    'ui.manualBackupProfile': 'Manual backup profile',
+    'ui.exportBackupProfile': 'Export restore point',
+    'ui.beforeFactoryResetBackupProfile': 'Before factory reset',
+    'ui.beforeImportBackupProfile': 'Before import',
+    'ui.importBackupProfile': 'Imported backup',
+    'ui.beforeBackupProfileRestore': 'Before backup profile restore',
+    'ui.restoreBackupProfile': 'Restore local profile',
+    'ui.backupProfileCreated': 'Backup profile saved.',
+    'ui.backupProfileDeleted': 'Backup profile deleted.',
+    'ui.backupProfileRestored': 'Backup profile restored.',
+    'ui.backupProfileMissing': 'Backup profile is no longer available.',
+    'ui.confirmRestoreBackupProfile': 'Restore this local backup profile? Current desktop data will be saved as a safety restore point first.',
+    'ui.backupProfileSaveFailed': 'Could not save a local backup profile',
+    'ui.continueWithoutBackup': 'Continue without a safety backup?',
+    'ui.continueFactoryResetWithoutBackup': 'Continue factory reset without a safety backup?',
+    'ui.factoryResetAfterBackupConfirm': 'Safety backup is saved. Continue with factory reset now?',
   },
   hu: {
     theme: 'Téma',
@@ -4503,6 +4540,26 @@ const filteredLanguageOptions = computed(() => {
 
 function t(key: string): string {
   return translations[effectiveLanguage.value]?.[key] ?? translations.en[key] ?? key;
+}
+
+function desktopInfoDialogTitle(kind: DesktopInfoDialogKind): string {
+  if (kind === 'licenses') return t('ui.licenses_f6aca');
+  if (kind === 'privacy') return t('ui.privacy_c5f29');
+  return t('ui.about_8f7f4');
+}
+
+function catalogMenuKey(kind: CatalogKind, id: string): string {
+  return `${kind}:${id}`;
+}
+
+function syncCatalogMenu(key: string, event: Event) {
+  const details = event.currentTarget as HTMLDetailsElement | null;
+  if (!details) return;
+  openCatalogMenuKey.value = details.open ? key : openCatalogMenuKey.value === key ? null : openCatalogMenuKey.value;
+}
+
+function closeCatalogMenu() {
+  openCatalogMenuKey.value = null;
 }
 
 function setDesktopLanguage(code: AppLanguage) {
@@ -6627,6 +6684,240 @@ function base64ToBytes(value: string): Uint8Array {
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
 }
+function desktopBackupProfileKindPriority(kind: DesktopBackupProfileKind) {
+  if (kind === 'factory_reset') return 0;
+  if (kind === 'export') return 1;
+  if (kind === 'import') return 2;
+  if (kind === 'restore') return 3;
+  return 4;
+}
+
+function desktopBackupProfileLimits(kind: DesktopBackupProfileKind) {
+  if (kind === 'factory_reset') return 2;
+  if (kind === 'export') return 2;
+  if (kind === 'import') return 2;
+  if (kind === 'restore') return 2;
+  return 5;
+}
+
+function desktopBackupCounts() {
+  return {
+    ingredients: ingredients.value.length,
+    foods: foods.value.length,
+    recipes: recipes.value.length,
+    activities: activities.value.length,
+  };
+}
+
+function loadDesktopBackupProfileRecords(): StoredDesktopBackupProfile[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(desktopBackupProfilesKey) || '[]') as StoredDesktopBackupProfile[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((record) => record && typeof record.id === 'string' && typeof record.zipBase64 === 'string')
+      .map((record) => ({
+        ...record,
+        kind: record.kind || 'manual',
+        counts: record.counts || { ingredients: 0, foods: 0, recipes: 0, activities: 0 },
+      }))
+      .sort((a, b) => desktopBackupProfileKindPriority(a.kind) - desktopBackupProfileKindPriority(b.kind) || b.createdAt - a.createdAt);
+  } catch {
+    return [];
+  }
+}
+
+function saveDesktopBackupProfileRecords(records: StoredDesktopBackupProfile[]) {
+  localStorage.setItem(desktopBackupProfilesKey, JSON.stringify(records));
+}
+
+function refreshDesktopBackupProfiles() {
+  desktopBackupProfiles.value = loadDesktopBackupProfileRecords().map(({ zipBase64: _zipBase64, ...summary }) => summary);
+}
+
+function pruneDesktopBackupProfiles(records: StoredDesktopBackupProfile[]) {
+  const grouped: Record<DesktopBackupProfileKind, StoredDesktopBackupProfile[]> = {
+    factory_reset: [],
+    manual: [],
+    export: [],
+    import: [],
+    restore: [],
+  };
+  for (const record of records) grouped[record.kind || 'manual'].push(record);
+  return (Object.keys(grouped) as DesktopBackupProfileKind[])
+    .flatMap((kind) => grouped[kind].sort((a, b) => b.createdAt - a.createdAt).slice(0, desktopBackupProfileLimits(kind)))
+    .sort((a, b) => desktopBackupProfileKindPriority(a.kind) - desktopBackupProfileKindPriority(b.kind) || b.createdAt - a.createdAt);
+}
+
+function saveDesktopBackupProfileFromBytes(
+  bytes: Uint8Array,
+  name: string,
+  kind: DesktopBackupProfileKind = 'manual',
+): DesktopBackupProfileSummary {
+  const createdAt = Date.now();
+  const record: StoredDesktopBackupProfile = {
+    id: `${kind}-${createdAt}-${Math.random().toString(36).slice(2, 8)}`,
+    kind,
+    name,
+    createdAt,
+    version: appVersion,
+    byteLength: bytes.length,
+    counts: desktopBackupCounts(),
+    zipBase64: bytesToBase64(bytes),
+  };
+  saveDesktopBackupProfileRecords(pruneDesktopBackupProfiles([record, ...loadDesktopBackupProfileRecords()]));
+  refreshDesktopBackupProfiles();
+  return record;
+}
+
+async function createDesktopBackupProfile(name = t('ui.manualBackupProfile'), kind: DesktopBackupProfileKind = 'manual') {
+  const bytes = await buildDesktopBackupZip();
+  return saveDesktopBackupProfileFromBytes(bytes, name, kind);
+}
+
+async function createManualDesktopBackupProfile() {
+  loading.value = true;
+  try {
+    await createDesktopBackupProfile(t('ui.manualBackupProfile'), 'manual');
+    setMessage(t('ui.backupProfileCreated'));
+  } catch (error) {
+    setMessage(`${t('ui.backupProfileSaveFailed')}: ${String(error)}`);
+  } finally {
+    loading.value = false;
+  }
+}
+
+function openDesktopBackupProfiles() {
+  refreshDesktopBackupProfiles();
+  desktopBackupProfilesOpen.value = true;
+}
+
+function deleteDesktopBackupProfile(id: string) {
+  saveDesktopBackupProfileRecords(loadDesktopBackupProfileRecords().filter((record) => record.id !== id));
+  refreshDesktopBackupProfiles();
+  setMessage(t('ui.backupProfileDeleted'));
+}
+
+function desktopBackupProfileSubtitle(profile: DesktopBackupProfileSummary) {
+  const counts = profile.counts || { ingredients: 0, foods: 0, recipes: 0, activities: 0 };
+  return `${formatDateTime(profile.createdAt)} · ${formatBytes(profile.byteLength)} · ${counts.ingredients} ingredients · ${counts.foods} foods · ${counts.recipes} recipes · ${counts.activities} activities`;
+}
+
+async function restoreDesktopBackupZipBytes(bytes: Uint8Array) {
+  assertValidZipBytes(bytes);
+  const zip = await JSZip.loadAsync(bytes);
+  const manifestText = await zip.file('manifest.json')?.async('string');
+  const dataText = await zip.file('desktop-server-data.json')?.async('string');
+  if (!manifestText || !dataText) throw new Error(t('ui.invalidDesktopBackup'));
+  const manifest = JSON.parse(manifestText) as { app?: string; formatVersion?: number; exportType?: string };
+  if (manifest.app !== 'nutrino' || manifest.formatVersion !== 1 || manifest.exportType !== 'desktop-server') {
+    throw new Error(t('ui.invalidDesktopBackup'));
+  }
+  const data = JSON.parse(dataText) as {
+    settings?: DesktopSettings;
+    serverPassword?: string;
+    desktopLocalStorage?: Record<string, string>;
+    ingredients?: Ingredient[];
+    foods?: Food[];
+    recipes?: RecipeDetail[];
+    activities?: ActivityDefinition[];
+  };
+  const currentRecipes = await commands.listRecipes();
+  for (const recipe of currentRecipes) await commands.deleteRecipe(recipe.recipe.id);
+  const currentActivities = await commands.listActivities();
+  for (const activity of currentActivities) await commands.deleteActivity(activity.id);
+  const currentIngredients = await commands.listIngredients();
+  for (const ingredient of currentIngredients) await commands.deleteIngredient(ingredient.id);
+  const currentFoods = await commands.listFoods();
+  for (const food of currentFoods) await commands.deleteFood(food.id);
+  restoreDesktopLocalStorage(data.desktopLocalStorage);
+  if (typeof data.serverPassword === 'string') await commands.setServerPassword(data.serverPassword);
+  if (data.settings) {
+    const restoredSettings = { ...data.settings } as DesktopSettings;
+    restoredSettings.check_prerelease_updates = data.settings.check_prerelease_updates === true;
+    await commands.saveDesktopSettings(restoredSettings);
+  }
+  for (const ingredient of data.ingredients ?? []) {
+    await commands.saveIngredient({
+      id: ingredient.id,
+      name: ingredient.name,
+      note: ingredient.note ?? '',
+      default_unit: ingredient.default_unit,
+      serving_size_g: ingredient.serving_size_g ?? null,
+      kcal_per_100g: ingredient.kcal_per_100g,
+      carbs_per_100g: ingredient.carbs_per_100g,
+      fat_per_100g: ingredient.fat_per_100g,
+      protein_per_100g: ingredient.protein_per_100g,
+      sugars_per_100g: ingredient.sugars_per_100g,
+      fiber_per_100g: ingredient.fiber_per_100g,
+      salt_per_100g: ingredient.salt_per_100g,
+    });
+  }
+  for (const food of data.foods ?? []) {
+    await commands.saveFood({
+      id: food.id,
+      name: food.name,
+      brand: food.brand ?? '',
+      note: food.note ?? '',
+      default_unit: food.default_unit,
+      serving_size_g: food.serving_size_g ?? null,
+      kcal_per_100g: food.kcal_per_100g,
+      carbs_per_100g: food.carbs_per_100g,
+      fat_per_100g: food.fat_per_100g,
+      protein_per_100g: food.protein_per_100g,
+      sugars_per_100g: food.sugars_per_100g,
+      fiber_per_100g: food.fiber_per_100g,
+      salt_per_100g: food.salt_per_100g,
+    });
+  }
+  for (const activity of data.activities ?? []) {
+    await commands.saveActivity({
+      id: activity.id,
+      code: activity.code,
+      name: activity.name,
+      description: activity.description ?? '',
+      activity_type: activity.activity_type,
+      met: activity.met,
+      kcal_per_min: activity.kcal_per_min,
+    });
+  }
+  for (const detail of data.recipes ?? []) {
+    await commands.saveRecipe({
+      id: detail.recipe.id,
+      name: detail.recipe.name,
+      description: detail.recipe.description ?? '',
+      note: detail.recipe.note ?? '',
+      total_weight_g: null,
+      extra_kcal: detail.recipe.extra_kcal ?? 0,
+      servings_count: detail.recipe.servings_count ?? null,
+      items: detail.items.map((item) => ({ food_id: item.food_id, amount_g: item.amount_g })),
+    });
+  }
+  await refreshAll();
+  if (onboardingOpen.value) {
+    localStorage.setItem(desktopOnboardingKey, '1');
+    onboardingOpen.value = false;
+    onboardingStep.value = 0;
+  }
+}
+
+async function restoreDesktopBackupProfile(id: string) {
+  const record = loadDesktopBackupProfileRecords().find((item) => item.id === id);
+  if (!record) return setMessage(t('ui.backupProfileMissing'));
+  if (!window.confirm(t('ui.confirmRestoreBackupProfile'))) return;
+  loading.value = true;
+  try {
+    await createDesktopBackupProfile(t('ui.beforeBackupProfileRestore'), 'restore');
+    await restoreDesktopBackupZipBytes(base64ToBytes(record.zipBase64));
+    desktopBackupProfilesOpen.value = false;
+    refreshDesktopBackupProfiles();
+    setMessage(t('ui.backupProfileRestored'));
+  } catch (error) {
+    setMessage(`Import failed: ${String(error)}`);
+  } finally {
+    loading.value = false;
+  }
+}
+
 
 function mobileHandoffKindLabel(kind: string) {
   if (kind === 'backup_export') return 'Backup export';
@@ -6772,7 +7063,7 @@ function collectDesktopLocalStorage(): Record<string, string> {
   const result: Record<string, string> = {};
   for (let index = 0; index < localStorage.length; index++) {
     const key = localStorage.key(index);
-    if (!key || !key.startsWith('nutrino.desktop.')) continue;
+    if (!key || !key.startsWith('nutrino.desktop.') || key === desktopBackupProfilesKey) continue;
     const value = localStorage.getItem(key);
     if (value !== null) result[key] = value;
   }
@@ -6828,12 +7119,14 @@ async function exportAppDataZip() {
   try {
     const bytes = await buildDesktopBackupZip();
     const path = await commands.saveFileToDefaultDownloadDir(desktopBackupFileName(), Array.from(bytes));
+    saveDesktopBackupProfileFromBytes(bytes, t('ui.exportBackupProfile'), 'export');
     await refreshDefaultDownloadDir();
     setMessage(`Desktop server data exported: ${path} (${formatBytes(bytes.length)})`);
   } catch (error) {
     try {
       const bytes = await buildDesktopBackupZip();
       fallbackDownloadDataZip(bytes);
+      saveDesktopBackupProfileFromBytes(bytes, t('ui.exportBackupProfile'), 'export');
       setMessage(`Desktop server data exported with browser fallback. (${formatBytes(bytes.length)})`);
     } catch (fallbackError) {
       setMessage(String(fallbackError));
@@ -6851,103 +7144,18 @@ async function importAppDataZip() {
     if (!selected || Array.isArray(selected)) return setMessage('Import canceled.');
     const bytes = normalizeZipBytes(await readFile(selected));
     assertValidZipBytes(bytes);
-    const zip = await JSZip.loadAsync(bytes);
-    const manifestText = await zip.file('manifest.json')?.async('string');
-    const dataText = await zip.file('desktop-server-data.json')?.async('string');
-    if (!manifestText || !dataText) throw new Error(t('ui.invalidDesktopBackup'));
-    const manifest = JSON.parse(manifestText) as { app?: string; formatVersion?: number; exportType?: string };
-    if (manifest.app !== 'nutrino' || manifest.formatVersion !== 1 || manifest.exportType !== 'desktop-server') {
-      throw new Error(t('ui.invalidDesktopBackup'));
-    }
     if (!window.confirm(t('ui.importOverwriteConfirm'))) {
       return setMessage('Import canceled.');
     }
-    const data = JSON.parse(dataText) as {
-      settings?: DesktopSettings;
-      serverPassword?: string;
-      desktopLocalStorage?: Record<string, string>;
-      ingredients?: Ingredient[];
-      foods?: Food[];
-      recipes?: RecipeDetail[];
-      activities?: ActivityDefinition[];
-    };
-    const currentRecipes = await commands.listRecipes();
-    for (const recipe of currentRecipes) await commands.deleteRecipe(recipe.recipe.id);
-    const currentActivities = await commands.listActivities();
-    for (const activity of currentActivities) await commands.deleteActivity(activity.id);
-    const currentIngredients = await commands.listIngredients();
-    for (const ingredient of currentIngredients) await commands.deleteIngredient(ingredient.id);
-    const currentFoods = await commands.listFoods();
-    for (const food of currentFoods) await commands.deleteFood(food.id);
-    restoreDesktopLocalStorage(data.desktopLocalStorage);
-    if (typeof data.serverPassword === 'string') await commands.setServerPassword(data.serverPassword);
-    if (data.settings) {
-      const restoredSettings = { ...data.settings } as DesktopSettings;
-      restoredSettings.check_prerelease_updates = data.settings.check_prerelease_updates === true;
-      await commands.saveDesktopSettings(restoredSettings);
+    try {
+      await createDesktopBackupProfile(t('ui.beforeImportBackupProfile'), 'import');
+    } catch (error) {
+      if (!window.confirm(`${t('ui.backupProfileSaveFailed')}: ${String(error)}\n${t('ui.continueWithoutBackup')}`)) {
+        return setMessage('Import canceled.');
+      }
     }
-    for (const ingredient of data.ingredients ?? []) {
-      await commands.saveIngredient({
-        id: ingredient.id,
-        name: ingredient.name,
-        note: ingredient.note ?? '',
-        default_unit: ingredient.default_unit,
-        serving_size_g: ingredient.serving_size_g ?? null,
-        kcal_per_100g: ingredient.kcal_per_100g,
-        carbs_per_100g: ingredient.carbs_per_100g,
-        fat_per_100g: ingredient.fat_per_100g,
-        protein_per_100g: ingredient.protein_per_100g,
-        sugars_per_100g: ingredient.sugars_per_100g,
-        fiber_per_100g: ingredient.fiber_per_100g,
-        salt_per_100g: ingredient.salt_per_100g,
-      });
-    }
-    for (const food of data.foods ?? []) {
-      await commands.saveFood({
-        id: food.id,
-        name: food.name,
-        brand: food.brand ?? '',
-        note: food.note ?? '',
-        default_unit: food.default_unit,
-        serving_size_g: food.serving_size_g ?? null,
-        kcal_per_100g: food.kcal_per_100g,
-        carbs_per_100g: food.carbs_per_100g,
-        fat_per_100g: food.fat_per_100g,
-        protein_per_100g: food.protein_per_100g,
-        sugars_per_100g: food.sugars_per_100g,
-        fiber_per_100g: food.fiber_per_100g,
-        salt_per_100g: food.salt_per_100g,
-      });
-    }
-    for (const activity of data.activities ?? []) {
-      await commands.saveActivity({
-        id: activity.id,
-        code: activity.code,
-        name: activity.name,
-        description: activity.description ?? '',
-        activity_type: activity.activity_type,
-        met: activity.met,
-        kcal_per_min: activity.kcal_per_min,
-      });
-    }
-    for (const detail of data.recipes ?? []) {
-      await commands.saveRecipe({
-        id: detail.recipe.id,
-        name: detail.recipe.name,
-        description: detail.recipe.description ?? '',
-        note: detail.recipe.note ?? '',
-        total_weight_g: null,
-        extra_kcal: detail.recipe.extra_kcal ?? 0,
-        servings_count: detail.recipe.servings_count ?? null,
-        items: detail.items.map((item) => ({ food_id: item.food_id, amount_g: item.amount_g })),
-      });
-    }
-    await refreshAll();
-    if (onboardingOpen.value) {
-      localStorage.setItem(desktopOnboardingKey, '1');
-      onboardingOpen.value = false;
-      onboardingStep.value = 0;
-    }
+    await restoreDesktopBackupZipBytes(bytes);
+    saveDesktopBackupProfileFromBytes(bytes, t('ui.importBackupProfile'), 'import');
     setMessage('Desktop server data imported.');
   } catch (error) {
     setMessage(`Import failed: ${String(error)}`);
@@ -6957,8 +7165,10 @@ async function importAppDataZip() {
 }
 
 
+
 async function initializeDesktop() {
   await refreshAll();
+  refreshDesktopBackupProfiles();
   void checkForAppUpdates({ quiet: true });
   try {
     updateCheckUnlisten = await listen('nutrino-update-check-requested', () => {
@@ -7000,6 +7210,14 @@ async function factoryResetDesktop() {
   if (!window.confirm(t('ui.factoryResetDesktopConfirm'))) return;
   loading.value = true;
   try {
+    try {
+      await createDesktopBackupProfile(t('ui.beforeFactoryResetBackupProfile'), 'factory_reset');
+    } catch (error) {
+      if (!window.confirm(`${t('ui.backupProfileSaveFailed')}: ${String(error)}\n${t('ui.continueFactoryResetWithoutBackup')}`)) {
+        return;
+      }
+    }
+    if (!window.confirm(t('ui.factoryResetAfterBackupConfirm'))) return;
     const currentRecipes = await commands.listRecipes();
     for (const recipe of currentRecipes) await commands.deleteRecipe(recipe.recipe.id);
     const currentActivities = await commands.listActivities();
@@ -7024,15 +7242,17 @@ async function factoryResetDesktop() {
     });
     localStorage.removeItem(desktopOnboardingKey);
     await refreshAll();
+    refreshDesktopBackupProfiles();
     onboardingOpen.value = true;
     onboardingStep.value = 0;
-    setMessage('Factory reset complete.');
+    setMessage('Factory reset complete. A local backup profile is still available.');
   } catch (error) {
     setMessage(String(error));
   } finally {
     loading.value = false;
   }
 }
+
 
 onMounted(initializeDesktop);
 
@@ -7074,7 +7294,7 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:px-8">
-      <aside class="card h-fit">
+      <aside class="card h-fit desktop-sidebar">
         <nav class="desktop-nav">
           <button v-for="item in navigation" :key="item.key" class="nav-button" :class="tab === item.key ? 'nav-button-active' : ''" @click="tab = item.key">
             <span class="nav-icon" v-html="icon(item.icon, tab === item.key)"></span>
@@ -7211,30 +7431,31 @@ onBeforeUnmount(() => {
             <code class="csv-header-code">{{ foodCsvHeader }}</code>
             <ul class="csv-note-list"><li v-for="note in csvImportNotes.slice(0, 3)" :key="note">{{ t(note) }}</li></ul>
           </article>
-          <article class="card min-w-0">
-            <div class="overflow-auto table-wrap">
-              <table class="min-w-[820px] w-full border-collapse">
-                <thead>
-                  <tr><th>{{ t('ui.name_49ee3') }}</th><th>{{ t('ui.id_b718a') }}</th><th>kcal</th><th>{{ t('ui.carbs_ee64f') }}</th><th>{{ t('ui.fat_4d09c') }}</th><th>{{ t('ui.protein_7e667') }}</th><th>{{ t('ui.actions_06df3') }}</th></tr>
-                </thead>
-                <tbody>
-                  <tr v-for="food in sortedFoods" :key="food.id">
-                    <td><strong>{{ localizedName(food) }}</strong><br /><span class="muted">{{ t('ui.food_0a38e') }} · {{ food.brand || t('ui.noBrand') }}</span><small v-if="food.note" class="block muted">{{ food.note }}</small></td>
-                    <td class="font-mono text-xs">{{ food.id }}</td>
-                    <td>{{ round(food.kcal_per_100g) }}</td>
-                    <td>{{ round(food.carbs_per_100g) }}g</td>
-                    <td>{{ round(food.fat_per_100g) }}g</td>
-                    <td>{{ round(food.protein_per_100g) }}g</td>
-                    <td>
-                      <button class="link-button icon-only-label" @click="openFoodModal(food)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
-                      <button class="link-button icon-only-label" @click="mergeCatalogInto('food', food.id, localizedName(food))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button><button class="link-button icon-only-label" @click="moveFoodToIngredient(food)">{{ t('ui.moveToIngredients_39253') }}</button><button class="link-button icon-only-label" @click="showCatalogQr('food', food, localizedName(food))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
-                      <button class="link-button danger icon-only-label" @click="removeFood(food)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </article>
+          <section class="desktop-food-card-list">
+            <article v-for="food in sortedFoods" :key="food.id" class="food-list-card catalog-list-card" :class="{ 'catalog-list-card-menu-open': openCatalogMenuKey === catalogMenuKey('food', food.id) }">
+              <div class="catalog-title-row food-title-row">
+                <h3>{{ localizedName(food) }}</h3>
+                <details class="catalog-action-menu" :open="openCatalogMenuKey === catalogMenuKey('food', food.id)" @toggle="syncCatalogMenu(catalogMenuKey('food', food.id), $event)">
+                  <summary class="catalog-menu-trigger" aria-label="Műveletek">⋯</summary>
+                  <div class="catalog-menu-popover" @click="closeCatalogMenu">
+                    <button class="link-button icon-only-label" @click="openFoodModal(food)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
+                    <button class="link-button icon-only-label" @click="mergeCatalogInto('food', food.id, localizedName(food))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button>
+                    <button class="link-button icon-only-label" @click="moveFoodToIngredient(food)">{{ t('ui.moveToIngredients_39253') }}</button>
+                    <button class="link-button icon-only-label" @click="showCatalogQr('food', food, localizedName(food))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
+                    <button class="link-button danger icon-only-label" @click="removeFood(food)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
+                  </div>
+                </details>
+              </div>
+              <p class="food-card-description muted"><span>{{ t('ui.food_0a38e') }}</span><span>{{ food.brand || t('ui.noBrand') }}</span><span v-if="food.barcode">{{ food.barcode }}</span><span class="font-mono">{{ food.id }}</span></p>
+              <p v-if="food.note" class="food-card-note muted">{{ food.note }}</p>
+              <div class="food-card-metrics">
+                <div class="mini-stat"><strong>{{ round(food.kcal_per_100g) }}</strong><span>kcal / 100g</span></div>
+                <div class="mini-stat"><strong>{{ round(food.carbs_per_100g) }}g</strong><span>{{ t('ui.carbs_ee64f') }}</span></div>
+                <div class="mini-stat"><strong>{{ round(food.fat_per_100g) }}g</strong><span>{{ t('ui.fat_4d09c') }}</span></div>
+                <div class="mini-stat"><strong>{{ round(food.protein_per_100g) }}g</strong><span>{{ t('ui.protein_7e667') }}</span></div>
+              </div>
+            </article>
+          </section>
         </div>
 
         <div v-if="tab === 'recipes'" class="space-y-4">
@@ -7258,25 +7479,30 @@ onBeforeUnmount(() => {
             <ul class="csv-note-list"><li v-for="note in csvImportNotes" :key="note">{{ t(note) }}</li></ul>
           </article>
           <div class="grid gap-4 xl:grid-cols-2">
-            <article v-for="recipe in sortedRecipes" :key="recipe.recipe.id" class="card">
-              <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
+            <article v-for="recipe in sortedRecipes" :key="recipe.recipe.id" class="card catalog-list-card" :class="{ 'catalog-list-card-menu-open': openCatalogMenuKey === catalogMenuKey('recipe', recipe.recipe.id) }">
+              <div class="catalog-card-head">
+                <div class="catalog-title-row">
                   <h3 class="text-lg font-bold">{{ localizedName(recipe.recipe) }}</h3>
-                  <p class="muted">{{ recipe.recipe.description || 'No description' }}</p><small v-if="recipe.recipe.note" class="block muted">{{ recipe.recipe.note }}</small>
+                  <details class="catalog-action-menu" :open="openCatalogMenuKey === catalogMenuKey('recipe', recipe.recipe.id)" @toggle="syncCatalogMenu(catalogMenuKey('recipe', recipe.recipe.id), $event)">
+                    <summary class="catalog-menu-trigger" aria-label="Műveletek">⋯</summary>
+                    <div class="catalog-menu-popover" @click="closeCatalogMenu">
+                      <button class="link-button icon-only-label" @click="openRecipeModal(recipe)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
+                      <button class="link-button icon-only-label" @click="mergeCatalogInto('recipe', recipe.recipe.id, recipe.recipe.name)"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button>
+                      <button class="link-button icon-only-label" @click="showCatalogQr('recipe', recipe, recipe.recipe.name)"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
+                      <button class="link-button danger icon-only-label" @click="removeRecipe(recipe)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
+                    </div>
+                  </details>
                 </div>
-                <div class="flex gap-2">
-                  <button class="link-button icon-only-label" @click="openRecipeModal(recipe)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
-                  <button class="link-button icon-only-label" @click="mergeCatalogInto('recipe', recipe.recipe.id, recipe.recipe.name)"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button><button class="link-button icon-only-label" @click="showCatalogQr('recipe', recipe, recipe.recipe.name)"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
-                  <button class="link-button danger icon-only-label" @click="removeRecipe(recipe)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
-                </div>
+                <p class="catalog-card-description muted">{{ recipe.recipe.description || 'No description' }}</p>
+                <small v-if="recipe.recipe.note" class="catalog-card-description block muted">{{ recipe.recipe.note }}</small>
               </div>
-              <div class="mt-4 grid grid-cols-2 gap-2 text-center text-sm md:grid-cols-4">
+              <div class="recipe-stat-grid recipe-stat-grid-primary mt-4">
                 <div class="mini-stat"><strong>{{ round(recipeDynamicNutrition(recipe).kcalTotal) }}</strong><span>{{ t('ui.kcalTotal_0c895') }}</span></div>
                 <div class="mini-stat"><strong>{{ round(recipeDynamicNutrition(recipe).carbsTotal) }}g</strong><span>{{ t('ui.carbsTotal_d2ae4') }}</span></div>
                 <div class="mini-stat"><strong>{{ round(recipeDynamicNutrition(recipe).fatTotal) }}g</strong><span>{{ t('ui.fatTotal_41615') }}</span></div>
                 <div class="mini-stat"><strong>{{ round(recipeDynamicNutrition(recipe).proteinTotal) }}g</strong><span>{{ t('ui.proteinTotal_67f44') }}</span></div>
               </div>
-              <div class="mt-2 grid grid-cols-2 gap-2 text-center text-xs md:grid-cols-4">
+              <div class="recipe-stat-grid recipe-stat-grid-secondary mt-2">
                 <div class="mini-stat subtle"><strong>{{ round(recipeDynamicNutrition(recipe).kcalPer100g) }}</strong><span>{{ t('ui.kcal100g_40bdf') }}</span></div>
                 <div class="mini-stat subtle"><strong>{{ round(recipeDynamicNutrition(recipe).totalWeight) }}g</strong><span>{{ t('ui.weight_7edab') }}</span></div>
                 <div class="mini-stat subtle"><strong>{{ round(recipeDynamicNutrition(recipe).extraKcal) }}</strong><span>{{ t('ui.extraKcal_65a05') }}</span></div>
@@ -7316,19 +7542,25 @@ onBeforeUnmount(() => {
               <div><h3 class="text-lg font-bold">{{ typeLabel(group) }}</h3><p class="muted">{{ items.length }} activities</p></div>
             </div>
             <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <article v-for="activity in items" :key="activity.id" class="activity-card">
-                <div class="flex items-start gap-3">
+              <article v-for="activity in items" :key="activity.id" class="activity-card catalog-list-card" :class="{ 'catalog-list-card-menu-open': openCatalogMenuKey === catalogMenuKey('activity', activity.id) }">
+                <div class="activity-card-top">
                   <span class="activity-icon" v-html="activityIcon(activity.activity_type)"></span>
-                  <div class="min-w-0 flex-1">
-                    <h4 class="font-bold">{{ localizedName(activity) }}</h4>
+                  <div class="activity-card-copy">
+                    <div class="catalog-title-row">
+                      <h4 class="font-bold">{{ localizedName(activity) }}</h4>
+                      <details class="catalog-action-menu" :open="openCatalogMenuKey === catalogMenuKey('activity', activity.id)" @toggle="syncCatalogMenu(catalogMenuKey('activity', activity.id), $event)">
+                        <summary class="catalog-menu-trigger" aria-label="Műveletek">⋯</summary>
+                        <div class="catalog-menu-popover" @click="closeCatalogMenu">
+                          <button class="link-button icon-only-label" @click="openActivityModal(activity)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
+                          <button class="link-button icon-only-label" @click="mergeCatalogInto('activity', activity.id, localizedName(activity))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button>
+                          <button class="link-button icon-only-label" @click="showCatalogQr('activity', activity, localizedName(activity))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
+                          <button class="link-button danger icon-only-label" @click="removeActivity(activity)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
+                        </div>
+                      </details>
+                    </div>
                     <p class="muted text-sm">{{ activity.description || 'No description' }}</p>
                     <p class="mt-2 text-xs font-bold uppercase tracking-wide text-nutri-700">{{ t('ui.code_ca0db') }} {{ activity.code }} · MET {{ round(activity.met) }} · {{ round(activity.kcal_per_min) }} kcal/min</p>
                   </div>
-                </div>
-                <div class="activity-card-actions">
-                  <button class="link-button icon-only-label" @click="openActivityModal(activity)"><span class="inline-svg" v-html="icon('edit')"></span>{{ t('ui.edit_7dce1') }}</button>
-                  <button class="link-button icon-only-label" @click="mergeCatalogInto('activity', activity.id, localizedName(activity))"><span class="inline-svg" v-html="icon('refresh')"></span>{{ t('ui.mergeInto_f7c29') }}</button><button class="link-button icon-only-label" @click="showCatalogQr('activity', activity, localizedName(activity))"><span class="inline-svg" v-html="icon('qrCode')"></span>QR</button>
-                  <button class="link-button danger icon-only-label" @click="removeActivity(activity)"><span class="inline-svg" v-html="icon('trash')"></span>{{ t('ui.delete_f2a6c') }}</button>
                 </div>
               </article>
             </div>
@@ -7339,13 +7571,17 @@ onBeforeUnmount(() => {
           <article class="card">
             <h2 class="text-xl font-bold">{{ t('ui.lanApiServer_2738b') }}</h2>
             <p class="mt-2 muted">{{ t('ui.setAnOptionalServerPasswordIf_5e0e9') }}</p>
-            <div class="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto_auto] sm:items-end server-controls-grid">
-              <div><label class="field-label">{{ t('ui.port_60aaf') }}</label><input v-model.number="port" class="input mt-1" type="number" min="1024" /></div>
-              <div><label class="field-label">{{ t('ui.serverPassword_7dfb3') }}</label><input v-model="serverPassword" class="input mt-1" type="password" autocomplete="new-password" :placeholder="t('ui.leaveEmptyForNoPassword_c6e10')" /></div>
-              <button class="btn-primary" :disabled="loading || serverRunning" @click="startServer">{{ t('ui.start_a6122') }}</button>
-              <button class="btn-secondary" :disabled="loading || !serverRunning" @click="stopServer">{{ t('ui.stop_11a75') }}</button>
-              <button class="btn-secondary" :disabled="loading" @click="saveServerPassword">{{ t('ui.savePassword_49284') }}</button>
-              <button class="btn-secondary" :disabled="loading || serverRunning" @click="importAppDataZip">{{ t('ui.restoreBackup_dd06b') }}</button>
+            <div class="server-controls-stack">
+              <div class="server-field-grid">
+                <div><label class="field-label">{{ t('ui.port_60aaf') }}</label><input v-model.number="port" class="input mt-1" type="number" min="1024" /></div>
+                <div><label class="field-label">{{ t('ui.serverPassword_7dfb3') }}</label><input v-model="serverPassword" class="input mt-1" type="password" autocomplete="new-password" :placeholder="t('ui.leaveEmptyForNoPassword_c6e10')" /></div>
+              </div>
+              <div class="server-action-row">
+                <button class="btn-primary" :disabled="loading || serverRunning" @click="startServer">{{ t('ui.start_a6122') }}</button>
+                <button class="btn-secondary" :disabled="loading || !serverRunning" @click="stopServer">{{ t('ui.stop_11a75') }}</button>
+                <button class="btn-secondary" :disabled="loading" @click="saveServerPassword">{{ t('ui.savePassword_49284') }}</button>
+                <button class="btn-secondary" :disabled="loading || serverRunning" @click="importAppDataZip">{{ t('ui.restoreBackup_dd06b') }}</button>
+              </div>
             </div>
           </article>
           <article class="card min-w-0">
@@ -7632,6 +7868,11 @@ onBeforeUnmount(() => {
                   <span class="mobile-setting-copy"><b>{{ t('ui.saveCurrentWindow_1b2b6') }}</b><small>{{ t('ui.storeTheCurrentPositionAndSize_161c9') }}</small></span>
                   <span class="settings-row-chevron" v-html="icon('chevronRight')"></span>
                 </button>
+                <button class="mobile-setting-row settings-row-v040" :disabled="loading" @click="openDesktopBackupProfiles">
+                  <span class="mobile-setting-icon" v-html="icon('database')"></span>
+                  <span class="mobile-setting-copy"><b>{{ t('ui.backupProfiles') }}</b><small>{{ desktopBackupProfiles.length }} · {{ t('ui.backupProfilesBody') }}</small></span>
+                  <span class="settings-row-chevron" v-html="icon('chevronRight')"></span>
+                </button>
                 <button class="mobile-setting-row settings-row-v040" :disabled="loading" @click="exportAppDataZip">
                   <span class="mobile-setting-icon" v-html="icon('export')"></span>
                   <span class="mobile-setting-copy"><b>{{ t('ui.exportDataZip_d39bb') }}</b><small>{{ t('ui.createADesktopCatalogAndSettings_5ec25') }}</small></span>
@@ -7650,55 +7891,108 @@ onBeforeUnmount(() => {
               </article>
             </section>
 
-            <section class="settings-section-card licenses-section-card">
+            <section class="settings-section-card">
               <div class="settings-section-head">
                 <div>
-                  <p class="desktop-kicker">{{ t('ui.licenses_f6aca') }}</p>
-                  <h3>{{ t('ui.thirdPartyNoticesAndAcknowledgements_833ba') }}</h3>
+                  <p class="desktop-kicker">{{ t('ui.about_8f7f4') }}</p>
+                  <h3>{{ t('ui.runtimeTrayStartupBackupsPrivacyAnd_fbc8f') }}</h3>
                 </div>
               </div>
-              <article class="license-list">
-                <a v-for="notice in thirdPartyNotices" :key="notice.name" class="license-card" :href="notice.url" target="_blank" rel="noreferrer">
+              <article class="mobile-settings-list settings-group-list">
+                <button class="mobile-setting-row settings-row-v040" type="button" @click="desktopInfoDialog = 'privacy'">
+                  <span class="mobile-setting-icon" v-html="icon('shield')"></span>
+                  <span class="mobile-setting-copy"><b>{{ t('ui.privacy_c5f29') }}</b><small>{{ t('ui.localFirstByDesign_50f82') }}</small></span>
+                  <span class="settings-row-chevron" v-html="icon('chevronRight')"></span>
+                </button>
+                <button class="mobile-setting-row settings-row-v040" type="button" @click="desktopInfoDialog = 'licenses'">
                   <span class="mobile-setting-icon" v-html="icon('licenses')"></span>
-                  <span class="mobile-setting-copy"><b>{{ notice.name }}</b><small>{{ t(notice.purposeKey) }}</small><small v-if="notice.noteKey">{{ t(notice.noteKey) }}</small></span>
-                  <strong>{{ notice.license }}</strong>
-                </a>
+                  <span class="mobile-setting-copy"><b>{{ t('ui.licenses_f6aca') }}</b><small>{{ t('ui.thirdPartyNoticesAndAcknowledgements_833ba') }}</small></span>
+                  <span class="settings-row-chevron" v-html="icon('chevronRight')"></span>
+                </button>
+                <button class="mobile-setting-row settings-row-v040" type="button" @click="desktopInfoDialog = 'about'">
+                  <span class="mobile-setting-icon logo-info-icon" v-html="nutrinoLogoSvg"></span>
+                  <span class="mobile-setting-copy"><b>{{ t('ui.about_8f7f4') }}</b><small>{{ appName }} · {{ t('ui.versionLabel') }} {{ appVersion }} · {{ appChannel }}</small></span>
+                  <span class="settings-row-chevron" v-html="icon('chevronRight')"></span>
+                </button>
               </article>
-              <ul class="acknowledgement-list"><li v-for="item in acknowledgements" :key="item">{{ t(item) }}</li></ul>
             </section>
           </div>
-
-          <section class="desktop-info-grid settings-info-grid-v040">
-            <article class="mobile-info-card privacy-card">
-              <div class="mobile-info-icon" v-html="icon('shield')"></div>
-              <div>
-                <p class="desktop-kicker">{{ t('ui.privacy_c5f29') }}</p>
-                <h3>{{ t('ui.localFirstByDesign_50f82') }}</h3>
-                <p>{{ t('ui.nutrinoDesktopStoresYourIngredientFood_8ab07') }}</p>
-              </div>
-            </article>
-
-            <article class="mobile-info-card about-card">
-              <div class="mobile-info-icon logo-info-icon" v-html="nutrinoLogoSvg"></div>
-              <div>
-                <p class="desktop-kicker">{{ t('ui.about_8f7f4') }}</p>
-                <h3>{{ appName }}</h3>
-                <p>{{ t('ui.versionLabel') }} {{ appVersion }} · {{ appChannel }} · AGPL-3.0-only</p>
-                <p>{{ t('ui.thanksToOpennutritrackerForThePrivacy_2e20e') }}</p>
-                <div class="mobile-info-actions">
-                  <a :href="repositoryUrl" target="_blank" rel="noreferrer"><span class="inline-svg" v-html="icon('recipes')"></span>{{ t('ui.repository_33fcf') }}</a>
-                  <a :href="issueUrl" target="_blank" rel="noreferrer"><span class="inline-svg" v-html="icon('activities')"></span>{{ t('ui.reportIssue_92fd0') }}</a>
-                  <a :href="starUrl" target="_blank" rel="noreferrer"><span class="inline-svg" v-html="icon('star')"></span>{{ t('ui.star_26f93') }}</a>
-                </div>
-              </div>
-            </article>
-          </section>
         </div>
       </section>
     </div>
 
 
     <Teleport to="body">
+      <div v-if="desktopBackupProfilesOpen" class="modal-backdrop" @click.self="desktopBackupProfilesOpen = false">
+        <section class="modal-card desktop-backup-profiles-dialog">
+          <div class="modal-header desktop-backup-profiles-head">
+            <div>
+              <p class="modal-kicker">{{ t('ui.dataAndRecovery_677d1') }}</p>
+              <h2 class="text-2xl font-bold">{{ t('ui.backupProfiles') }}</h2>
+              <p class="muted">{{ t('ui.backupProfilesBody') }}</p>
+            </div>
+            <button class="btn-secondary" type="button" @click="desktopBackupProfilesOpen = false">{{ t('ui.close_d3d2e') }}</button>
+          </div>
+          <div class="desktop-backup-profile-list">
+            <article v-if="!desktopBackupProfiles.length" class="empty-state">{{ t('ui.noBackupProfiles') }}</article>
+            <article v-for="profile in desktopBackupProfiles" :key="profile.id" class="desktop-backup-profile-card">
+              <div>
+                <b>{{ profile.name }}</b>
+                <small>{{ desktopBackupProfileSubtitle(profile) }}</small>
+              </div>
+              <div class="desktop-backup-profile-actions">
+                <button class="btn-secondary" type="button" :disabled="loading" @click="restoreDesktopBackupProfile(profile.id)">{{ t('ui.restoreBackupProfile') }}</button>
+                <button class="btn-secondary danger-lite" type="button" :disabled="loading" @click="deleteDesktopBackupProfile(profile.id)">{{ t('ui.delete_f2a6c') }}</button>
+              </div>
+            </article>
+          </div>
+          <div class="dialog-actions">
+            <button class="btn-primary" type="button" :disabled="loading" @click="createManualDesktopBackupProfile">{{ t('ui.createBackupProfile') }}</button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="desktopInfoDialog" class="modal-backdrop" @click.self="desktopInfoDialog = null">
+        <section class="modal-card desktop-info-dialog">
+          <div class="modal-header desktop-info-dialog-head">
+            <div>
+              <p class="modal-kicker">nutrino</p>
+              <h2 class="text-2xl font-bold">{{ desktopInfoDialogTitle(desktopInfoDialog) }}</h2>
+            </div>
+            <button class="link-button" type="button" @click="desktopInfoDialog = null">{{ t('ui.close_d3d2e') }}</button>
+          </div>
+          <div v-if="desktopInfoDialog === 'privacy'" class="desktop-info-dialog-body">
+            <span class="mobile-info-icon" v-html="icon('shield')"></span>
+            <h3>{{ t('ui.localFirstByDesign_50f82') }}</h3>
+            <p>{{ t('ui.nutrinoDesktopStoresYourIngredientFood_8ab07') }}</p>
+          </div>
+          <div v-else-if="desktopInfoDialog === 'licenses'" class="desktop-info-dialog-body">
+            <p class="muted">{{ t('ui.thirdPartyNoticesAndAcknowledgements_833ba') }}</p>
+            <article class="license-list submodal-license-list">
+              <a v-for="notice in thirdPartyNotices" :key="notice.name" class="license-card" :href="notice.url" target="_blank" rel="noreferrer">
+                <span class="mobile-setting-icon" v-html="icon('licenses')"></span>
+                <span class="mobile-setting-copy"><b>{{ notice.name }}</b><small>{{ t(notice.purposeKey) }}</small><small v-if="notice.noteKey">{{ t(notice.noteKey) }}</small></span>
+                <strong>{{ notice.license }}</strong>
+              </a>
+            </article>
+            <ul class="acknowledgement-list"><li v-for="item in acknowledgements" :key="item">{{ t(item) }}</li></ul>
+          </div>
+          <div v-else class="desktop-info-dialog-body about-dialog-body">
+            <div class="about-logo" v-html="nutrinoLogoSvg"></div>
+            <h3>{{ appName }}</h3>
+            <p class="muted">{{ t('ui.versionLabel') }} {{ appVersion }} · {{ appChannel }} · AGPL-3.0-only</p>
+            <p>{{ t('ui.thanksToOpennutritrackerForThePrivacy_2e20e') }}</p>
+            <div class="mobile-info-actions">
+              <a :href="repositoryUrl" target="_blank" rel="noreferrer"><span class="inline-svg" v-html="icon('recipes')"></span>{{ t('ui.repository_33fcf') }}</a>
+              <a :href="issueUrl" target="_blank" rel="noreferrer"><span class="inline-svg" v-html="icon('activities')"></span>{{ t('ui.reportIssue_92fd0') }}</a>
+              <a :href="starUrl" target="_blank" rel="noreferrer"><span class="inline-svg" v-html="icon('star')"></span>{{ t('ui.star_26f93') }}</a>
+            </div>
+          </div>
+        </section>
+      </div>
+
       <div v-if="onboardingOpen" class="modal-backdrop">
         <section class="modal-card onboarding-desktop-card">
           <div class="modal-header"><div class="modal-brand-row"><span class="modal-logo" v-html="nutrinoLogoSvg"></span><div><p class="modal-kicker">nutrino</p><h2 class="text-2xl font-bold">{{ t('ui.desktopSetup_8dda1') }}</h2></div></div></div>
@@ -7707,6 +8001,7 @@ onBeforeUnmount(() => {
             <div><label class="field-label">{{ t('ui.lanApiPort_509d9') }}</label><input v-model.number="onboardingPort" class="input mt-1" type="number" min="1024" /></div>
             <div><label class="field-label">{{ t('ui.serverPassword_7dfb3') }}</label><input v-model="onboardingPassword" class="input mt-1" type="password" autocomplete="new-password" :placeholder="t('ui.optionalLeaveEmptyForNoPassword_151bc')" /></div>
             <button class="btn-secondary" :disabled="loading" @click="importAppDataZip">{{ t('ui.restoreServerFromBackupZip_aafd4') }}</button>
+            <button v-if="desktopBackupProfiles.length" class="btn-secondary" :disabled="loading" @click="openDesktopBackupProfiles">{{ t('ui.restoreBackupProfile') }}</button>
             <ol class="desktop-tour-timeline" :aria-label="t('ui.desktopSetupSteps_ae24e')">
               <li class="desktop-tour-step"><span class="desktop-tour-index">1</span><div><b>{{ t('ui.importOrCreateIngredientsAndFoods_c86e5') }}</b><small>{{ t('ui.buildYourPrivateIngredientAndFood_d9651') }}</small></div></li>
               <li class="desktop-tour-step"><span class="desktop-tour-index">2</span><div><b>{{ t('ui.buildRecipes_f4672') }}</b><small>{{ t('ui.combineFoodsIntoReusableMeals_a2483') }}</small></div></li>

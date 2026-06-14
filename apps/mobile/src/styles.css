@@ -11831,3 +11831,226 @@ textarea::placeholder,
 .dialog-option-list {
   gap: 12px !important;
 }
+
+/* v0.15.8 mobile calm correction: restore the cleaner nav, remove full-page gradient, and simplify cards. */
+:root {
+  --mobile-calm-bg: #f8faf4;
+  --mobile-calm-ink: #151b15;
+  --mobile-calm-muted: #556154;
+  --mobile-calm-card: rgba(255, 255, 255, 0.66);
+  --mobile-calm-card-strong: rgba(255, 255, 255, 0.82);
+  --mobile-calm-nav: rgba(248, 250, 244, 0.9);
+  --mobile-calm-hover: rgba(0, 110, 43, 0.07);
+  --mobile-calm-icon: rgba(0, 110, 43, 0.1);
+  --mobile-calm-icon-text: #006e2b;
+  --mobile-calm-shadow: 0 16px 46px rgba(22, 52, 31, 0.075), 0 2px 10px rgba(22, 52, 31, 0.04);
+}
+
+:root[data-theme='light'] {
+  --mobile-calm-bg: #f8faf4;
+  --mobile-calm-ink: #151b15;
+  --mobile-calm-muted: #556154;
+  --mobile-calm-card: rgba(255, 255, 255, 0.66);
+  --mobile-calm-card-strong: rgba(255, 255, 255, 0.82);
+  --mobile-calm-nav: rgba(248, 250, 244, 0.9);
+  --mobile-calm-hover: rgba(0, 110, 43, 0.07);
+  --mobile-calm-icon: rgba(0, 110, 43, 0.1);
+  --mobile-calm-icon-text: #006e2b;
+  --mobile-calm-shadow: 0 16px 46px rgba(22, 52, 31, 0.075), 0 2px 10px rgba(22, 52, 31, 0.04);
+}
+
+:root[data-theme='dark'] {
+  --mobile-calm-bg: #101510;
+  --mobile-calm-ink: #eef5ea;
+  --mobile-calm-muted: #b6c5b2;
+  --mobile-calm-card: rgba(255, 255, 255, 0.052);
+  --mobile-calm-card-strong: rgba(255, 255, 255, 0.075);
+  --mobile-calm-nav: rgba(16, 21, 16, 0.88);
+  --mobile-calm-hover: rgba(185, 223, 178, 0.075);
+  --mobile-calm-icon: rgba(105, 255, 137, 0.12);
+  --mobile-calm-icon-text: #9cf6a7;
+  --mobile-calm-shadow: 0 16px 46px rgba(0, 0, 0, 0.27), 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --mobile-calm-bg: #101510;
+    --mobile-calm-ink: #eef5ea;
+    --mobile-calm-muted: #b6c5b2;
+    --mobile-calm-card: rgba(255, 255, 255, 0.052);
+    --mobile-calm-card-strong: rgba(255, 255, 255, 0.075);
+    --mobile-calm-nav: rgba(16, 21, 16, 0.88);
+    --mobile-calm-hover: rgba(185, 223, 178, 0.075);
+    --mobile-calm-icon: rgba(105, 255, 137, 0.12);
+    --mobile-calm-icon-text: #9cf6a7;
+    --mobile-calm-shadow: 0 16px 46px rgba(0, 0, 0, 0.27), 0 2px 10px rgba(0, 0, 0, 0.2);
+  }
+}
+
+html,
+body,
+#app,
+.app-shell,
+.mobile-shell,
+.app-screen,
+.settings-screen,
+.app-shell.home-kcal-low,
+.app-shell.home-kcal-ok,
+.app-shell.home-kcal-warn,
+.app-shell.home-kcal-over {
+  background: var(--mobile-calm-bg) !important;
+  color: var(--mobile-calm-ink) !important;
+}
+
+.card,
+.dashboard-card,
+.summary-card,
+.meal-card,
+.catalog-card,
+.selected-item-card,
+.profile-bmi-card,
+.day-edit-card,
+.permission-status-card,
+.source-settings-card,
+.github-source-row,
+.backup-profile-card,
+.backup-option-card,
+.license-card,
+.settings-dialog,
+.bottom-sheet {
+  border: 0 !important;
+  outline: 0 !important;
+  background: var(--mobile-calm-card) !important;
+  color: var(--mobile-calm-ink) !important;
+  box-shadow: var(--mobile-calm-shadow) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(1.06) !important;
+  backdrop-filter: blur(20px) saturate(1.06) !important;
+}
+
+.dashboard-card,
+.bottom-sheet,
+.settings-dialog {
+  background: var(--mobile-calm-card-strong) !important;
+}
+
+.settings-module-section,
+.settings-row,
+.dialog-option,
+.language-dialog-option,
+.advanced-transfer-option,
+.meal-target-option,
+.catalog-convert-option,
+.picker-row,
+.recipe-ingredient-row,
+.source-choice-card,
+.update-status-card,
+.update-release-card {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.settings-row:hover,
+.dialog-option:hover,
+.language-dialog-option:hover,
+.dialog-option.active,
+.language-dialog-option.active,
+.advanced-transfer-option:hover,
+.meal-target-option:hover,
+.catalog-convert-option:hover,
+.picker-row:hover,
+.source-choice-card:hover {
+  background: var(--mobile-calm-hover) !important;
+  color: var(--mobile-calm-ink) !important;
+}
+
+.settings-row small,
+.dialog-option small,
+.language-dialog-option small,
+.advanced-transfer-option small,
+.meal-target-option small,
+.catalog-convert-option small,
+.muted,
+.helper-text,
+.tile-subtitle,
+.meal-meta,
+.card small,
+.card p,
+.bottom-sheet small {
+  color: var(--mobile-calm-muted) !important;
+  opacity: 1 !important;
+}
+
+.settings-row-icon,
+.settings-row > span:not(.nav-svg),
+.activity-icon,
+.selected-icon,
+.permission-icon,
+.source-icon {
+  background: var(--mobile-calm-icon) !important;
+  color: var(--mobile-calm-icon-text) !important;
+}
+
+.bottom-nav {
+  min-height: calc(80px + env(safe-area-inset-bottom)) !important;
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom)) !important;
+  background: var(--mobile-calm-nav) !important;
+  border: 0 !important;
+  box-shadow: 0 -14px 42px rgba(0, 0, 0, 0.08) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(1.08) !important;
+  backdrop-filter: blur(18px) saturate(1.08) !important;
+}
+
+.bottom-nav button,
+.bottom-nav button:hover,
+.bottom-nav button.active,
+.bottom-nav button.active:hover {
+  min-height: 62px !important;
+  border-radius: 20px !important;
+  background: transparent !important;
+  color: var(--mobile-calm-muted) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.bottom-nav .nav-svg,
+.bottom-nav button:hover .nav-svg {
+  display: grid !important;
+  place-items: center !important;
+  width: 42px !important;
+  height: 32px !important;
+  border-radius: 18px !important;
+  background: transparent !important;
+  color: currentColor !important;
+  box-shadow: none !important;
+}
+
+.bottom-nav button.active {
+  color: var(--primary) !important;
+}
+
+.bottom-nav button.active .nav-svg,
+.bottom-nav button.active:hover .nav-svg {
+  background: var(--secondary-container) !important;
+  color: var(--on-secondary-container) !important;
+}
+
+:root[data-theme='dark'] .bottom-nav button.active .nav-svg,
+:root[data-theme='dark'] .bottom-nav button.active:hover .nav-svg {
+  background: rgba(105, 255, 137, 0.13) !important;
+  color: #9cf6a7 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .bottom-nav button.active .nav-svg,
+  :root:not([data-theme='light']) .bottom-nav button.active:hover .nav-svg {
+    background: rgba(105, 255, 137, 0.13) !important;
+    color: #9cf6a7 !important;
+  }
+}
+
+.theme-option-grid,
+.language-option-list,
+.dialog-option-list {
+  gap: 12px !important;
+}

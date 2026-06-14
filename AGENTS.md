@@ -89,3 +89,35 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 - Inputs, selects, tables, settings rows, chips, and nav items must stay borderless. No top inset lines, no hard outlines, no visible table grid, no selected full-row slabs.
 - Buttons should not sit beside long titles/descriptions on desktop when that compresses copy. Page actions wrap below; row actions stay compact and secondary.
 - Light and dark mode must have separate high-contrast text tokens. Decorative opacity is allowed on surfaces, not on essential text.
+
+## Current UI correction guardrails
+
+- Desktop settings must visually follow the mobile settings model: one readable column, grouped sections, rounded row actions, icon/copy/action alignment, and no nested boxed panels.
+- Mobile bottom navigation should use the older, calmer pattern: transparent tab buttons, a translucent bottom bar, and color only on the active icon capsule. Never tint every nav icon capsule by default.
+- Avoid full-page decorative gradients on mobile. Use a calm, solid app background and reserve blur/opacity for cards, sheets, and app bars.
+- Mobile cards should use one consistent glass surface token, not many unrelated green/gray tinted backgrounds. Rows inside cards should usually stay transparent.
+
+## Desktop catalog and server layout rules
+
+- Server panels must be structurally readable before they are decorative: input fields in a dedicated field row, actions in a separate action row, and no button may overlap a label or input.
+- Sidebar navigation needs a clearly separated but quiet surface. Use opacity, blur and shadow; do not leave the menu visually lost in the page background.
+- Catalog cards must not place four action buttons beside the title. Use a title row with one overflow/menu trigger, then let the description/note use the full content width.
+- CSV “skip duplicates” is a boolean option and must render as a real checkbox, not as a radio-looking pill, switch, or ambiguous custom control.
+- Do not solve cramped desktop UI by shrinking text. Fix the structure: move actions into overflow menus, create a second row, or simplify the action surface.
+
+## Desktop settings and recovery rules
+
+- Catalog card titles and the overflow menu trigger must share the same first row. The description and metadata belong below on full width.
+- Overflow menus must be layered above following DOM content. Keep card/list wrappers overflow-visible and raise the open menu/card z-index.
+- Desktop language selection can use available width. Prefer responsive multi-column grids instead of a long one-column list when the viewport is wide.
+- Settings rows must keep the chevron, toggle, or trailing control aligned at the far right of the row. Never let trailing icons wrap into a third line under the copy.
+- Destructive desktop recovery actions must create a local backup profile before data deletion whenever possible, then ask for final confirmation before continuing.
+- Desktop must expose local backup profiles in Settings, matching the mobile recovery model: list profiles, create a manual profile, restore, and delete.
+
+## Desktop information and catalog presentation rules
+
+- Desktop Settings should keep long informational content out of the main settings page. Licenses, Privacy, and About belong in subdialogs opened from concise settings rows, matching the mobile settings pattern.
+- Destructive settings rows must not become large red slabs. Use a subtle danger icon/accent and keep the row visually calm until the confirmation step.
+- Desktop food catalog entries should not render as spreadsheet-like tables. Use card/list rows with the title and overflow menu on the first line, one full-width description/identity line, and one scannable data line for nutrition.
+- Recipe nutrition metadata may use responsive multi-column grids when space allows. Do not force two-column layouts on wide desktop screens.
+- Overflow menus must behave like top-layer UI. The open card/menu must receive the highest practical z-index and all relevant wrappers must remain overflow-visible.

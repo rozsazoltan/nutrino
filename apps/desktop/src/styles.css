@@ -4583,3 +4583,727 @@ body,
     justify-content: flex-start !important;
   }
 }
+
+/* v0.15.8 desktop settings/mobile parity and calmer chrome correction. */
+:root {
+  --desktop-calm-bg: #f8faf4;
+  --desktop-calm-ink: #151b15;
+  --desktop-calm-muted: #556154;
+  --desktop-calm-surface: rgba(255, 255, 255, 0.62);
+  --desktop-calm-surface-strong: rgba(255, 255, 255, 0.78);
+  --desktop-calm-hover: rgba(0, 110, 43, 0.07);
+  --desktop-calm-icon: rgba(0, 110, 43, 0.1);
+  --desktop-calm-icon-text: #006e2b;
+  --desktop-calm-shadow: 0 16px 46px rgba(22, 52, 31, 0.07), 0 2px 10px rgba(22, 52, 31, 0.035);
+}
+
+:root[data-theme='light'] {
+  --desktop-calm-bg: #f8faf4;
+  --desktop-calm-ink: #151b15;
+  --desktop-calm-muted: #556154;
+  --desktop-calm-surface: rgba(255, 255, 255, 0.62);
+  --desktop-calm-surface-strong: rgba(255, 255, 255, 0.78);
+  --desktop-calm-hover: rgba(0, 110, 43, 0.07);
+  --desktop-calm-icon: rgba(0, 110, 43, 0.1);
+  --desktop-calm-icon-text: #006e2b;
+  --desktop-calm-shadow: 0 16px 46px rgba(22, 52, 31, 0.07), 0 2px 10px rgba(22, 52, 31, 0.035);
+}
+
+:root[data-theme='dark'] {
+  --desktop-calm-bg: #101510;
+  --desktop-calm-ink: #eef5ea;
+  --desktop-calm-muted: #b6c5b2;
+  --desktop-calm-surface: rgba(255, 255, 255, 0.046);
+  --desktop-calm-surface-strong: rgba(255, 255, 255, 0.068);
+  --desktop-calm-hover: rgba(185, 223, 178, 0.075);
+  --desktop-calm-icon: rgba(105, 255, 137, 0.12);
+  --desktop-calm-icon-text: #9cf6a7;
+  --desktop-calm-shadow: 0 16px 46px rgba(0, 0, 0, 0.27), 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --desktop-calm-bg: #101510;
+    --desktop-calm-ink: #eef5ea;
+    --desktop-calm-muted: #b6c5b2;
+    --desktop-calm-surface: rgba(255, 255, 255, 0.046);
+    --desktop-calm-surface-strong: rgba(255, 255, 255, 0.068);
+    --desktop-calm-hover: rgba(185, 223, 178, 0.075);
+    --desktop-calm-icon: rgba(105, 255, 137, 0.12);
+    --desktop-calm-icon-text: #9cf6a7;
+    --desktop-calm-shadow: 0 16px 46px rgba(0, 0, 0, 0.27), 0 2px 10px rgba(0, 0, 0, 0.2);
+  }
+}
+
+body,
+.desktop-shell {
+  background: var(--desktop-calm-bg) !important;
+  color: var(--desktop-calm-ink) !important;
+}
+
+.desktop-shell {
+  background: var(--desktop-calm-bg) !important;
+}
+
+.desktop-settings-page.settings-page-v040 {
+  width: min(100%, 940px) !important;
+  margin-inline: auto !important;
+  display: grid !important;
+  gap: 20px !important;
+}
+
+.desktop-shell .settings-hero {
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 4px 4px 2px !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.desktop-shell .settings-hero .section-title {
+  font-size: clamp(2rem, 3vw, 2.65rem) !important;
+  color: var(--desktop-calm-ink) !important;
+}
+
+.desktop-shell .settings-hero .section-subtitle,
+.desktop-shell .settings-section-head h3,
+.desktop-shell .mobile-setting-copy small,
+.desktop-shell .language-option-button small,
+.desktop-shell .license-card small,
+.desktop-shell .mobile-info-card p {
+  color: var(--desktop-calm-muted) !important;
+  opacity: 1 !important;
+}
+
+.desktop-shell .settings-layout-v040,
+.desktop-shell .settings-info-grid-v040 {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 16px !important;
+}
+
+.desktop-shell .settings-section-card,
+.desktop-shell .mobile-info-card {
+  border: 0 !important;
+  outline: 0 !important;
+  border-radius: 28px !important;
+  background: var(--desktop-calm-surface) !important;
+  color: var(--desktop-calm-ink) !important;
+  box-shadow: var(--desktop-calm-shadow) !important;
+  padding: 16px !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.06) !important;
+  backdrop-filter: blur(22px) saturate(1.06) !important;
+}
+
+.desktop-shell .settings-section-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 6px !important;
+  padding: 2px 4px 12px !important;
+}
+
+.desktop-shell .settings-section-head h3 {
+  margin-top: 2px !important;
+  font-size: .98rem !important;
+  font-weight: 750 !important;
+  line-height: 1.35 !important;
+}
+
+.desktop-shell .settings-group-list,
+.desktop-shell .mobile-settings-list,
+.desktop-shell .language-picker-panel,
+.desktop-shell .desktop-update-settings-panel,
+.desktop-shell .license-list {
+  display: grid !important;
+  gap: 8px !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.desktop-shell .settings-row-v040,
+.desktop-shell .mobile-setting-row,
+.desktop-shell .language-option-button,
+.desktop-shell .licenses-section-card .license-card,
+.desktop-shell .desktop-update-status-card {
+  min-height: 68px !important;
+  border: 0 !important;
+  outline: 0 !important;
+  border-radius: 22px !important;
+  background: transparent !important;
+  color: var(--desktop-calm-ink) !important;
+  box-shadow: none !important;
+  padding: 12px 10px !important;
+  transform: none !important;
+}
+
+.desktop-shell .settings-row-v040,
+.desktop-shell .mobile-setting-row {
+  grid-template-columns: 46px minmax(0, 1fr) auto !important;
+  gap: 12px 14px !important;
+  align-items: center !important;
+}
+
+.desktop-shell .download-folder-row,
+.desktop-shell .licenses-section-card .license-card {
+  grid-template-columns: 46px minmax(0, 1fr) !important;
+}
+
+.desktop-shell .download-folder-actions,
+.desktop-shell .settings-row-v040 > .toggle,
+.desktop-shell .settings-row-v040 > input[type='checkbox'],
+.desktop-shell .settings-row-chevron,
+.desktop-shell .licenses-section-card .license-card > strong {
+  grid-column: 2 !important;
+  justify-self: start !important;
+}
+
+.desktop-shell .settings-row-v040:hover:not(:disabled),
+.desktop-shell .mobile-setting-row:hover:not(:disabled),
+.desktop-shell .language-option-button:hover:not(:disabled),
+.desktop-shell .language-option-button.active,
+.desktop-shell .licenses-section-card .license-card:hover,
+.desktop-shell .desktop-update-status-card.attention,
+.desktop-shell .desktop-update-status-card.latest {
+  background: var(--desktop-calm-hover) !important;
+  color: var(--desktop-calm-ink) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.desktop-shell .settings-row-v040:hover *,
+.desktop-shell .mobile-setting-row:hover *,
+.desktop-shell .language-option-button:hover *,
+.desktop-shell .language-option-button.active *,
+.desktop-shell .licenses-section-card .license-card:hover * {
+  color: inherit !important;
+}
+
+.desktop-shell .mobile-setting-icon,
+.desktop-shell .mobile-info-icon,
+.desktop-shell .desktop-update-status-icon {
+  width: 42px !important;
+  height: 42px !important;
+  border-radius: 999px !important;
+  background: var(--desktop-calm-icon) !important;
+  color: var(--desktop-calm-icon-text) !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .mobile-setting-copy b,
+.desktop-shell .language-option-button b,
+.desktop-shell .license-card b,
+.desktop-shell .mobile-info-card h3 {
+  color: var(--desktop-calm-ink) !important;
+  font-weight: 800 !important;
+}
+
+.desktop-shell .language-option-grid,
+.desktop-shell .theme-option-grid {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 8px !important;
+}
+
+.desktop-shell .language-option-button {
+  display: grid !important;
+  justify-items: start !important;
+  text-align: left !important;
+}
+
+.desktop-shell .settings-top-actions,
+.desktop-shell .desktop-update-actions,
+.desktop-shell .download-folder-actions,
+.desktop-shell .mobile-info-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  width: 100% !important;
+  justify-content: flex-start !important;
+  gap: 8px !important;
+}
+
+.desktop-shell .desktop-update-status-card {
+  display: grid !important;
+  grid-template-columns: 46px minmax(0, 1fr) !important;
+  gap: 12px !important;
+  background: transparent !important;
+}
+
+.desktop-shell .desktop-nav .nav-button-active,
+.desktop-shell .desktop-nav .nav-button-active:hover:not(:disabled) {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .desktop-nav .nav-button-active .nav-icon,
+.desktop-shell .desktop-nav .nav-button-active:hover:not(:disabled) .nav-icon {
+  background: var(--desktop-calm-icon) !important;
+  color: var(--desktop-calm-icon-text) !important;
+}
+
+/* v0.15.9 senior desktop UX correction: no cramped actions, clean sidebar, real checkboxes. */
+:root {
+  --desktop-exec-bg: #f7faf3;
+  --desktop-exec-ink: #131a13;
+  --desktop-exec-muted: #526052;
+  --desktop-exec-surface: rgba(255, 255, 255, 0.68);
+  --desktop-exec-surface-soft: rgba(255, 255, 255, 0.44);
+  --desktop-exec-surface-hover: rgba(0, 110, 43, 0.075);
+  --desktop-exec-popover: rgba(255, 255, 255, 0.92);
+  --desktop-exec-shadow: 0 18px 52px rgba(22, 52, 31, 0.08), 0 2px 12px rgba(22, 52, 31, 0.04);
+  --desktop-exec-shadow-soft: 0 10px 32px rgba(22, 52, 31, 0.06);
+}
+
+:root[data-theme='light'] {
+  --desktop-exec-bg: #f7faf3;
+  --desktop-exec-ink: #131a13;
+  --desktop-exec-muted: #526052;
+  --desktop-exec-surface: rgba(255, 255, 255, 0.68);
+  --desktop-exec-surface-soft: rgba(255, 255, 255, 0.44);
+  --desktop-exec-surface-hover: rgba(0, 110, 43, 0.075);
+  --desktop-exec-popover: rgba(255, 255, 255, 0.92);
+  --desktop-exec-shadow: 0 18px 52px rgba(22, 52, 31, 0.08), 0 2px 12px rgba(22, 52, 31, 0.04);
+  --desktop-exec-shadow-soft: 0 10px 32px rgba(22, 52, 31, 0.06);
+}
+
+:root[data-theme='dark'] {
+  --desktop-exec-bg: #0f150f;
+  --desktop-exec-ink: #eef6ea;
+  --desktop-exec-muted: #b8c7b3;
+  --desktop-exec-surface: rgba(255, 255, 255, 0.058);
+  --desktop-exec-surface-soft: rgba(255, 255, 255, 0.032);
+  --desktop-exec-surface-hover: rgba(153, 246, 170, 0.09);
+  --desktop-exec-popover: rgba(24, 34, 24, 0.94);
+  --desktop-exec-shadow: 0 18px 52px rgba(0, 0, 0, 0.34), 0 2px 12px rgba(0, 0, 0, 0.18);
+  --desktop-exec-shadow-soft: 0 10px 32px rgba(0, 0, 0, 0.28);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --desktop-exec-bg: #0f150f;
+    --desktop-exec-ink: #eef6ea;
+    --desktop-exec-muted: #b8c7b3;
+    --desktop-exec-surface: rgba(255, 255, 255, 0.058);
+    --desktop-exec-surface-soft: rgba(255, 255, 255, 0.032);
+    --desktop-exec-surface-hover: rgba(153, 246, 170, 0.09);
+    --desktop-exec-popover: rgba(24, 34, 24, 0.94);
+    --desktop-exec-shadow: 0 18px 52px rgba(0, 0, 0, 0.34), 0 2px 12px rgba(0, 0, 0, 0.18);
+    --desktop-exec-shadow-soft: 0 10px 32px rgba(0, 0, 0, 0.28);
+  }
+}
+
+.desktop-shell,
+body {
+  background: var(--desktop-exec-bg) !important;
+  color: var(--desktop-exec-ink) !important;
+}
+
+.desktop-shell .desktop-sidebar {
+  padding: 14px !important;
+  border-radius: 30px !important;
+  background: var(--desktop-exec-surface) !important;
+  box-shadow: var(--desktop-exec-shadow-soft) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.08) !important;
+  backdrop-filter: blur(24px) saturate(1.08) !important;
+}
+
+.desktop-shell .desktop-nav {
+  gap: 6px !important;
+}
+
+.desktop-shell .desktop-nav .nav-button {
+  min-height: 48px !important;
+  padding: 8px 10px !important;
+  border-radius: 20px !important;
+  color: var(--desktop-exec-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .desktop-nav .nav-button:hover:not(:disabled) {
+  background: var(--desktop-exec-surface-hover) !important;
+  color: var(--desktop-exec-ink) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .desktop-nav .nav-button-active,
+.desktop-shell .desktop-nav .nav-button-active:hover:not(:disabled) {
+  background: transparent !important;
+  color: var(--desktop-exec-ink) !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .desktop-nav .nav-button-active .nav-icon {
+  background: var(--desktop-calm-icon) !important;
+  color: var(--desktop-calm-icon-text) !important;
+  box-shadow: none !important;
+}
+
+.desktop-shell .server-controls-stack {
+  display: grid !important;
+  gap: 16px !important;
+  margin-top: 18px !important;
+}
+
+.desktop-shell .server-field-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 14px !important;
+}
+
+.desktop-shell .server-action-row {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding-top: 2px !important;
+}
+
+.desktop-shell .server-action-row button {
+  min-height: 44px !important;
+}
+
+.desktop-shell .server-action-row .btn-primary {
+  min-width: 120px !important;
+}
+
+@media (max-width: 760px) {
+  .desktop-shell .server-field-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+.desktop-shell .catalog-list-card {
+  position: relative !important;
+  overflow: visible !important;
+  background: var(--desktop-exec-surface) !important;
+  box-shadow: var(--desktop-exec-shadow-soft) !important;
+}
+
+.desktop-shell .catalog-card-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  gap: 6px 12px !important;
+  align-items: start !important;
+}
+
+.desktop-shell .catalog-card-head h3,
+.desktop-shell .activity-card-copy h4 {
+  min-width: 0 !important;
+  color: var(--desktop-exec-ink) !important;
+  line-height: 1.25 !important;
+  overflow-wrap: anywhere !important;
+}
+
+.desktop-shell .catalog-card-description {
+  grid-column: 1 / -1 !important;
+  max-width: 72ch !important;
+  color: var(--desktop-exec-muted) !important;
+  line-height: 1.5 !important;
+}
+
+.desktop-shell .activity-card-top {
+  display: grid !important;
+  grid-template-columns: 44px minmax(0, 1fr) auto !important;
+  gap: 12px !important;
+  align-items: start !important;
+}
+
+.desktop-shell .activity-card-copy {
+  min-width: 0 !important;
+  display: grid !important;
+  gap: 4px !important;
+}
+
+.desktop-shell .catalog-action-menu {
+  position: relative !important;
+  justify-self: end !important;
+  z-index: 8 !important;
+}
+
+.desktop-shell .catalog-action-menu[open] {
+  z-index: 50 !important;
+}
+
+.desktop-shell .catalog-menu-trigger {
+  width: 42px !important;
+  height: 42px !important;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 999px !important;
+  color: var(--desktop-exec-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  cursor: pointer !important;
+  list-style: none !important;
+  font-size: 1.6rem !important;
+  line-height: 1 !important;
+  user-select: none !important;
+}
+
+.desktop-shell .catalog-menu-trigger::-webkit-details-marker {
+  display: none !important;
+}
+
+.desktop-shell .catalog-menu-trigger::marker {
+  content: '' !important;
+}
+
+.desktop-shell .catalog-menu-trigger:hover,
+.desktop-shell .catalog-action-menu[open] .catalog-menu-trigger {
+  background: var(--desktop-exec-surface-hover) !important;
+  color: var(--desktop-exec-ink) !important;
+}
+
+.desktop-shell .catalog-menu-popover {
+  position: absolute !important;
+  right: 0 !important;
+  top: calc(100% + 8px) !important;
+  min-width: 220px !important;
+  display: grid !important;
+  gap: 4px !important;
+  padding: 8px !important;
+  border-radius: 22px !important;
+  background: var(--desktop-exec-popover) !important;
+  box-shadow: var(--desktop-exec-shadow) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.1) !important;
+  backdrop-filter: blur(24px) saturate(1.1) !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button {
+  width: 100% !important;
+  min-height: 42px !important;
+  justify-content: flex-start !important;
+  padding: 10px 12px !important;
+  border-radius: 16px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--desktop-exec-ink) !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button:hover:not(:disabled) {
+  background: var(--desktop-exec-surface-hover) !important;
+  color: var(--desktop-exec-ink) !important;
+  transform: none !important;
+}
+
+.desktop-shell .catalog-menu-popover .link-button.danger {
+  color: var(--error) !important;
+}
+
+.desktop-shell .csv-skip-toggle {
+  min-height: 42px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 0 4px !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--desktop-exec-muted) !important;
+}
+
+.desktop-shell .csv-skip-toggle input[type='checkbox'],
+.desktop-shell .inbox-filter-toggle input[type='checkbox'],
+.desktop-shell input[type='checkbox']:not(.sr-only) {
+  appearance: auto !important;
+  -webkit-appearance: checkbox !important;
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 4px !important;
+  background: Canvas !important;
+  color: CanvasText !important;
+  box-shadow: none !important;
+  accent-color: var(--primary) !important;
+}
+
+.desktop-shell .input,
+.desktop-shell input:not([type='checkbox']):not([type='radio']),
+.desktop-shell select,
+.desktop-shell textarea {
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--primary) 5%, transparent) !important;
+}
+
+.desktop-shell .input:focus,
+.desktop-shell input:not([type='checkbox']):not([type='radio']):focus,
+.desktop-shell select:focus,
+.desktop-shell textarea:focus {
+  outline: 0 !important;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent), 0 14px 34px color-mix(in srgb, var(--primary) 8%, transparent) !important;
+}
+
+/* v0.16.0 desktop UX hardening: title/action alignment, overlay safety, settings rows, backup profiles. */
+.desktop-shell main,
+.desktop-shell section,
+.desktop-shell .card,
+.desktop-shell .grid,
+.desktop-shell .catalog-list-card,
+.desktop-shell .activity-card,
+.desktop-shell .catalog-card-head,
+.desktop-shell .activity-card-top,
+.desktop-shell .activity-card-copy {
+  overflow: visible !important;
+}
+
+.desktop-shell .catalog-list-card {
+  position: relative !important;
+  z-index: 0 !important;
+}
+
+.desktop-shell .catalog-list-card:has(.catalog-action-menu[open]) {
+  z-index: 9000 !important;
+}
+
+.desktop-shell .catalog-card-head,
+.desktop-shell .activity-card-copy {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 8px !important;
+}
+
+.desktop-shell .catalog-title-row {
+  width: 100% !important;
+  min-width: 0 !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 44px !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.desktop-shell .catalog-title-row h3,
+.desktop-shell .catalog-title-row h4 {
+  min-width: 0 !important;
+  margin: 0 !important;
+  overflow-wrap: anywhere !important;
+  line-height: 1.25 !important;
+}
+
+.desktop-shell .activity-card-top {
+  grid-template-columns: 44px minmax(0, 1fr) !important;
+  align-items: start !important;
+}
+
+.desktop-shell .catalog-action-menu {
+  position: relative !important;
+  justify-self: end !important;
+  align-self: center !important;
+  z-index: 9010 !important;
+}
+
+.desktop-shell .catalog-action-menu[open] {
+  z-index: 99999 !important;
+}
+
+.desktop-shell .catalog-menu-popover {
+  z-index: 100000 !important;
+  isolation: isolate !important;
+}
+
+.desktop-shell .settings-row-v040,
+.desktop-shell .mobile-setting-row,
+.desktop-shell .download-folder-row {
+  grid-template-columns: 46px minmax(0, 1fr) auto !important;
+  align-items: center !important;
+}
+
+.desktop-shell .settings-row-v040 > .toggle,
+.desktop-shell .settings-row-v040 > input[type='checkbox'],
+.desktop-shell .settings-row-chevron {
+  grid-column: 3 !important;
+  justify-self: end !important;
+  align-self: center !important;
+}
+
+.desktop-shell .download-folder-row {
+  align-items: start !important;
+}
+
+.desktop-shell .download-folder-actions {
+  grid-column: 2 / -1 !important;
+  justify-self: start !important;
+  margin-top: 8px !important;
+}
+
+.desktop-shell .language-option-grid {
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)) !important;
+  gap: 8px !important;
+}
+
+.desktop-shell .theme-option-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+.desktop-backup-profiles-dialog {
+  width: min(720px, calc(100vw - 32px)) !important;
+  max-height: min(760px, calc(100vh - 48px)) !important;
+  overflow: auto !important;
+}
+
+.desktop-backup-profiles-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: start !important;
+  gap: 16px !important;
+}
+
+.desktop-backup-profile-list {
+  display: grid !important;
+  gap: 10px !important;
+  margin-top: 16px !important;
+}
+
+.desktop-backup-profile-card {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 14px !important;
+  border: 0 !important;
+  border-radius: 24px !important;
+  background: var(--desktop-exec-surface-soft) !important;
+  color: var(--desktop-exec-ink) !important;
+  box-shadow: none !important;
+}
+
+.desktop-backup-profile-card b,
+.desktop-backup-profile-card small {
+  display: block !important;
+}
+
+.desktop-backup-profile-card small {
+  margin-top: 4px !important;
+  color: var(--desktop-exec-muted) !important;
+  line-height: 1.35 !important;
+}
+
+.desktop-backup-profile-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+}
+
+@media (max-width: 760px) {
+  .desktop-backup-profiles-head,
+  .desktop-backup-profile-card {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .desktop-backup-profile-actions {
+    justify-content: flex-start !important;
+  }
+
+  .desktop-shell .theme-option-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
