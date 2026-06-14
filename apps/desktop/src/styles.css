@@ -3390,3 +3390,233 @@ td {
   color: var(--desktop-control-muted) !important;
   opacity: 1 !important;
 }
+
+/* v0.15.4 desktop hard borderless reset
+   Keep the desktop UI in the older mobile-like direction: surfaces are separated by
+   spacing, opacity, blur and shadow, not visible outlines. */
+:root {
+  --desktop-borderless-surface: color-mix(in srgb, white 78%, var(--primary-container) 7%);
+  --desktop-borderless-surface-strong: color-mix(in srgb, white 88%, var(--primary-container) 5%);
+  --desktop-borderless-surface-soft: color-mix(in srgb, white 58%, var(--surface-container-high) 42%);
+  --desktop-borderless-shadow:
+    0 24px 72px rgba(25, 62, 36, 0.095),
+    0 4px 18px rgba(25, 62, 36, 0.055),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  --desktop-borderless-shadow-soft:
+    0 14px 42px rgba(25, 62, 36, 0.065),
+    inset 0 1px 0 rgba(255, 255, 255, 0.54);
+  --desktop-nav-icon-active-bg: color-mix(in srgb, var(--primary-container) 76%, white 12%);
+  --desktop-nav-icon-active-text: var(--primary);
+}
+
+:root[data-theme='light'] {
+  --desktop-borderless-surface: color-mix(in srgb, white 78%, var(--primary-container) 7%);
+  --desktop-borderless-surface-strong: color-mix(in srgb, white 88%, var(--primary-container) 5%);
+  --desktop-borderless-surface-soft: color-mix(in srgb, white 58%, var(--surface-container-high) 42%);
+  --desktop-borderless-shadow:
+    0 24px 72px rgba(25, 62, 36, 0.095),
+    0 4px 18px rgba(25, 62, 36, 0.055),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  --desktop-borderless-shadow-soft:
+    0 14px 42px rgba(25, 62, 36, 0.065),
+    inset 0 1px 0 rgba(255, 255, 255, 0.54);
+  --desktop-nav-icon-active-bg: color-mix(in srgb, var(--primary-container) 76%, white 12%);
+  --desktop-nav-icon-active-text: var(--primary);
+}
+
+:root[data-theme='dark'] {
+  --desktop-borderless-surface: color-mix(in srgb, var(--surface-container-high) 70%, transparent);
+  --desktop-borderless-surface-strong: color-mix(in srgb, var(--surface-container-highest) 52%, var(--surface-container) 48%);
+  --desktop-borderless-surface-soft: color-mix(in srgb, var(--surface-container) 66%, transparent);
+  --desktop-borderless-shadow:
+    0 24px 72px rgba(0, 0, 0, 0.36),
+    0 4px 18px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.075);
+  --desktop-borderless-shadow-soft:
+    0 16px 44px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.065);
+  --desktop-nav-icon-active-bg: color-mix(in srgb, var(--primary-container) 58%, var(--surface-container-high) 42%);
+  --desktop-nav-icon-active-text: var(--on-primary-container);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --desktop-borderless-surface: color-mix(in srgb, var(--surface-container-high) 70%, transparent);
+    --desktop-borderless-surface-strong: color-mix(in srgb, var(--surface-container-highest) 52%, var(--surface-container) 48%);
+    --desktop-borderless-surface-soft: color-mix(in srgb, var(--surface-container) 66%, transparent);
+    --desktop-borderless-shadow:
+      0 24px 72px rgba(0, 0, 0, 0.36),
+      0 4px 18px rgba(0, 0, 0, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.075);
+    --desktop-borderless-shadow-soft:
+      0 16px 44px rgba(0, 0, 0, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.065);
+    --desktop-nav-icon-active-bg: color-mix(in srgb, var(--primary-container) 58%, var(--surface-container-high) 42%);
+    --desktop-nav-icon-active-text: var(--on-primary-container);
+  }
+}
+
+.desktop-shell,
+.desktop-shell *,
+.modal-backdrop,
+.modal-backdrop *,
+.desktop-update-modal,
+.desktop-update-modal * {
+  border-width: 0 !important;
+  border-color: transparent !important;
+}
+
+.app-header,
+.card,
+.metric-card,
+.activity-card,
+.mobile-info-card,
+.desktop-home-card,
+.settings-hero,
+.settings-section-card,
+.desktop-update-status-card,
+.table-wrap,
+.modal-card,
+.language-picker-panel,
+.i18n-extra-panel,
+.mobile-settings-list,
+.mobile-setting-row,
+.settings-row-v040,
+.source-choice-card,
+.connected-device-row,
+.connected-device-card,
+.connected-device-inline span,
+.mobile-handoff-card,
+.download-folder-row,
+.recipe-picker-option,
+.sync-review-section,
+.sync-edit-card,
+.duplicate-item-card,
+.merge-target-row,
+.inbox-review-row,
+.qr-sequence-head,
+.licenses-section-card .license-card {
+  border: 0 !important;
+  background: var(--desktop-borderless-surface) !important;
+  color: var(--on-surface) !important;
+  box-shadow: var(--desktop-borderless-shadow) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(1.18) !important;
+  backdrop-filter: blur(30px) saturate(1.18) !important;
+}
+
+.table-wrap,
+.mobile-settings-list,
+.settings-group-list,
+.connected-device-row,
+.connected-device-inline span,
+.mobile-setting-row,
+.settings-row-v040,
+.language-option-button,
+.i18n-row,
+.inbox-review-row,
+.licenses-section-card .license-card {
+  background: var(--desktop-borderless-surface-soft) !important;
+  box-shadow: var(--desktop-borderless-shadow-soft) !important;
+}
+
+th,
+td,
+.settings-row-v040,
+.server-device-count,
+.desktop-tour-step:not(:last-child)::after {
+  border: 0 !important;
+}
+
+.btn-secondary,
+.link-button,
+.nav-button,
+.language-option-button,
+.qr-nav-button,
+.file-action,
+.repo-action,
+.support-actions a,
+.desktop-update-chip,
+.desktop-update-modal-actions button,
+.dialog-actions button,
+.settings-top-actions button,
+.mobile-info-actions a,
+.input,
+input,
+select,
+textarea {
+  border: 0 !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.14) !important;
+  backdrop-filter: blur(22px) saturate(1.14) !important;
+}
+
+.desktop-nav {
+  gap: 0.34rem !important;
+}
+
+.desktop-nav .nav-button,
+.desktop-nav .nav-button:hover:not(:disabled),
+.desktop-nav .nav-button-active,
+.desktop-nav .nav-button-active:hover:not(:disabled) {
+  min-height: 3rem !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: var(--on-surface-variant) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.desktop-nav .nav-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--desktop-borderless-surface-soft) 68%, transparent) !important;
+  color: var(--on-surface) !important;
+}
+
+.desktop-nav .nav-button .nav-icon {
+  width: 42px !important;
+  height: 32px !important;
+  border-radius: 999px !important;
+  display: grid !important;
+  place-items: center !important;
+  background: transparent !important;
+  color: currentColor !important;
+  box-shadow: none !important;
+}
+
+.desktop-nav .nav-button-active .nav-icon,
+.desktop-nav .nav-button-active:hover:not(:disabled) .nav-icon {
+  background: var(--desktop-nav-icon-active-bg) !important;
+  color: var(--desktop-nav-icon-active-text) !important;
+  box-shadow: none !important;
+}
+
+.desktop-nav .nav-button-active span:last-child,
+.desktop-nav .nav-button-active:hover:not(:disabled) span:last-child {
+  color: var(--on-surface) !important;
+  font-weight: 900 !important;
+}
+
+.desktop-nav .nav-button:not(.nav-button-active):hover:not(:disabled) .nav-icon {
+  background: color-mix(in srgb, var(--desktop-borderless-surface-strong) 72%, transparent) !important;
+}
+
+.input,
+input,
+select,
+textarea {
+  background: var(--field-surface) !important;
+  color: var(--on-surface) !important;
+  box-shadow:
+    0 12px 32px color-mix(in srgb, var(--primary) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 48%, transparent) !important;
+}
+
+.input:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  border: 0 !important;
+  background: var(--field-surface-focus) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--primary) 16%, transparent),
+    0 16px 38px color-mix(in srgb, var(--primary) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 54%, transparent) !important;
+}

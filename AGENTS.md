@@ -50,7 +50,7 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 ## UI Design Direction
 
 - Maintain a clean iOS/macOS-inspired interface: calm surfaces, restrained contrast, soft system shadows, consistent spacing, and compact readable controls.
-- Prefer modern glass surfaces over heavy bordered boxes. Borders should be subtle hairlines or inset highlights, not visible outlines around every component.
+- Prefer modern glass surfaces over bordered boxes. Desktop and mobile app UI should not use visible component outlines; separate surfaces with opacity, blur, spacing, and soft elevation instead.
 - In light mode, use airy warm-green surfaces, soft tinted cards, high readability, and restrained Nutrino green accents instead of flat gray panels.
 - Use blur, translucency, and layered opacity for app bars, dialogs, sheets, navigation, and elevated cards when it improves depth without reducing readability.
 - Support system, light, and dark theme modes.
@@ -62,13 +62,13 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 
 - In light mode, helper, muted, placeholder and secondary text must remain readable. Do not use low-opacity text for essential labels, form hints or row metadata.
 - Prefer filled/glass fields and soft elevation over visible framed borders. Inputs should look calm and modern, not like boxed legacy form controls.
-- Avoid stacking borders on cards, rows, sheets and dialogs. Use blur, translucency, shadow and spacing to separate surfaces.
+- Avoid visible borders on cards, rows, sheets, dialogs, navigation, chips, and list items. Use blur, translucency, shadow and spacing to separate surfaces.
 - Activity picker rows should not show catalog source chips for every activity. Source metadata is useful for catalog management, not for routine activity logging.
 - The home quick-add menu must visually follow the same glass sheet/list pattern as other app menus; avoid a separate legacy action sheet style.
 - Bottom navigation active state should color the icon capsule only, not the entire tab button.
 - Update prompts must respect same-day dismissals across the header badge, chip and dialog; do not keep resurfacing an update after the user postponed it.
 - Fluid-day skip should be a compact decline affordance, while resuming tracking should be an explicit enable-style action.
 
-- Desktop controls should follow the mobile visual language: pill-shaped, borderless, softly elevated, and theme-aware. Active navigation should color the icon capsule, not the full row.
+- Desktop controls should follow the mobile visual language: pill-shaped, borderless, softly elevated, and theme-aware. Active navigation must not color the full row; only the icon capsule may carry the selected state.
 - Do not use light text on light cards or dark text on dark cards. Define separate light/dark text tokens for any new surface, chart, metric, or control state.
 - Prefer opacity for layered surfaces, not for essential typography. Labels, values, macros, and action text must remain fully readable in both light and dark mode.
