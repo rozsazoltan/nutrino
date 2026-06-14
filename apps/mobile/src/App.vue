@@ -12644,7 +12644,7 @@ async function ensureServerVersionSyncAllowed(existingHealth?: {
   if (!serverVersion || compareVersionStrings(serverVersion, appVersion) === 0) return { allowed: true };
 
   if (isServerNewerThanMobile(serverVersion)) {
-    void checkForAppUpdates({ quiet: true, ignoreRemindLater: true });
+    void checkForAppUpdates({ quiet: true });
   } else if (isServerOlderThanMobile(serverVersion)) {
     try {
       await requestDesktopUpdateCheck(state.pairing.baseUrl, authPassword(), 'mobile-newer');
@@ -20059,27 +20059,18 @@ function setTab(tab: Tab) {
             @click.stop.prevent="openFluidAnalysis"
             v-html="lucideSvg('chartPie')"
           ></span>
+          <span
+            v-if="currentDayFluidSkipped || !currentDayStoredFluidLogs.length"
+            class="fluid-skip-inline-button"
+            :class="{ active: currentDayFluidSkipped }"
+            role="button"
+            :aria-label="currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday')"
+            :title="currentDayFluidSkipped ? t('fluidResumeToday') : t('fluidSkipToday')"
+            @click.stop.prevent="setFluidSkippedForCurrentDay(!currentDayFluidSkipped)"
+            v-html="lucideSvg('ban')"
+          ></span>
           <span v-if="!currentDayFluidSkipped" class="plus-button">+</span>
         </button>
-        <div v-if="currentDayFluidSkipped || !currentDayStoredFluidLogs.length" class="fluid-card-actions">
-          <button
-            v-if="currentDayFluidSkipped"
-            class="filled-button compact fluid-resume-button"
-            type="button"
-            @click="setFluidSkippedForCurrentDay(false)"
-          >
-            <span v-html="lucideSvg('glassWater')"></span>{{ t('fluidResumeToday') }}
-          </button>
-          <button
-            v-else
-            class="icon-button fluid-skip-icon-button"
-            type="button"
-            :aria-label="t('fluidSkipToday')"
-            :title="t('fluidSkipToday')"
-            @click="setFluidSkippedForCurrentDay(true)"
-            v-html="lucideSvg('x')"
-          ></button>
-        </div>
         <div v-if="!currentDayFluidSkipped" class="entry-list home-fluid-entry-list">
           <div
             v-for="entry in currentDayFluidLogs"

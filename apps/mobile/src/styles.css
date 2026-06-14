@@ -10987,3 +10987,108 @@ textarea:focus {
     0 8px 22px rgba(25, 62, 36, 0.045),
     inset 0 1px 0 rgba(255, 255, 255, 0.82) !important;
 }
+
+/* v0.15.4 light dashboard contrast and fluid skip icon polish */
+:root {
+  --dashboard-surface: color-mix(in srgb, var(--glass-surface-strong) 82%, var(--primary-container) 18%);
+  --dashboard-text: var(--on-surface);
+  --dashboard-muted: var(--readable-muted);
+  --dashboard-ring-bg: color-mix(in srgb, var(--primary) 16%, var(--surface-container-highest));
+  --dashboard-ring-fg: var(--primary);
+  --dashboard-icon: color-mix(in srgb, var(--primary) 74%, var(--on-surface));
+  --dashboard-shadow: var(--glass-elevated-shadow);
+}
+
+:root[data-theme='light'] {
+  --dashboard-surface: color-mix(in srgb, var(--glass-surface-strong) 82%, var(--primary-container) 18%);
+  --dashboard-text: var(--on-surface);
+  --dashboard-muted: var(--readable-muted);
+  --dashboard-ring-bg: color-mix(in srgb, var(--primary) 16%, var(--surface-container-highest));
+  --dashboard-ring-fg: var(--primary);
+  --dashboard-icon: color-mix(in srgb, var(--primary) 74%, var(--on-surface));
+  --dashboard-shadow: var(--glass-elevated-shadow);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --dashboard-surface: #122318;
+    --dashboard-text: #f4fbf1;
+    --dashboard-muted: rgba(244, 251, 241, 0.84);
+    --dashboard-ring-bg: #1d5c32;
+    --dashboard-ring-fg: #2ef074;
+    --dashboard-icon: rgba(244, 251, 241, 0.9);
+    --dashboard-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  }
+}
+
+:root[data-theme='dark'] {
+  --dashboard-surface: #122318;
+  --dashboard-text: #f4fbf1;
+  --dashboard-muted: rgba(244, 251, 241, 0.84);
+  --dashboard-ring-bg: #1d5c32;
+  --dashboard-ring-fg: #2ef074;
+  --dashboard-icon: rgba(244, 251, 241, 0.9);
+  --dashboard-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+}
+
+.dashboard-card {
+  background: var(--dashboard-surface) !important;
+  color: var(--dashboard-text) !important;
+  box-shadow: var(--dashboard-shadow) !important;
+}
+.dashboard-card,
+.dashboard-card * {
+  color: var(--dashboard-text) !important;
+}
+.dashboard-card .home-weight-chip,
+.dashboard-card .home-fluid-chip,
+.dashboard-card .deficit-dashboard-note small,
+.dashboard-card .macro-copy span,
+.dashboard-card .side-stat small,
+.dashboard-card .kcal-center span {
+  color: var(--dashboard-muted) !important;
+  opacity: 1 !important;
+}
+.dashboard-card .side-stat b,
+.dashboard-card .kcal-center strong,
+.dashboard-card .deficit-status-row b,
+.dashboard-card .macro-copy b {
+  color: var(--dashboard-text) !important;
+  opacity: 1 !important;
+  text-shadow: none !important;
+}
+.dashboard-card .side-stat .arrow {
+  color: var(--dashboard-icon) !important;
+}
+.dashboard-card .ring-bg,
+.dashboard-card .small-bg {
+  stroke: var(--dashboard-ring-bg) !important;
+}
+.dashboard-card .ring-fg,
+.dashboard-card .small-fg {
+  stroke: var(--dashboard-ring-fg) !important;
+}
+
+.fluid-skip-inline-button {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  color: #ba1a1a !important;
+  background: color-mix(in srgb, var(--error-container) 72%, transparent) !important;
+  box-shadow:
+    0 8px 22px color-mix(in srgb, #ba1a1a 13%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58) !important;
+}
+.fluid-skip-inline-button svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+}
+.fluid-skip-inline-button.active {
+  color: var(--on-error) !important;
+  background: var(--error) !important;
+}
