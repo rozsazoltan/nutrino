@@ -2450,3 +2450,268 @@ body:has(.modal-backdrop) {
   overflow-wrap: anywhere;
   text-align: right;
 }
+
+/* v0.15 unified iOS/macOS-inspired desktop theme layer */
+:root {
+  color-scheme: light;
+  --primary: #006e2b;
+  --on-primary: #ffffff;
+  --primary-container: #dff8e4;
+  --on-primary-container: #073d17;
+  --secondary: #4f624f;
+  --secondary-container: #e6efe4;
+  --on-secondary-container: #152416;
+  --error: #ba1a1a;
+  --error-container: #ffdad6;
+  --surface: #f6f8f3;
+  --surface-container: #ffffff;
+  --surface-container-high: #f0f4ee;
+  --surface-container-highest: #e2e9df;
+  --on-surface: #172018;
+  --on-surface-variant: #5d685d;
+  --outline: #8f9a8f;
+  --outline-variant: #d9e2d7;
+  --border-subtle: color-mix(in srgb, var(--outline-variant) 70%, transparent);
+  --soft-hover: color-mix(in srgb, var(--primary) 9%, transparent);
+  --shadow: 0 18px 46px rgba(15, 23, 42, 0.1);
+  --desktop-bg: var(--surface);
+  --desktop-surface: var(--surface-container);
+  --desktop-surface-2: var(--surface-container-high);
+  --desktop-text: var(--on-surface);
+  --desktop-muted: var(--on-surface-variant);
+  --desktop-border: var(--border-subtle);
+  --desktop-accent: var(--primary);
+  --desktop-hover: var(--primary-container);
+  --desktop-hover-text: var(--on-primary-container);
+  --muted: var(--on-surface-variant);
+  --danger: var(--error);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --primary: #33e36a;
+    --on-primary: #003913;
+    --primary-container: #0f3f1d;
+    --on-primary-container: #a7f7b7;
+    --secondary: #bfd0ba;
+    --secondary-container: #263427;
+    --on-secondary-container: #e1eedc;
+    --error: #ffb4ab;
+    --error-container: #93000a;
+    --surface: #101611;
+    --surface-container: #151d16;
+    --surface-container-high: #1c271d;
+    --surface-container-highest: #273429;
+    --on-surface: #edf5eb;
+    --on-surface-variant: #b9c8b7;
+    --outline: #697769;
+    --outline-variant: #303d31;
+    --border-subtle: color-mix(in srgb, var(--outline-variant) 72%, transparent);
+    --soft-hover: color-mix(in srgb, var(--primary) 13%, transparent);
+    --shadow: 0 18px 52px rgba(0, 0, 0, 0.44);
+    --desktop-bg: var(--surface);
+    --desktop-surface: var(--surface-container);
+    --desktop-surface-2: var(--surface-container-high);
+    --desktop-text: var(--on-surface);
+    --desktop-muted: var(--on-surface-variant);
+    --desktop-border: var(--border-subtle);
+    --desktop-accent: var(--primary);
+    --desktop-hover: var(--primary-container);
+    --desktop-hover-text: var(--on-primary-container);
+    --muted: var(--on-surface-variant);
+    --danger: var(--error);
+  }
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --primary: #006e2b;
+  --on-primary: #ffffff;
+  --primary-container: #dff8e4;
+  --on-primary-container: #073d17;
+  --secondary: #4f624f;
+  --secondary-container: #e6efe4;
+  --on-secondary-container: #152416;
+  --error: #ba1a1a;
+  --error-container: #ffdad6;
+  --surface: #f6f8f3;
+  --surface-container: #ffffff;
+  --surface-container-high: #f0f4ee;
+  --surface-container-highest: #e2e9df;
+  --on-surface: #172018;
+  --on-surface-variant: #5d685d;
+  --outline: #8f9a8f;
+  --outline-variant: #d9e2d7;
+  --border-subtle: color-mix(in srgb, var(--outline-variant) 70%, transparent);
+  --soft-hover: color-mix(in srgb, var(--primary) 9%, transparent);
+  --shadow: 0 18px 46px rgba(15, 23, 42, 0.1);
+  --desktop-bg: var(--surface);
+  --desktop-surface: var(--surface-container);
+  --desktop-surface-2: var(--surface-container-high);
+  --desktop-text: var(--on-surface);
+  --desktop-muted: var(--on-surface-variant);
+  --desktop-border: var(--border-subtle);
+  --desktop-accent: var(--primary);
+  --desktop-hover: var(--primary-container);
+  --desktop-hover-text: var(--on-primary-container);
+  --muted: var(--on-surface-variant);
+  --danger: var(--error);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --primary: #33e36a;
+  --on-primary: #003913;
+  --primary-container: #0f3f1d;
+  --on-primary-container: #a7f7b7;
+  --secondary: #bfd0ba;
+  --secondary-container: #263427;
+  --on-secondary-container: #e1eedc;
+  --error: #ffb4ab;
+  --error-container: #93000a;
+  --surface: #101611;
+  --surface-container: #151d16;
+  --surface-container-high: #1c271d;
+  --surface-container-highest: #273429;
+  --on-surface: #edf5eb;
+  --on-surface-variant: #b9c8b7;
+  --outline: #697769;
+  --outline-variant: #303d31;
+  --border-subtle: color-mix(in srgb, var(--outline-variant) 72%, transparent);
+  --soft-hover: color-mix(in srgb, var(--primary) 13%, transparent);
+  --shadow: 0 18px 52px rgba(0, 0, 0, 0.44);
+  --desktop-bg: var(--surface);
+  --desktop-surface: var(--surface-container);
+  --desktop-surface-2: var(--surface-container-high);
+  --desktop-text: var(--on-surface);
+  --desktop-muted: var(--on-surface-variant);
+  --desktop-border: var(--border-subtle);
+  --desktop-accent: var(--primary);
+  --desktop-hover: var(--primary-container);
+  --desktop-hover-text: var(--on-primary-container);
+  --muted: var(--on-surface-variant);
+  --danger: var(--error);
+}
+
+body {
+  background: var(--surface) !important;
+  color: var(--on-surface) !important;
+}
+
+.desktop-shell {
+  background:
+    radial-gradient(circle at 16% -12%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 36rem),
+    linear-gradient(180deg, var(--surface) 0%, color-mix(in srgb, var(--surface-container-high) 58%, var(--surface)) 100%) !important;
+  color: var(--on-surface) !important;
+}
+
+.app-header {
+  border-bottom: 1px solid var(--border-subtle) !important;
+  background: color-mix(in srgb, var(--surface-container) 82%, transparent) !important;
+  color: var(--on-surface) !important;
+  backdrop-filter: blur(22px);
+}
+
+.desktop-kicker,
+.tracking-wide,
+.tracking-\[0\.25em\] {
+  letter-spacing: 0 !important;
+}
+
+.card,
+.metric-card,
+.activity-card,
+.mobile-info-card,
+.desktop-home-card,
+.settings-section-card,
+.desktop-update-status-card,
+.table-wrap,
+.modal-card,
+.language-picker-panel {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 22px !important;
+  background: color-mix(in srgb, var(--surface-container) 94%, transparent) !important;
+  color: var(--on-surface) !important;
+  box-shadow: var(--shadow) !important;
+}
+
+.mobile-setting-row,
+.language-option-button,
+.source-choice-card,
+.connected-device-card,
+.mobile-handoff-card,
+.download-folder-row {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 18px !important;
+  background: color-mix(in srgb, var(--surface-container) 82%, var(--surface-container-high)) !important;
+  color: var(--on-surface) !important;
+}
+
+.language-option-button.active,
+.nav-button-active,
+.mobile-setting-row:hover,
+.language-option-button:hover,
+.language-option-button:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--outline-variant)) !important;
+  background: color-mix(in srgb, var(--primary-container) 68%, var(--surface-container)) !important;
+  color: var(--on-primary-container) !important;
+}
+
+.nav-button {
+  border-radius: 16px !important;
+  color: var(--on-surface-variant) !important;
+}
+
+.nav-button:hover {
+  background: var(--soft-hover) !important;
+  color: var(--on-surface) !important;
+}
+
+.input,
+input,
+select,
+textarea {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 14px !important;
+  background: color-mix(in srgb, var(--surface-container) 92%, transparent) !important;
+  color: var(--on-surface) !important;
+}
+
+.input:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: color-mix(in srgb, var(--primary) 46%, var(--outline)) !important;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 13%, transparent) !important;
+}
+
+.btn-primary {
+  background: var(--primary) !important;
+  color: var(--on-primary) !important;
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--primary) 24%, transparent) !important;
+}
+
+.btn-secondary,
+.link-button,
+.desktop-update-chip {
+  border: 1px solid var(--border-subtle) !important;
+  background: color-mix(in srgb, var(--surface-container) 72%, transparent) !important;
+  color: var(--primary) !important;
+}
+
+.text-neutral-900,
+.font-semibold,
+.font-bold,
+th {
+  color: var(--on-surface) !important;
+}
+
+.text-neutral-600,
+.text-neutral-500,
+.muted,
+.mobile-setting-copy small,
+.mobile-handoff-saved-path,
+td {
+  color: var(--on-surface-variant) !important;
+}

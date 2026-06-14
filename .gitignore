@@ -35,8 +35,11 @@ coverage/
 **/src-tauri/gen/schemas/
 **/src-tauri/gen/android/keystore.properties
 **/src-tauri/gen/android/*.jks
+**/src-tauri/gen/android/*.jks.base64
 **/src-tauri/gen/android/*.keystore
+**/src-tauri/gen/android/*.keystore.base64
 **/src-tauri/gen/android/*.p12
+**/src-tauri/gen/android/*.p12.base64
 
 # Generated mobile projects can be recreated with aube run init:android / aube run init:ios.
 # Keep this commented if you intentionally commit native generated projects.

@@ -25,6 +25,7 @@ import type {
 
 const STORAGE_KEY = 'nutrino.mobile.v3.state';
 const KCAL_PER_KG_PER_WEEK_DAILY = 1100;
+const themeModes = new Set(['system', 'light', 'dark']);
 
 const fallbackActivities: ActivityDefinition[] = [
   {
@@ -227,6 +228,10 @@ export function defaultState(): AppState {
   };
 }
 
+function normalizeThemeMode(value: unknown): AppSettings['theme'] {
+  return typeof value === 'string' && themeModes.has(value) ? (value as AppSettings['theme']) : 'system';
+}
+
 function normalizeFluidLog(entry: Partial<FluidLog> | null | undefined): FluidLog | null {
   if (!entry) return null;
   const amountDl = Number(entry.amount_dl ?? 0);
@@ -319,6 +324,7 @@ export function loadState(): AppState {
     const mergedSettings: AppSettings = {
       ...defaults.settings,
       ...storedSettings,
+      theme: normalizeThemeMode(storedSettings.theme),
       daily_reminder: storedSettings.daily_reminder === true,
       daily_reminder_time:
         typeof storedSettings.daily_reminder_time === 'string'

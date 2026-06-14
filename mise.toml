@@ -4,3 +4,4 @@ aube = "latest"
 rust = "stable"
 hk = "1.47.0"
 pkl = "0.31.1"
+"github:verzly/android-signing" = { version = "0.3.0", bin = "android-signing" }

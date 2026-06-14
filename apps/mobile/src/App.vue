@@ -46,6 +46,7 @@ import type {
   FluidAlcoholKind,
   FluidDrinkKind,
   FoodPreparationMethod,
+  ThemeMode,
 } from './types';
 import {
   ageFromBirthday,
@@ -151,6 +152,7 @@ type CalendarSearchResult = {
 type SettingsDialogKey =
   | 'permissions'
   | 'updates'
+  | 'theme'
   | 'units'
   | 'calculations'
   | 'tracking'
@@ -769,6 +771,7 @@ const acknowledgements = [
 const settingsIconMap: Record<string, IconName> = {
   permissions: 'shield',
   updates: 'refreshCw',
+  theme: 'sparkles',
   units: 'ruler',
   calculations: 'calculator',
   tracking: 'scale',
@@ -802,6 +805,34 @@ const settingsIconMap: Record<string, IconName> = {
 function settingsIcon(name: string) {
   return lucideSvg(settingsIconMap[name] ?? 'info');
 }
+
+const themeOptions: Array<{ key: ThemeMode; labelKey: string }> = [
+  { key: 'system', labelKey: 'systemDefault' },
+  { key: 'light', labelKey: 'lightMode' },
+  { key: 'dark', labelKey: 'darkMode' },
+];
+
+function themeLabel(mode: ThemeMode = state.settings.theme) {
+  return t(themeOptions.find((option) => option.key === mode)?.labelKey ?? 'systemDefault');
+}
+
+function setTheme(mode: ThemeMode) {
+  state.settings.theme = mode;
+  settingsDialog.value = null;
+}
+
+function applyThemePreference(mode: ThemeMode) {
+  const root = document.documentElement;
+  if (mode === 'system') {
+    root.removeAttribute('data-theme');
+    root.style.colorScheme = 'light dark';
+    return;
+  }
+  root.dataset.theme = mode;
+  root.style.colorScheme = mode;
+}
+
+watch(() => state.settings.theme, applyThemePreference, { immediate: true });
 
 function settingsButton(
   key: string,
@@ -850,6 +881,15 @@ const settingsModules = computed<SettingsModuleConfig[]>(() => [
           settingsDialog.value = 'language';
         },
         () => selectedLanguageLabel(),
+      ),
+      settingsButton(
+        'theme',
+        'theme',
+        'theme',
+        () => {
+          settingsDialog.value = 'theme';
+        },
+        () => themeLabel(),
       ),
       settingsButton('permissions', 'permissions', 'appPermissions', openPermissionsSettings, () =>
         appPermissionSummary(),
@@ -3044,6 +3084,8 @@ const translations: Record<string, Record<string, string>> = {
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'System default',
+    lightMode: 'Light',
+    darkMode: 'Dark',
     english: 'English',
     hungarian: 'Hungarian',
     scan: 'Scan',
@@ -3324,6 +3366,8 @@ const translations: Record<string, Record<string, string>> = {
     metric: 'Metrikus (kg, cm, ml)',
     imperial: 'Angolszász (lbs, ft, oz)',
     systemDefault: 'Rendszer alapértelmezett',
+    lightMode: 'Világos',
+    darkMode: 'Sötét',
     english: 'Angol',
     hungarian: 'Magyar',
     scan: 'Scan',
@@ -4551,6 +4595,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metrikus (kg, cm, ml)',
     imperial: 'Angolszász (lbs, ft, oz)',
     systemDefault: 'Rendszer alapértelmezett',
+    lightMode: 'Világos',
+    darkMode: 'Sötét',
     english: 'Angol',
     hungarian: 'Magyar',
     scan: 'Scan',
@@ -4956,6 +5002,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Systemstandard',
+    lightMode: 'Hell',
+    darkMode: 'Dunkel',
     english: 'Englisch',
     hungarian: 'Ungarisch',
     scan: 'Scannen',
@@ -5361,6 +5409,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Valeur système',
+    lightMode: 'Clair',
+    darkMode: 'Sombre',
     english: 'Anglais',
     hungarian: 'Hongrois',
     scan: 'Scanner',
@@ -5766,6 +5816,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Системный язык',
+    lightMode: 'Светлая',
+    darkMode: 'Тёмная',
     english: 'Английский',
     hungarian: 'Венгерский',
     scan: 'Сканировать',
@@ -6171,6 +6223,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Системна',
+    lightMode: 'Світла',
+    darkMode: 'Темна',
     english: 'Англійська',
     hungarian: 'Угорська',
     scan: 'Сканувати',
@@ -6576,6 +6630,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: '系统默认',
+    lightMode: '浅色',
+    darkMode: '深色',
     english: '英语',
     hungarian: '匈牙利语',
     scan: '扫描',
@@ -6979,6 +7035,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Systémový jazyk',
+    lightMode: 'Svetlý',
+    darkMode: 'Tmavý',
     english: 'Angličtina',
     hungarian: 'Maďarčina',
     scan: 'Skenovať',
@@ -7384,6 +7442,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Implicit sistem',
+    lightMode: 'Luminos',
+    darkMode: 'Întunecat',
     english: 'Engleză',
     hungarian: 'Maghiară',
     scan: 'Scanează',
@@ -7788,6 +7848,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Systémový jazyk',
+    lightMode: 'Světlý',
+    darkMode: 'Tmavý',
     english: 'Angličtina',
     hungarian: 'Maďarština',
     scan: 'Skenovat',
@@ -8192,6 +8254,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Sistemsko privzeto',
+    lightMode: 'Svetla',
+    darkMode: 'Temna',
     english: 'Angleščina',
     hungarian: 'Madžarščina',
     scan: 'Skeniraj',
@@ -8597,6 +8661,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Zadano sustavom',
+    lightMode: 'Svijetla',
+    darkMode: 'Tamna',
     english: 'Engleski',
     hungarian: 'Mađarski',
     scan: 'Skeniraj',
@@ -9002,6 +9068,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Domyślny systemu',
+    lightMode: 'Jasny',
+    darkMode: 'Ciemny',
     english: 'Angielski',
     hungarian: 'Węgierski',
     scan: 'Skanuj',
@@ -9407,6 +9475,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Predeterminado del sistema',
+    lightMode: 'Claro',
+    darkMode: 'Oscuro',
     english: 'Inglés',
     hungarian: 'Húngaro',
     scan: 'Escanear',
@@ -9811,6 +9881,8 @@ const completeMobileLanguageTranslations: Record<string, Record<string, string>>
     metric: 'Metric (kg, cm, ml)',
     imperial: 'Imperial (lbs, ft, oz)',
     systemDefault: 'Padrão do sistema',
+    lightMode: 'Claro',
+    darkMode: 'Escuro',
     english: 'Inglês',
     hungarian: 'Húngaro',
     scan: 'Digitalizar',
@@ -22997,6 +23069,18 @@ function setTab(tab: Tab) {
               >
                 <span>{{ language.englishName }}</span
                 ><small>{{ language.nativeName }} · {{ language.code }}</small>
+              </button></template
+            >
+            <template v-else-if="settingsDialog === 'theme'"
+              ><h2>{{ t('theme') }}</h2>
+              <button
+                v-for="option in themeOptions"
+                :key="option.key"
+                class="dialog-option"
+                :class="{ active: state.settings.theme === option.key }"
+                @click="setTheme(option.key)"
+              >
+                {{ t(option.labelKey) }}
               </button></template
             >
             <template v-else-if="settingsDialog === 'aiExport'">

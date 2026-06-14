@@ -9,6 +9,7 @@ This file contains the development, testing, and release-maintenance notes for N
 - [Testing expectations](#testing-expectations)
 - [Tooling conventions](#tooling-conventions)
 - [Release maintenance](#release-maintenance)
+- [Android signing](#android-signing)
 
 ## Development setup
 
@@ -198,3 +199,59 @@ The manual delete-release workflow is available at:
 ```
 
 It requires an explicit confirmation phrase before deleting a GitHub Release or tag.
+
+## Android signing
+
+Nutrino uses `verzly/android-signing` through mise for local release-key work and through GitHub Actions for CI fingerprint verification. The tool is pinned in `mise.toml`.
+
+Install it with the rest of the local toolchain:
+
+```bash
+mise install
+mise exec -- android-signing --version
+```
+
+Create the stable Android release key once. Do not regenerate this key for later releases:
+
+```bash
+mkdir -p apps/mobile/src-tauri/gen/android
+android-signing generate --output apps/mobile/src-tauri/gen/android/nutrino-release-keystore.jks --alias nutrino-release
+android-signing fingerprint apps/mobile/src-tauri/gen/android/nutrino-release-keystore.jks --alias nutrino-release
+android-signing base64 apps/mobile/src-tauri/gen/android/nutrino-release-keystore.jks --output apps/mobile/src-tauri/gen/android/nutrino-release-keystore.jks.base64
+android-signing print-secrets apps/mobile/src-tauri/gen/android/nutrino-release-keystore.jks --alias nutrino-release
+```
+
+For local stable release APK builds, create `apps/mobile/src-tauri/gen/android/keystore.properties` next to the keystore:
+
+```properties
+storeFile=nutrino-release-keystore.jks
+storePassword=<keystore password>
+keyAlias=nutrino-release
+keyPassword=<key password>
+```
+
+Keep the keystore, passwords, and base64 file out of Git. The generated Android signing files under `apps/mobile/src-tauri/gen/android` are ignored by `.gitignore`.
+
+Configure GitHub Actions with these values:
+
+```text
+ANDROID_KEYSTORE_BASE64        secret, from nutrino-release-keystore.jks.base64
+ANDROID_KEYSTORE_PASSWORD      secret
+ANDROID_KEY_ALIAS              secret, usually nutrino-release
+ANDROID_KEY_PASSWORD           secret
+ANDROID_SIGNING_CERT_SHA256    repository variable preferred, secret also supported
+```
+
+The Android release workflow decodes the keystore into a temporary file and runs `verzly/android-signing@v0.3.0 verify-fingerprint` before `verzly/tauri-release` builds the APK/AAB artifacts.
+
+For sideload self-updates to remain smooth, every stable Android release must keep all of these stable:
+
+```text
+same Android application identifier
+same release keystore and key alias
+same signing certificate SHA-256 fingerprint
+higher versionCode than the installed app
+APK asset published on the GitHub Release
+```
+
+If the stable release key is lost or replaced, Android will not install the new APK over existing installations. Users would need to uninstall the old app first, which also breaks the seamless update path.

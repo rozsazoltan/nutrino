@@ -33,7 +33,7 @@ Download Nutrino from the GitHub Releases page of this repository. Choose the pa
 
 Install the Android APK from the latest release. Android may ask you to allow installation from the browser or file manager you used to open the APK.
 
-After installing, keep future APK updates signed with the same release key. Android will reject an update if the app signature does not match the already installed version.
+After installing, keep updating from the same Nutrino release channel. Android will only install an APK over an existing Nutrino app when the app identifier, version code, and signing certificate match the installed app.
 
 ### iOS
 
@@ -112,7 +112,7 @@ The desktop app can request a mobile export over the local network. The mobile a
 
 ## Updates
 
-The mobile app can check for newer releases. Android updates require matching app signatures; if an update is signed with a different key, Android will refuse to install it over the existing app.
+The mobile app can check GitHub Releases for newer versions and install Android APK updates with Android's normal package installer. Android will reject an update if it is signed with a different certificate than the already installed app.
 
 Desktop and mobile release packages are published through GitHub Releases.
 

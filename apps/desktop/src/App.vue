@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { lucideSvg, type IconName } from './icons';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -15,6 +15,7 @@ type Tab = 'dashboard' | 'ingredients' | 'foods' | 'recipes' | 'activities' | 's
 type CatalogKind = 'ingredient' | 'food' | 'recipe' | 'activity';
 type RecipeCatalogItem = Food & { catalog_source: 'ingredient' | 'food' | 'recipe' };
 type ModalKind = CatalogKind | null;
+type ThemeMode = 'system' | 'light' | 'dark';
 
 type OptionalNutrientDefinition = {
   key: string;
@@ -97,6 +98,7 @@ type AppLanguage = 'system' | 'en' | 'hu' | 'de' | 'fr' | 'ru' | 'uk' | 'zh' | '
 type LanguageOption = { code: AppLanguage; englishName: string; nativeName: string; locale: string; aliases: string[] };
 
 const desktopLanguageKey = 'nutrino.desktop.language.v1';
+const desktopThemeKey = 'nutrino.desktop.theme.v1';
 const languageOptions: LanguageOption[] = [
   { code: 'system', englishName: 'System default', nativeName: 'System default', locale: 'en', aliases: ['auto', 'system'] },
   { code: 'en', englishName: 'English', nativeName: 'English', locale: 'en-US', aliases: ['en', 'eng'] },
@@ -115,12 +117,21 @@ const languageOptions: LanguageOption[] = [
   { code: 'es', englishName: 'Spanish', nativeName: 'Español', locale: 'es-ES', aliases: ['es', 'spa'] },
   { code: 'pt', englishName: 'Portuguese', nativeName: 'Português', locale: 'pt-PT', aliases: ['pt', 'por'] },
 ];
+const themeOptions: Array<{ key: ThemeMode; labelKey: string }> = [
+  { key: 'system', labelKey: 'systemDefault' },
+  { key: 'light', labelKey: 'lightMode' },
+  { key: 'dark', labelKey: 'darkMode' },
+];
 
 const supportedLanguageCodes = languageOptions.filter((language) => language.code !== 'system').map((language) => language.code);
 const normalizeTranslationValues = (values: Partial<Record<string, string>>): Record<string, string> => Object.fromEntries(
   Object.entries(values).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
 );
+function normalizeThemeMode(value: unknown): ThemeMode {
+  return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
+}
 const desktopLanguage = ref<AppLanguage>((localStorage.getItem(desktopLanguageKey) as AppLanguage | null) || 'system');
+const desktopTheme = ref<ThemeMode>(normalizeThemeMode(localStorage.getItem(desktopThemeKey)));
 const languageSearch = ref('');
 
 const translations: Record<string, Record<string, string>> = {
@@ -4451,6 +4462,33 @@ for (const [language, values] of Object.entries(desktopUpdateTranslations)) {
   translations[language] = { ...translations.en, ...(translations[language] || {}), ...values };
 }
 
+const desktopThemeTranslations: Record<string, Record<string, string>> = {
+  en: {
+    theme: 'Theme',
+    lightMode: 'Light',
+    darkMode: 'Dark',
+    systemDefault: 'System default',
+    'ui.appearance': 'Appearance',
+    'ui.appearanceBody': 'Choose how Nutrino follows your desktop theme.',
+  },
+  hu: {
+    theme: 'Téma',
+    lightMode: 'Világos',
+    darkMode: 'Sötét',
+    systemDefault: 'Rendszer alapértelmezett',
+    'ui.appearance': 'Megjelenés',
+    'ui.appearanceBody': 'Állítsd be, hogyan kövesse a Nutrino a desktop témát.',
+  },
+};
+translations.en = { ...translations.en, ...desktopThemeTranslations.en };
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...(desktopThemeTranslations[language] || {}),
+  };
+}
+
 const effectiveLanguage = computed<Exclude<AppLanguage, 'system'>>(() => {
   if (desktopLanguage.value !== 'system') return desktopLanguage.value;
   const detected = String(navigator.language || 'en').slice(0, 2).toLowerCase() as Exclude<AppLanguage, 'system'>;
@@ -4471,6 +4509,28 @@ function setDesktopLanguage(code: AppLanguage) {
   desktopLanguage.value = code;
   localStorage.setItem(desktopLanguageKey, code);
 }
+
+function setDesktopTheme(code: ThemeMode) {
+  desktopTheme.value = code;
+  localStorage.setItem(desktopThemeKey, code);
+}
+
+function desktopThemeLabel(code: ThemeMode) {
+  return t(themeOptions.find((option) => option.key === code)?.labelKey ?? 'systemDefault');
+}
+
+function applyDesktopThemePreference(code: ThemeMode) {
+  const root = document.documentElement;
+  if (code === 'system') {
+    root.removeAttribute('data-theme');
+    root.style.colorScheme = 'light dark';
+    return;
+  }
+  root.dataset.theme = code;
+  root.style.colorScheme = code;
+}
+
+watch(() => desktopTheme.value, applyDesktopThemePreference, { immediate: true });
 
 function rememberSavedMobileHandoffResult(requestId: string) {
   savedMobileHandoffResultIds.add(requestId);
@@ -7489,6 +7549,23 @@ onBeforeUnmount(() => {
                   <button v-for="language in filteredLanguageOptions" :key="language.code" type="button" class="language-option-button" :class="desktopLanguage === language.code ? 'active' : ''" @click="setDesktopLanguage(language.code)">
                     <b>{{ language.englishName }}</b>
                     <small>{{ language.nativeName }} · {{ language.code }}</small>
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="settings-section-card">
+              <div class="settings-section-head">
+                <div>
+                  <p class="desktop-kicker">{{ t('ui.appearance') }}</p>
+                  <h3>{{ t('ui.appearanceBody') }}</h3>
+                </div>
+              </div>
+              <div class="language-picker-panel">
+                <div class="language-option-grid theme-option-grid">
+                  <button v-for="option in themeOptions" :key="option.key" type="button" class="language-option-button" :class="desktopTheme === option.key ? 'active' : ''" @click="setDesktopTheme(option.key)">
+                    <b>{{ desktopThemeLabel(option.key) }}</b>
+                    <small>{{ t('theme') }}</small>
                   </button>
                 </div>
               </div>

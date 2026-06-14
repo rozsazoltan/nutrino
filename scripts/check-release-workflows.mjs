@@ -39,6 +39,21 @@ expectContains(
 );
 expectContains(
   '.github/workflows/release.yml',
+  'verzly/android-signing@v0.3.0',
+  'Android release workflow should pin android-signing for keystore fingerprint verification.',
+);
+expectContains(
+  '.github/workflows/release.yml',
+  'verify-fingerprint',
+  'Android release workflow should verify the release keystore fingerprint before building.',
+);
+expectContains(
+  '.github/workflows/release.yml',
+  'ANDROID_SIGNING_CERT_SHA256',
+  'Android release workflow should require the expected signing certificate SHA-256 value.',
+);
+expectContains(
+  '.github/workflows/release.yml',
   'verzly/setup-aube',
   'Release workflow should install JavaScript dependencies through setup-aube.',
 );
