@@ -96,6 +96,8 @@ Keep release configuration in `.github/release/*.toml` and workflow orchestratio
 - Mobile bottom navigation should use the older, calmer pattern: transparent tab buttons, a translucent bottom bar, and color only on the active icon capsule. Never tint every nav icon capsule by default.
 - Avoid full-page decorative gradients on mobile. Use a calm, solid app background and reserve blur/opacity for cards, sheets, and app bars.
 - Mobile cards should use one consistent glass surface token, not many unrelated green/gray tinted backgrounds. Rows inside cards should usually stay transparent.
+- Treat z-index changes as a last resort. Prefer correct DOM order, local stacking contexts, overflow-visible wrappers, and small scoped popover elevations over global z-index escalation.
+- Desktop screens that mirror mobile flows should reuse the same calm visual language: fewer immediate buttons, clear grouped rows, and no separate desktop-only chrome unless the larger viewport truly needs it.
 
 ## Desktop catalog and server layout rules
 

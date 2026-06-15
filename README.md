@@ -75,6 +75,14 @@ Use the quick add button and choose “I drank fluid” to record fluid amount i
 
 Alcohol can be marked separately. When alcohol is enabled, Nutrino adds an estimated kcal value to the day. Built-in estimates cover beer, wine, spirits, cocktails, and custom alcohol entries.
 
+### Medication tracking
+
+Medication tracking is optional and local-first. You can maintain a medication catalog with barcode, name, strength in milligrams, and notes, then log one-day doses or create a treatment cycle.
+
+A treatment can have a fixed end date, a calculated supply end based on tablet count and daily dose count, or no known end date. Each active treatment generates daily dose rows that can be marked as taken or skipped. Reminder times are configured per treatment and only notify when medication reminders are enabled.
+
+The medication barcode field can use the mobile scanner. Medication data is included in scoped backups when health diary data is selected, so sensitive health-related data is not exported unless the user chooses that scope.
+
 ### Recipes and catalog
 
 Nutrino supports ingredients, foods, recipes, and barcode-based catalog entries. Recipes are calculated from their components, and foods can include kcal, macros, and optional micronutrients.
@@ -106,9 +114,13 @@ Nutrino can export app data as a local backup. Backups can include catalog data,
 
 AI Markdown export is available when you want a readable, scoped summary for external analysis.
 
-### Desktop handoff
+### Desktop handoff and recovery
 
 The desktop app can request a mobile export over the local network. The mobile app must approve the request before data is sent. Large exports are uploaded in chunks to avoid broken zero-byte transfers.
+
+Desktop can also send a backup import request to a connected mobile device. This makes phone replacement easier: keep a known-good backup on desktop, connect the new phone to the local server, approve the handoff on mobile, then restore the package on the phone.
+
+The desktop app keeps local backup profiles for server recovery actions such as manual backups, imports, exports, restores, and factory reset safety points. These profiles are local restore points and are separate from mobile diary sync.
 
 ## Updates
 

@@ -44,9 +44,9 @@ expect(alcoholKcal(2, 'other', 200) === 200, 'Custom alcohol entries should use 
 expectContains('apps/mobile/src/types.ts', 'export interface FluidLog', 'FluidLog type should exist.');
 expectContains('apps/mobile/src/types.ts', 'fluidLogs: FluidLog[];', 'AppState should persist fluid logs.');
 expectContains('apps/mobile/src/lib/storage.ts', 'normalizeFluidLog', 'Storage should normalize fluid logs.');
-expectContains(
+expectMatches(
   'apps/mobile/src/App.vue',
-  "type AddMode = 'food' | 'activity' | 'fluid' | null",
+  /type AddMode = [^;]*'food'[^;]*'activity'[^;]*'fluid'[^;]*null/,
   'Quick add mode should support fluids.',
 );
 expectContains(
@@ -95,6 +95,58 @@ expectContains(
 expectContains('apps/mobile/src/App.vue', 'aiFluidMarkdown', 'AI export should include fluid entries.');
 expectContains('apps/mobile/src/App.vue', 'fluid_total_dl', 'AI export should summarize total fluid amount.');
 expectContains('apps/mobile/src/icons.ts', 'glassWater:', 'Fluid icon should be registered.');
+
+expectContains('apps/mobile/src/types.ts', 'export interface Medication', 'Medication catalog type should exist.');
+expectContains(
+  'apps/mobile/src/types.ts',
+  'export interface MedicationTreatment',
+  'Medication treatment type should exist.',
+);
+expectContains(
+  'apps/mobile/src/types.ts',
+  'export interface MedicationDoseLog',
+  'Medication dose log type should exist.',
+);
+expectContains(
+  'apps/mobile/src/types.ts',
+  'home_card_order: HomeCardKey[];',
+  'Home card ordering should be persisted.',
+);
+expectContains(
+  'apps/mobile/src/lib/storage.ts',
+  'normalizeHomeCardOrder',
+  'Storage should normalize custom home card ordering.',
+);
+expectContains(
+  'apps/mobile/src/lib/storage.ts',
+  'normalizeMedicationTreatment',
+  'Storage should normalize medication treatments.',
+);
+expectContains(
+  'apps/mobile/src/App.vue',
+  "type AddMode = 'food' | 'activity' | 'fluid' | 'medication' | null",
+  'Quick add mode should support medications.',
+);
+expectContains(
+  'apps/mobile/src/App.vue',
+  'function setMedicationTreatmentEndToday',
+  'Medication treatments should support ending today.',
+);
+expectContains(
+  'apps/mobile/src/App.vue',
+  "openScanner('medicationBarcodeField')",
+  'Medication catalog should support barcode scanner handoff.',
+);
+expectContains(
+  'apps/mobile/src/lib/medications.ts',
+  'medicationTreatmentEffectiveEndDate',
+  'Medication helper should derive finite and open-ended treatment plans.',
+);
+expectContains(
+  'apps/mobile/src/lib/medications.test.ts',
+  "describe('medication helpers'",
+  'Medication helper unit tests should exist.',
+);
 
 if (failures.length > 0) {
   console.error('App domain check failed:');

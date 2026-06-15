@@ -126,6 +126,11 @@ expectContains(
 expectContains('.gitignore', '**/src-tauri/gen/android/*.jks', 'Android keystores should be ignored.');
 expectContains(
   '.gitignore',
+  '**/src-tauri/gen/**/build/',
+  'Generated Tauri/Gradle build directories should be ignored.',
+);
+expectContains(
+  '.gitignore',
   '**/src-tauri/gen/android/keystore.properties',
   'Android keystore properties should be ignored.',
 );

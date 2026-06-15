@@ -299,7 +299,7 @@ jobs:
             .cache
             ~/.cargo/registry
             ~/.cargo/git
-          key: android-release-v3-${{ runner.os }}-${{ hashFiles('datarose.toml', 'aube-workspace.yaml', '**/package.json', 'apps/mobile/src-tauri/Cargo.lock', 'apps/mobile/src-tauri/Cargo.toml', 'apps/mobile/src-tauri/gen/android/**/*.gradle*', 'apps/mobile/src-tauri/gen/android/**/gradle-wrapper.properties', '.github/release/nutrino-mobile.tauri-release.toml') }}
+          key: android-release-v3-${{ runner.os }}-${{ hashFiles('datarose.toml', 'aube-workspace.yaml', '**/package.json', 'apps/mobile/src-tauri/Cargo.lock', 'apps/mobile/src-tauri/Cargo.toml', '.github/release/nutrino-mobile.tauri-release.toml') }}
           restore-keys: |
             android-release-v3-${{ runner.os }}-
             rust-tauri-release-v3-${{ runner.os }}-

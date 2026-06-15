@@ -29,8 +29,11 @@ coverage/
 # Tauri / Rust
 /target/
 **/src-tauri/target/
-**/src-tauri/gen/android/.gradle/
-**/src-tauri/gen/android/build/
+**/src-tauri/gen/.gradle/
+**/src-tauri/gen/build/
+**/src-tauri/gen/**/.gradle/
+**/src-tauri/gen/**/.kotlin/
+**/src-tauri/gen/**/build/
 **/src-tauri/gen/apple/build/
 **/src-tauri/gen/schemas/
 **/src-tauri/gen/android/keystore.properties

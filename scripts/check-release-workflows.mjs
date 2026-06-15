@@ -230,6 +230,16 @@ expectContains(
 expectContains('datarose.toml', '[rust_cache.cache]', 'Datarose config should define rust-cache settings.');
 expectContains(
   'datarose.toml',
+  '[rust_cache.generated]',
+  'Datarose config should let rust-cache clean stale generated Tauri/Gradle outputs.',
+);
+expectContains(
+  '.gitignore',
+  '**/src-tauri/gen/**/build/',
+  'Generated Tauri/Gradle build outputs should stay out of Git.',
+);
+expectContains(
+  'datarose.toml',
   'package = "nutrino"',
   'Rust cache package should use a stable repository-specific key.',
 );

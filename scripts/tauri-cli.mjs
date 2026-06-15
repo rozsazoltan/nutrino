@@ -65,10 +65,6 @@ function candidatePackageDirs(cwd, repoRoot) {
   return unique(dirs);
 }
 
-function packageDir(root, packageName) {
-  return path.join(root, 'node_modules', ...packageName.split('/'));
-}
-
 function resolvePackageBinFromPackageDir(packageRoot) {
   const packageJsonPath = path.join(packageRoot, 'package.json');
   const packageJson = readJson(packageJsonPath);
