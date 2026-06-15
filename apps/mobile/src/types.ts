@@ -53,6 +53,17 @@ export type HealthCategoryType =
   | 'energy'
   | 'other';
 export type HealthAttachmentType = 'photo' | 'video';
+export type HomeCardKey =
+  | 'dashboard'
+  | 'activity'
+  | 'breakfast'
+  | 'lunch'
+  | 'dinner'
+  | 'snack'
+  | 'fluids'
+  | 'medications'
+  | 'health';
+export type MedicationDoseStatus = 'pending' | 'taken' | 'skipped';
 
 export interface CatalogItemMetadata {
   catalog_source_kind?: CatalogSourceKind | null;
@@ -163,6 +174,55 @@ export interface HealthEntry {
   created_at: number;
   updated_at: number;
   deleted_at?: number | null;
+}
+
+export interface Medication extends CatalogItemMetadata {
+  id: string;
+  source_id: string;
+  name: string;
+  name_i18n?: LocalizedNameMap | null;
+  barcode?: string | null;
+  strength_mg?: number | null;
+  note?: string | null;
+  updated_at: number;
+  deleted_at?: number | null;
+  pending_sync?: boolean;
+}
+
+export interface MedicationTreatment {
+  id: string;
+  medication_id: string;
+  title?: string | null;
+  start_date: string;
+  end_date?: string | null;
+  total_units?: number | null;
+  dose_amount_units: number;
+  doses_per_day: number;
+  reminder_enabled: boolean;
+  reminder_times: string[];
+  note?: string | null;
+  active: boolean;
+  created_at: number;
+  updated_at: number;
+  completed_at?: number | null;
+  deleted_at?: number | null;
+  pending_sync?: boolean;
+}
+
+export interface MedicationDoseLog {
+  id: string;
+  treatment_id?: string | null;
+  medication_id: string;
+  scheduled_date: string;
+  dose_index?: number | null;
+  scheduled_time?: string | null;
+  dose_amount_units?: number | null;
+  status: MedicationDoseStatus;
+  taken_at?: number | null;
+  note?: string | null;
+  created_at: number;
+  updated_at: number;
+  pending_sync?: boolean;
 }
 
 export interface Food extends CatalogItemMetadata {
@@ -444,8 +504,11 @@ export interface AppSettings {
   show_meal_macros: boolean;
   show_micronutrients: boolean;
   health_diary_enabled: boolean;
+  medication_tracking_enabled: boolean;
+  medication_reminders_enabled: boolean;
   protect_external_catalog_items: boolean;
   include_inactive_catalog_items: boolean;
+  home_card_order: HomeCardKey[];
   micronutrient_limits: Record<string, number>;
   daily_reminder: boolean;
   daily_reminder_time: string;
@@ -487,6 +550,9 @@ export interface AppState {
   fluidLogs: FluidLog[];
   weightLogs: WeightLog[];
   healthEntries: HealthEntry[];
+  medications: Medication[];
+  medicationTreatments: MedicationTreatment[];
+  medicationDoseLogs: MedicationDoseLog[];
   catalogAliases: CatalogAlias[];
   githubSources: GitHubCsvSource[];
 }

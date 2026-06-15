@@ -47,6 +47,10 @@ import type {
   FluidDrinkKind,
   FoodPreparationMethod,
   ThemeMode,
+  HomeCardKey,
+  Medication,
+  MedicationDoseStatus,
+  MedicationTreatment,
 } from './types';
 import {
   ageFromBirthday,
@@ -105,12 +109,21 @@ import {
   intakePreparationKcal,
   preparationMethodConfig,
 } from './lib/preparation';
+import {
+  defaultMedicationReminderTimes,
+  medicationDosePlansForDay,
+  medicationTreatmentEffectiveEndDate,
+  medicationTreatmentRemainingUnits,
+  sanitizeMedicationReminderTimes,
+  type MedicationDosePlan,
+} from './lib/medications';
 import { lucideSvg, type IconName } from './icons';
 
 type Tab = 'home' | 'diary' | 'recipes' | 'profile';
 type DiaryTab = 'food' | 'health';
-type AddMode = 'food' | 'activity' | 'fluid' | null;
+type AddMode = 'food' | 'activity' | 'fluid' | 'medication' | null;
 type MealEntryMode = 'catalog' | 'note';
+type MedicationEntryMode = 'today' | 'treatment' | 'catalog';
 type CatalogSearchScope = 'title' | 'all' | 'brand' | 'category' | 'description';
 type WeightTrendMode = 'daily' | 'weekly' | 'monthly';
 type LocalEditorKind = 'ingredient' | 'food' | 'recipe' | 'activity';
@@ -159,6 +172,7 @@ type SettingsDialogKey =
   | 'micronutrients'
   | 'language'
   | 'aiExport'
+  | 'homeCards'
   | 'privacy'
   | 'about'
   | 'licenses'
@@ -206,7 +220,15 @@ type HealthMediaGalleryItem = {
   occurrenceAt: number;
   sameOccurrenceDay: boolean;
 };
-type NutrinoNotificationKind = 'daily' | 'weight' | 'meal' | 'fluid' | 'deficit' | 'health-review' | 'desktop-handoff';
+type NutrinoNotificationKind =
+  | 'daily'
+  | 'weight'
+  | 'meal'
+  | 'fluid'
+  | 'medication'
+  | 'deficit'
+  | 'health-review'
+  | 'desktop-handoff';
 type NutrinoNotificationAction =
   | 'tap'
   | 'open-home'
@@ -215,6 +237,7 @@ type NutrinoNotificationAction =
   | 'log-lunch'
   | 'log-dinner'
   | 'log-fluid'
+  | 'open-medications'
   | 'open-analysis'
   | 'open-health-review'
   | 'open-desktop-handoff'
@@ -278,6 +301,7 @@ const NOTIFICATION_ACTION_TYPES = {
   mealLunch: 'nutrino-meal-lunch-actions',
   mealDinner: 'nutrino-meal-dinner-actions',
   fluid: 'nutrino-fluid-actions',
+  medication: 'nutrino-medication-actions',
   deficit: 'nutrino-deficit-actions',
   healthReview: 'nutrino-health-review-actions',
   desktopHandoffDecision: 'nutrino-desktop-handoff-decision-actions',
@@ -290,6 +314,7 @@ const REMINDER_NOTIFICATION_IDS = {
   mealNoon: 130302,
   mealAfternoon: 130303,
   fluid: 130350,
+  medication: 130360,
   healthReview: 130400,
 } as const;
 const HEALTH_REVIEW_REMINDER_TIME = '20:30';
@@ -386,7 +411,7 @@ const state = reactive<AppState>(loadState());
 const githubDraft = ref({ owner: '', repo: '', branch: 'main', path: '', token: '' });
 const githubSyncBusy = ref(false);
 const scanDialogOpen = ref(false);
-type ScanDialogMode = 'catalog' | 'barcode' | 'foodBarcodeField';
+type ScanDialogMode = 'catalog' | 'barcode' | 'foodBarcodeField' | 'medicationBarcodeField';
 const scanDialogMode = ref<ScanDialogMode>('catalog');
 const scanInput = ref('');
 const pendingScannedBarcode = ref('');
@@ -439,6 +464,26 @@ const fluidDrinkKind = ref<FluidDrinkKind>('fluid');
 const fluidKindTab = ref<'normal' | 'alcohol'>('normal');
 const fluidCustomKcal = ref<number | null>(200);
 const fluidNote = ref('');
+const medicationEntryMode = ref<MedicationEntryMode>('today');
+const medicationSearch = ref('');
+const selectedMedicationId = ref('');
+const medicationReminderTimesText = ref('08:00');
+const medicationDraft = reactive({
+  name: '',
+  barcode: '',
+  strength_mg: null as number | null,
+  note: '',
+  dose_amount_units: 1,
+});
+const medicationTreatmentDraft = reactive({
+  start_date: dateKey(),
+  end_date: '',
+  total_units: null as number | null,
+  dose_amount_units: 1,
+  doses_per_day: 1,
+  reminder_enabled: false,
+  note: '',
+});
 const weightInput = ref<number | null>(null);
 const healthEditorOpen = ref(false);
 const healthEditorMode = ref<HealthEditorMode>('new');
@@ -636,6 +681,7 @@ type BackupProfileSummary = {
     fluidLogs: number;
     weightLogs: number;
     healthEntries: number;
+    medicationDoseLogs: number;
   };
 };
 
@@ -807,6 +853,7 @@ const settingsIconMap: Record<string, IconName> = {
   api: 'server',
   desktop: 'server',
   github: 'database',
+  dashboard: 'layoutDashboard',
 };
 
 function settingsIcon(name: string) {
@@ -1014,6 +1061,27 @@ const settingsModules = computed<SettingsModuleConfig[]>(() => [
           onFluidTrackingSettingChanged();
         },
         () => t('fluidDiaryTrackingHint'),
+      ),
+      settingsToggle(
+        'medication-diary',
+        'health',
+        'medicationTracking',
+        () => state.settings.medication_tracking_enabled === true,
+        (checked) => {
+          state.settings.medication_tracking_enabled = checked;
+          if (!checked) state.settings.medication_reminders_enabled = false;
+          queueReminderScheduleRefresh();
+        },
+        () => t('medicationTrackingHint'),
+      ),
+      settingsButton(
+        'home-cards',
+        'dashboard',
+        'homeCardOrder',
+        () => {
+          settingsDialog.value = 'homeCards';
+        },
+        () => t('homeCardOrderHint'),
       ),
     ],
   },
@@ -1522,6 +1590,18 @@ function hasActiveMealSheetDraft(): boolean {
   if (addMode.value === 'fluid') {
     return Boolean(
       Number(fluidAmountDl.value || 0) !== 2 || fluidDrinkKind.value !== 'fluid' || fluidNote.value.trim(),
+    );
+  }
+
+  if (addMode.value === 'medication') {
+    return Boolean(
+      selectedMedicationId.value ||
+        medicationSearch.value.trim() ||
+        medicationDraft.name.trim() ||
+        medicationDraft.barcode.trim() ||
+        medicationDraft.note.trim() ||
+        medicationTreatmentDraft.end_date ||
+        Number(medicationTreatmentDraft.total_units || 0) > 0,
     );
   }
 
@@ -2148,6 +2228,72 @@ const fluidAnalysisAlerts = computed(() => {
   if (!alerts.length) alerts.push({ tone: 'neutral', text: t('noFluids') });
   return alerts;
 });
+const medicationTrackingEnabled = computed(() => state.settings.medication_tracking_enabled === true);
+const activeMedications = computed(() => (state.medications || []).filter((entry) => !entry.deleted_at));
+const activeMedicationTreatments = computed(() =>
+  (state.medicationTreatments || []).filter((entry) => !entry.deleted_at && entry.active !== false),
+);
+const currentDayMedicationPlans = computed(() =>
+  medicationTrackingEnabled.value
+    ? medicationDosePlansForDay(
+        activeMedications.value,
+        activeMedicationTreatments.value,
+        state.medicationDoseLogs || [],
+        activeLogDateKey.value,
+      )
+    : [],
+);
+const medicationTakenCount = computed(
+  () => currentDayMedicationPlans.value.filter((plan) => plan.status === 'taken').length,
+);
+const medicationPendingCount = computed(
+  () => currentDayMedicationPlans.value.filter((plan) => plan.status === 'pending').length,
+);
+const medicationSummaryText = computed(() => {
+  if (!medicationTrackingEnabled.value) return t('medicationTrackingDisabled');
+  if (!currentDayMedicationPlans.value.length) return t('noMedicationsShort');
+  return `${medicationTakenCount.value}/${currentDayMedicationPlans.value.length}\n${medicationPendingCount.value} ${t('pending')}`;
+});
+const medicationCatalogOptions = computed(() => {
+  const query = medicationSearch.value.trim();
+  return activeMedications.value
+    .filter((item) => matchesSearchQuery(query, item.name, item.barcode, item.note, String(item.strength_mg ?? '')))
+    .sort((a, b) => a.name.localeCompare(b.name, currentLocale(), { sensitivity: 'base' }));
+});
+const selectedMedication = computed(
+  () => activeMedications.value.find((entry) => entry.id === selectedMedicationId.value) || null,
+);
+const homeCardMetadata: Record<HomeCardKey, { labelKey: string; icon: IconName }> = {
+  dashboard: { labelKey: 'dashboard', icon: 'layoutDashboard' },
+  activity: { labelKey: 'activity', icon: 'activity' },
+  breakfast: { labelKey: 'breakfast', icon: 'coffee' },
+  lunch: { labelKey: 'lunch', icon: 'sandwich' },
+  dinner: { labelKey: 'dinner', icon: 'utensils' },
+  snack: { labelKey: 'snack', icon: 'cookie' },
+  fluids: { labelKey: 'fluids', icon: 'glassWater' },
+  medications: { labelKey: 'medications', icon: 'heartPulse' },
+  health: { labelKey: 'healthDiary', icon: 'heartPulse' },
+};
+const defaultHomeCardOrder: HomeCardKey[] = [
+  'dashboard',
+  'activity',
+  'breakfast',
+  'lunch',
+  'dinner',
+  'snack',
+  'fluids',
+  'medications',
+  'health',
+];
+const normalizedHomeCardOrder = computed(() => normalizeHomeCardOrder(state.settings.home_card_order));
+const visibleHomeCards = computed(() =>
+  normalizedHomeCardOrder.value.filter((key) => {
+    if (key === 'fluids') return fluidTrackingEnabled.value;
+    if (key === 'medications') return medicationTrackingEnabled.value;
+    if (key === 'health') return state.settings.health_diary_enabled === true;
+    return true;
+  }),
+);
 const calorieDeficitEnabled = computed(() => state.settings.calorie_deficit_enabled === true);
 const targetDeficitKcal = computed(() =>
   calorieDeficitEnabled.value ? Math.max(0, Math.round(Number(state.settings.target_deficit_kcal || 0))) : 0,
@@ -11050,6 +11196,130 @@ for (const language of Object.keys(translations)) {
   };
 }
 
+const medicationTrackingTranslations: Record<string, Partial<Record<string, string>>> = {
+  en: {
+    medications: 'Medications',
+    medication: 'Medication',
+    addMedication: 'Log medication',
+    medicationHomeHint: "Today's medication",
+    medicationTodayHint: 'Record a dose taken today.',
+    medicationSheetHint: 'Create a reusable medication, log a one-day dose, or start a treatment cycle.',
+    medicationTracking: 'Medication tracking',
+    medicationTrackingHint: 'Adds medication catalog, treatments, daily dose checklist and reminders.',
+    medicationTrackingDisabled: 'Medication tracking is turned off.',
+    medicationCatalogItem: 'Medication catalog item',
+    searchOrNewMedication: 'Search medication or type a new name',
+    medicationName: 'Medication name',
+    medicationNameRequired: 'Medication name is required.',
+    medicationSaved: 'Medication saved.',
+    medicationLogged: 'Medication logged.',
+    medicationTreatmentSaved: 'Treatment saved.',
+    medicationTreatmentEnded: 'Treatment ended today.',
+    noMedications: 'No medication doses for this day.',
+    noMedicationsShort: 'No doses',
+    todayOnly: 'Today only',
+    newTreatment: 'Treatment',
+    openEnded: 'Open-ended',
+    endDate: 'End',
+    endDateOptional: 'End date (optional)',
+    startDate: 'Start date',
+    endToday: 'End today',
+    totalUnitsOptional: 'Tablets left (optional)',
+    dailyDoseCount: 'Times per day',
+    doseAmount: 'Dose amount',
+    medicationDoseUnits: 'Dose units',
+    medicationUnit: 'unit',
+    medicationUnitsLeft: 'units left',
+    strengthMg: 'Strength (mg)',
+    medicationNotePlaceholder: 'Optional barcode, source or dose note',
+    treatmentNotePlaceholder: 'Optional treatment note',
+    medicationReminder: 'Medication reminder',
+    medicationReminderHint: 'Notify at treatment times while the dose is pending.',
+    medicationReminderTitle: 'Medication reminder',
+    medicationReminderSettingsHint: 'Treatment reminders use the times saved on each treatment cycle.',
+    reminderTimes: 'Reminder times',
+    activeTreatments: 'Active treatments',
+    saveTreatment: 'Save treatment',
+    saveMedication: 'Save medication',
+    logMedicationTaken: 'Mark taken today',
+    markTaken: 'Mark taken',
+    markPending: 'Mark pending',
+    taken: 'taken',
+    day: 'day',
+    homeCardOrder: 'Home card order',
+    homeCardOrderHint: 'Reorder the cards shown on the mobile home screen.',
+    homeCardOrderBody: 'Move cards up or down. Disabled features stay hidden until you enable them.',
+    homeCardVisible: 'Visible when this feature is enabled.',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+  },
+  hu: {
+    medications: 'Gyógyszerek',
+    medication: 'Gyógyszer',
+    addMedication: 'Gyógyszer rögzítése',
+    medicationHomeHint: 'Mai gyógyszerek',
+    medicationTodayHint: 'Mai egyszeri bevétel rögzítése.',
+    medicationSheetHint:
+      'Hozz létre új gyógyszert, rögzíts mai bevételt, vagy indíts kezelési ciklust napi pipálással.',
+    medicationTracking: 'Gyógyszerkövetés',
+    medicationTrackingHint: 'Gyógyszerkatalógus, kezelések, napi pipa lista és emlékeztetők bekapcsolása.',
+    medicationTrackingDisabled: 'A gyógyszerkövetés ki van kapcsolva.',
+    medicationCatalogItem: 'Gyógyszerkatalógus elem',
+    searchOrNewMedication: 'Keress gyógyszert vagy írj be újat',
+    medicationName: 'Gyógyszer neve',
+    medicationNameRequired: 'A gyógyszer neve kötelező.',
+    medicationSaved: 'Gyógyszer mentve.',
+    medicationLogged: 'Gyógyszerbevétel rögzítve.',
+    medicationTreatmentSaved: 'Kezelés mentve.',
+    medicationTreatmentEnded: 'A kezelés mai nappal lezárva.',
+    noMedications: 'Erre a napra nincs gyógyszeradag.',
+    noMedicationsShort: 'Nincs adag',
+    todayOnly: 'Csak ma',
+    newTreatment: 'Kezelés',
+    openEnded: 'Határozatlan',
+    endDate: 'Vége',
+    endDateOptional: 'Vége dátum (opcionális)',
+    startDate: 'Kezdés dátuma',
+    endToday: 'Vége ma',
+    totalUnitsOptional: 'Meglévő szemek (opcionális)',
+    dailyDoseCount: 'Naponta hányszor',
+    doseAmount: 'Adag mennyisége',
+    medicationDoseUnits: 'Adag egység',
+    medicationUnit: 'egység',
+    medicationUnitsLeft: 'egység maradt',
+    strengthMg: 'Hatóanyag (mg)',
+    medicationNotePlaceholder: 'Opcionális vonalkód, forrás vagy adagolási megjegyzés',
+    treatmentNotePlaceholder: 'Opcionális kezelési megjegyzés',
+    medicationReminder: 'Gyógyszer emlékeztető',
+    medicationReminderHint: 'Jelez a kezelési időpontokban, amíg az adag nincs kipipálva.',
+    medicationReminderTitle: 'Gyógyszer emlékeztető',
+    medicationReminderSettingsHint: 'A kezelések saját időpontjai alapján jönnek az emlékeztetők.',
+    reminderTimes: 'Emlékeztető időpontok',
+    activeTreatments: 'Aktív kezelések',
+    saveTreatment: 'Kezelés mentése',
+    saveMedication: 'Gyógyszer mentése',
+    logMedicationTaken: 'Mai bevétel rögzítése',
+    markTaken: 'Beszedve',
+    markPending: 'Függőben',
+    taken: 'beszedve',
+    day: 'nap',
+    homeCardOrder: 'Főoldali kártyák sorrendje',
+    homeCardOrderHint: 'A mobil főoldalon látható kártyák sorrendje.',
+    homeCardOrderBody: 'Mozgasd fel vagy le a kártyákat. A kikapcsolt funkciók rejtve maradnak.',
+    homeCardVisible: 'A funkció bekapcsolásakor látható.',
+    moveUp: 'Fel',
+    moveDown: 'Le',
+  },
+};
+translations.en = { ...translations.en, ...normalizeTranslationValues(medicationTrackingTranslations.en || {}) };
+for (const language of Object.keys(translations)) {
+  translations[language] = {
+    ...translations.en,
+    ...(translations[language] || {}),
+    ...normalizeTranslationValues(medicationTrackingTranslations[language] || {}),
+  };
+}
+
 const desktopHandoffTranslations: Record<string, Partial<Record<string, string>>> = {
   en: {
     desktopHandoffRequestTitle: 'Desktop request',
@@ -11362,6 +11632,15 @@ watch(
   },
 );
 watch(
+  () => state.settings.medication_tracking_enabled,
+  (enabled) => {
+    if (enabled) return;
+    state.settings.medication_reminders_enabled = false;
+    if (addMode.value === 'medication') closeSheet();
+    queueReminderScheduleRefresh();
+  },
+);
+watch(
   () => state.settings.desktop_api_enabled,
   (enabled) => {
     if (enabled) {
@@ -11513,6 +11792,69 @@ function sectionHint(section: MealSection) {
   if (section.key === 'lunch') return t('middayMeal');
   if (section.key === 'dinner') return t('eveningMeal');
   return t('smallMeals');
+}
+
+function normalizeHomeCardOrder(value: unknown): HomeCardKey[] {
+  const incoming = Array.isArray(value)
+    ? value.filter((key): key is HomeCardKey => typeof key === 'string' && defaultHomeCardOrder.includes(key as HomeCardKey))
+    : [];
+  return [...incoming, ...defaultHomeCardOrder.filter((key) => !incoming.includes(key))];
+}
+
+function homeCardLabel(key: HomeCardKey) {
+  return t(homeCardMetadata[key]?.labelKey || key);
+}
+
+function homeMealSection(key: HomeCardKey): MealSection | null {
+  return sections.find((section) => section.key === key) || null;
+}
+
+function isMealHomeCard(key: HomeCardKey): boolean {
+  return Boolean(homeMealSection(key));
+}
+
+function homeSectionHint(key: HomeCardKey) {
+  const section = homeMealSection(key);
+  return section ? sectionHint(section) : '';
+}
+
+function homeSectionSummaryText(key: HomeCardKey) {
+  const section = homeMealSection(key);
+  return section ? sectionSummaryText(section) : '';
+}
+
+function homeSectionIcon(key: HomeCardKey) {
+  const section = homeMealSection(key);
+  return section ? mealIconSvg[section.icon] : '';
+}
+
+function openHomeSection(key: HomeCardKey) {
+  const section = homeMealSection(key);
+  if (!section) return;
+  if (section.key === 'activity') openActivityAdd();
+  else openFoodAdd(section.key);
+}
+
+function openHomeMealMicronutrients(key: HomeCardKey) {
+  const section = homeMealSection(key);
+  if (section) openMealMicronutrients(section);
+}
+
+function homeEntriesForSection(key: HomeCardKey) {
+  const section = homeMealSection(key);
+  if (!section || section.key === 'activity') return [];
+  return entriesForSection(section);
+}
+
+function moveHomeCard(key: HomeCardKey, direction: -1 | 1) {
+  const current = normalizeHomeCardOrder(state.settings.home_card_order);
+  const index = current.indexOf(key);
+  const nextIndex = index + direction;
+  if (index < 0 || nextIndex < 0 || nextIndex >= current.length) return;
+  const next = [...current];
+  const [item] = next.splice(index, 1);
+  next.splice(nextIndex, 0, item);
+  state.settings.home_card_order = next;
 }
 
 function sectionSummaryText(section: MealSection) {
@@ -15751,6 +16093,12 @@ function notificationScheduleSignature(): string {
     state.settings.fluid_tracking_enabled,
     state.settings.fluid_reminders_enabled,
     state.settings.fluid_reminder_interval_min,
+    state.settings.medication_tracking_enabled,
+    state.settings.medication_reminders_enabled,
+    state.medicationTreatments
+      .filter((entry) => !entry.deleted_at && entry.active !== false && entry.reminder_enabled)
+      .map((entry) => `${entry.id}:${entry.reminder_times.join(',')}`)
+      .join(';'),
     state.settings.calorie_limit_warning_enabled,
     state.settings.health_diary_enabled,
     state.healthEntries.filter((entry) => !entry.deleted_at && !entry.resolved_at && entry.ongoing === true).length,
@@ -15763,6 +16111,7 @@ function notificationPermissionSignature(): string {
     state.settings.daily_weight_reminder_enabled,
     state.settings.meal_reminders_enabled,
     state.settings.fluid_reminders_enabled,
+    state.settings.medication_reminders_enabled,
     state.settings.calorie_limit_warning_enabled,
     state.settings.health_diary_enabled,
   ].join('|');
@@ -15956,6 +16305,10 @@ function healthReviewNotificationActionLabel(): string {
   return activeLanguage.value === 'hu' ? 'Átnézés' : 'Review';
 }
 
+function medicationNotificationActionLabel(): string {
+  return activeLanguage.value === 'hu' ? 'Gyógyszerek' : 'Medications';
+}
+
 function notificationActionMetadata(
   kind?: NutrinoNotificationKind,
   mealType?: MealType,
@@ -15964,6 +16317,8 @@ function notificationActionMetadata(
   if (kind === 'meal' && mealType)
     return { actionId: mealNotificationActionId(mealType), actionTitle: mealNotificationActionLabel(mealType) };
   if (kind === 'fluid') return { actionId: 'log-fluid', actionTitle: notificationActionTitle('addFluid', 'Log fluid') };
+  if (kind === 'medication')
+    return { actionId: 'open-medications', actionTitle: medicationNotificationActionLabel() };
   if (kind === 'deficit')
     return { actionId: 'open-analysis', actionTitle: notificationActionTitle('openAnalysis', 'Open analysis') };
   if (kind === 'health-review')
@@ -16021,6 +16376,17 @@ async function registerNotificationActionTypes() {
         {
           id: 'log-fluid',
           title: notificationActionTitle('addFluid', 'Log fluid'),
+          requiresAuthentication: false,
+          foreground: true,
+        },
+      ],
+    },
+    {
+      id: NOTIFICATION_ACTION_TYPES.medication,
+      actions: [
+        {
+          id: 'open-medications',
+          title: medicationNotificationActionLabel(),
           requiresAuthentication: false,
           foreground: true,
         },
@@ -16309,6 +16675,7 @@ function normalizeNotificationAction(action: unknown): NutrinoNotificationAction
     'log-lunch',
     'log-dinner',
     'log-fluid',
+    'open-medications',
     'open-analysis',
     'open-health-review',
     'open-desktop-handoff',
@@ -16393,7 +16760,11 @@ function normalizeNotificationExtra(extra: unknown): Partial<NutrinoNotification
   };
   const result: Partial<NutrinoNotificationExtra> = {};
   if (merged.nutrino === true) result.nutrino = true;
-  if (['daily', 'weight', 'meal', 'fluid', 'deficit', 'health-review', 'desktop-handoff'].includes(String(merged.kind)))
+  if (
+    ['daily', 'weight', 'meal', 'fluid', 'medication', 'deficit', 'health-review', 'desktop-handoff'].includes(
+      String(merged.kind),
+    )
+  )
     result.kind = merged.kind as NutrinoNotificationKind;
   if (['breakfast', 'lunch', 'dinner', 'snack'].includes(String(merged.mealType)))
     result.mealType = merged.mealType as MealType;
@@ -16424,6 +16795,7 @@ function notificationExtraFromId(notificationId: number | undefined): Partial<Nu
   if (notificationId === REMINDER_NOTIFICATION_IDS.mealAfternoon)
     return { nutrino: true, kind: 'meal', mealType: 'dinner' };
   if (notificationId === REMINDER_NOTIFICATION_IDS.fluid) return { nutrino: true, kind: 'fluid' };
+  if (notificationId === REMINDER_NOTIFICATION_IDS.medication) return { nutrino: true, kind: 'medication' };
   if (notificationId === REMINDER_NOTIFICATION_IDS.healthReview) return { nutrino: true, kind: 'health-review' };
   return {};
 }
@@ -16518,9 +16890,11 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
         ? 'log-weight'
         : extra.kind === 'fluid'
           ? 'log-fluid'
-          : extra.kind === 'deficit'
-            ? 'open-analysis'
-            : 'open-home'
+          : extra.kind === 'medication'
+            ? 'open-medications'
+            : extra.kind === 'deficit'
+              ? 'open-analysis'
+              : 'open-home'
       : action;
 
   if (effectiveAction === 'log-weight') {
@@ -16530,6 +16904,11 @@ async function applyNotificationAction(action: NutrinoNotificationAction, extra:
   }
   if (effectiveAction === 'log-fluid') {
     if (fluidTrackingEnabled.value) openFluidAdd();
+    scrollToPageTop();
+    return;
+  }
+  if (effectiveAction === 'open-medications') {
+    if (medicationTrackingEnabled.value) openMedicationAdd('today');
     scrollToPageTop();
     return;
   }
@@ -16640,6 +17019,18 @@ function fluidReminderDue(now = new Date()): boolean {
   return minutes > 0 && minutes % interval === 0;
 }
 
+function medicationReminderPlansDue(now = new Date()) {
+  if (!state.settings.medication_tracking_enabled || !state.settings.medication_reminders_enabled) return [];
+  return currentDayMedicationPlans.value.filter(
+    (plan) =>
+      plan.source === 'treatment' &&
+      plan.status === 'pending' &&
+      plan.treatment?.reminder_enabled === true &&
+      Boolean(plan.scheduledTime) &&
+      currentTimeMatchesReminderMinute(plan.scheduledTime || '', now),
+  );
+}
+
 function checkReminderNotifications() {
   const today = todayKey.value;
   const now = new Date();
@@ -16669,6 +17060,18 @@ function checkReminderNotifications() {
         actionTypeId: NOTIFICATION_ACTION_TYPES.fluid,
       });
     }
+  }
+
+  for (const plan of medicationReminderPlansDue(now)) {
+    const key = `${today}.medication.${plan.key}.${plan.scheduledTime}`;
+    if (reminderAlreadySent(key)) continue;
+    markReminderSent(key);
+    notifyUser(t('medicationReminderTitle'), `${medicationDisplayName(plan.medication)} · ${plan.scheduledTime}`, {
+      id: REMINDER_NOTIFICATION_IDS.medication,
+      kind: 'medication',
+      actionTypeId: NOTIFICATION_ACTION_TYPES.medication,
+      scheduledTime: plan.scheduledTime || undefined,
+    });
   }
 
   if (nativeReminderSchedulesActive.value) return;
@@ -17075,6 +17478,11 @@ function chooseQuickAddFluid() {
   openFluidAdd();
 }
 
+function chooseQuickAddMedication() {
+  closeQuickAddMenu();
+  openMedicationAdd('today');
+}
+
 function chooseQuickAddHealthEntry() {
   closeQuickAddMenu();
   openNewHealthEntry();
@@ -17100,6 +17508,7 @@ function closeSheet() {
   activityKcal.value = null;
   activityExtraInfo.value = '';
   resetFluidForm();
+  resetMedicationForm();
   resetPreparationForm();
   recipeCustomizeOpen.value = false;
   recipeIngredientAmounts.value = {};
@@ -17248,6 +17657,236 @@ function duplicateFluidLog(id: string) {
   });
   entryActionSheet.value = null;
   showToast(t('entryDuplicated'));
+}
+
+function resetMedicationForm(mode: MedicationEntryMode = 'today') {
+  medicationEntryMode.value = mode;
+  medicationSearch.value = '';
+  selectedMedicationId.value = '';
+  medicationReminderTimesText.value = defaultMedicationReminderTimes(1).join(', ');
+  medicationDraft.name = '';
+  medicationDraft.barcode = '';
+  medicationDraft.strength_mg = null;
+  medicationDraft.note = '';
+  medicationDraft.dose_amount_units = 1;
+  medicationTreatmentDraft.start_date = activeLogDateKey.value;
+  medicationTreatmentDraft.end_date = '';
+  medicationTreatmentDraft.total_units = null;
+  medicationTreatmentDraft.dose_amount_units = 1;
+  medicationTreatmentDraft.doses_per_day = 1;
+  medicationTreatmentDraft.reminder_enabled = state.settings.medication_reminders_enabled === true;
+  medicationTreatmentDraft.note = '';
+}
+
+function openMedicationAdd(mode: MedicationEntryMode = 'today') {
+  if (!medicationTrackingEnabled.value) return showToast(t('medicationTrackingDisabled'));
+  if (!confirmFutureDateAccess()) return;
+  addMode.value = 'medication';
+  resetMedicationForm(mode);
+}
+
+function medicationDisplayName(entry: Medication | null | undefined) {
+  if (!entry) return t('medication');
+  const strength = entry.strength_mg ? `${entry.strength_mg} mg` : '';
+  return [entry.name, strength].filter(Boolean).join(' · ');
+}
+
+function medicationPlanSubtitle(plan: MedicationDosePlan) {
+  const parts = [
+    plan.scheduledTime || t('today'),
+    `${plan.doseAmountUnits} ${t('medicationUnit')}`,
+    plan.source === 'one_day' ? t('todayOnly') : plan.treatment?.end_date ? `${t('endDate')} ${plan.treatment.end_date}` : t('openEnded'),
+  ];
+  if (plan.remainingUnits !== null) parts.push(`${plan.remainingUnits} ${t('medicationUnitsLeft')}`);
+  if (plan.log?.note) parts.push(plan.log.note);
+  return parts.join(' · ');
+}
+
+function medicationDoseActionIcon(plan: MedicationDosePlan): IconName {
+  return plan.status === 'taken' ? 'check' : 'circleQuestionMark';
+}
+
+function medicationTreatmentSubtitle(treatment: MedicationTreatment) {
+  const medication = activeMedications.value.find((entry) => entry.id === treatment.medication_id);
+  const endDate = medicationTreatmentEffectiveEndDate(treatment);
+  const remaining = medicationTreatmentRemainingUnits(treatment, state.medicationDoseLogs || []);
+  const parts = [
+    medicationDisplayName(medication),
+    `${treatment.doses_per_day}x / ${t('day')}`,
+    endDate ? `${t('endDate')} ${endDate}` : t('openEnded'),
+  ];
+  if (remaining !== null) parts.push(`${remaining} ${t('medicationUnitsLeft')}`);
+  return parts.join(' · ');
+}
+
+function selectMedicationFromOption(entry: Medication) {
+  selectedMedicationId.value = entry.id;
+  medicationSearch.value = medicationDisplayName(entry);
+  medicationDraft.name = entry.name;
+  medicationDraft.barcode = entry.barcode || '';
+  medicationDraft.strength_mg = entry.strength_mg ?? null;
+  medicationDraft.note = entry.note || '';
+}
+
+function ensureMedicationFromDraft(): Medication | null {
+  if (selectedMedication.value) return selectedMedication.value;
+  const name = medicationDraft.name.trim();
+  if (!name) {
+    showToast(t('medicationNameRequired'));
+    return null;
+  }
+  const now = Date.now();
+  const medication: Medication = {
+    id: generateId('medication'),
+    source_id: state.pairing.sourceId,
+    name,
+    name_i18n: null,
+    barcode: medicationDraft.barcode.trim() || null,
+    strength_mg: Number.isFinite(Number(medicationDraft.strength_mg)) && Number(medicationDraft.strength_mg) > 0
+      ? Number(medicationDraft.strength_mg)
+      : null,
+    note: medicationDraft.note.trim() || null,
+    updated_at: now,
+    deleted_at: null,
+    pending_sync: true,
+    catalog_source_kind: 'custom',
+    source_label: 'Mobile',
+  };
+  state.medications.push(medication);
+  selectedMedicationId.value = medication.id;
+  return medication;
+}
+
+function saveMedicationCatalogItem() {
+  const medication = ensureMedicationFromDraft();
+  if (!medication) return;
+  const now = Date.now();
+  state.medications = state.medications.map((entry) =>
+    entry.id === medication.id
+      ? {
+          ...entry,
+          name: medicationDraft.name.trim() || entry.name,
+          barcode: medicationDraft.barcode.trim() || null,
+          strength_mg:
+            Number.isFinite(Number(medicationDraft.strength_mg)) && Number(medicationDraft.strength_mg) > 0
+              ? Number(medicationDraft.strength_mg)
+              : null,
+          note: medicationDraft.note.trim() || null,
+          pending_sync: true,
+          updated_at: now,
+        }
+      : entry,
+  );
+  showToast(t('medicationSaved'));
+}
+
+function addMedicationTodayLog() {
+  const medication = ensureMedicationFromDraft();
+  if (!medication) return;
+  const now = Date.now();
+  const at = new Date(timestampForActiveLogDay(now));
+  const scheduledTime = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  const doseAmount = Math.max(1, Number(medicationDraft.dose_amount_units || 1));
+  state.medicationDoseLogs.push({
+    id: generateId('medication-dose'),
+    treatment_id: null,
+    medication_id: medication.id,
+    scheduled_date: activeLogDateKey.value,
+    dose_index: null,
+    scheduled_time: scheduledTime,
+    dose_amount_units: doseAmount,
+    status: 'taken',
+    taken_at: now,
+    note: medicationDraft.note.trim() || null,
+    pending_sync: false,
+    created_at: now,
+    updated_at: now,
+  });
+  closeSheet();
+  showToast(t('medicationLogged'));
+}
+
+function saveMedicationTreatment() {
+  const medication = ensureMedicationFromDraft();
+  if (!medication) return;
+  const dosesPerDay = Math.max(1, Math.min(8, Math.round(Number(medicationTreatmentDraft.doses_per_day || 1))));
+  const doseAmount = Math.max(0.25, Number(medicationTreatmentDraft.dose_amount_units || 1));
+  const times = sanitizeMedicationReminderTimes(medicationReminderTimesText.value, dosesPerDay);
+  const now = Date.now();
+  state.medicationTreatments.push({
+    id: generateId('medication-treatment'),
+    medication_id: medication.id,
+    title: null,
+    start_date: medicationTreatmentDraft.start_date || activeLogDateKey.value,
+    end_date: medicationTreatmentDraft.end_date || null,
+    total_units:
+      Number.isFinite(Number(medicationTreatmentDraft.total_units)) && Number(medicationTreatmentDraft.total_units) > 0
+        ? Number(medicationTreatmentDraft.total_units)
+        : null,
+    dose_amount_units: doseAmount,
+    doses_per_day: dosesPerDay,
+    reminder_enabled:
+      state.settings.medication_reminders_enabled === true && medicationTreatmentDraft.reminder_enabled === true,
+    reminder_times: times,
+    note: medicationTreatmentDraft.note.trim() || null,
+    active: true,
+    pending_sync: false,
+    created_at: now,
+    updated_at: now,
+  });
+  queueReminderScheduleRefresh();
+  closeSheet();
+  showToast(t('medicationTreatmentSaved'));
+}
+
+function setMedicationTreatmentEndToday(treatmentId: string) {
+  const now = Date.now();
+  state.medicationTreatments = state.medicationTreatments.map((entry) =>
+    entry.id === treatmentId
+      ? { ...entry, end_date: activeLogDateKey.value, active: false, completed_at: now, updated_at: now }
+      : entry,
+  );
+  queueReminderScheduleRefresh();
+  showToast(t('medicationTreatmentEnded'));
+}
+
+function medicationDoseStatusAfterToggle(status: MedicationDoseStatus): MedicationDoseStatus {
+  return status === 'taken' ? 'pending' : 'taken';
+}
+
+function toggleMedicationDose(plan: MedicationDosePlan) {
+  if (!ensureSelectedDayEditing()) return;
+  const now = Date.now();
+  const status = medicationDoseStatusAfterToggle(plan.status);
+  if (plan.log) {
+    state.medicationDoseLogs = state.medicationDoseLogs.map((entry) =>
+      entry.id === plan.log?.id
+        ? {
+            ...entry,
+            status,
+            taken_at: status === 'taken' ? now : null,
+            updated_at: now,
+          }
+        : entry,
+    );
+  } else {
+    state.medicationDoseLogs.push({
+      id: generateId('medication-dose'),
+      treatment_id: plan.treatment?.id ?? null,
+      medication_id: plan.medication.id,
+      scheduled_date: plan.scheduledDate,
+      dose_index: plan.doseIndex,
+      scheduled_time: plan.scheduledTime,
+      dose_amount_units: plan.doseAmountUnits,
+      status,
+      taken_at: status === 'taken' ? now : null,
+      note: null,
+      pending_sync: false,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  queueReminderScheduleRefresh();
 }
 
 function addFoodLog() {
@@ -17954,6 +18593,12 @@ function applyScannedBarcodeToFoodForm(value: string) {
   showToast(`${t('barcodeQr')}: ${value}`);
 }
 
+function applyScannedBarcodeToMedicationForm(value: string) {
+  medicationDraft.barcode = value;
+  closeScanner();
+  showToast(`${t('barcodeQr')}: ${value}`);
+}
+
 function offerFoodCreationFromScannedBarcode(value: string) {
   pendingScannedBarcode.value = value;
   stopScannerStream();
@@ -17986,6 +18631,10 @@ function applyScannedValue(rawValue = scanInput.value): boolean {
 
   if (scanDialogMode.value === 'foodBarcodeField') {
     applyScannedBarcodeToFoodForm(value);
+    return true;
+  }
+  if (scanDialogMode.value === 'medicationBarcodeField') {
+    applyScannedBarcodeToMedicationForm(value);
     return true;
   }
 
@@ -18148,11 +18797,12 @@ function backupCounts(snapshot: AppState): BackupProfileSummary['counts'] {
     fluidLogs: snapshot.fluidLogs.length,
     weightLogs: snapshot.weightLogs.length,
     healthEntries: snapshot.healthEntries?.length || 0,
+    medicationDoseLogs: snapshot.medicationDoseLogs?.length || 0,
   };
 }
 
 function backupProfileSubtitle(profile: BackupProfileSummary) {
-  return `${formatDate(profile.createdAt)} · ${profile.counts.intakes + profile.counts.activityLogs + (profile.counts.fluidLogs || 0) + profile.counts.weightLogs + (profile.counts.healthEntries || 0)} ${t('entries')} · ${formatBytes(profile.byteLength)}`;
+  return `${formatDate(profile.createdAt)} · ${profile.counts.intakes + profile.counts.activityLogs + (profile.counts.fluidLogs || 0) + profile.counts.weightLogs + (profile.counts.healthEntries || 0) + (profile.counts.medicationDoseLogs || 0)} ${t('entries')} · ${formatBytes(profile.byteLength)}`;
 }
 
 function openBackupDb(): Promise<IDBDatabase> {
@@ -18399,6 +19049,11 @@ function normalizeImportedState(parsed: Partial<AppState>): AppState {
     fluidLogs: Array.isArray((parsed as any).fluidLogs) ? (parsed as any).fluidLogs : [],
     weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
     healthEntries: Array.isArray((parsed as any).healthEntries) ? (parsed as any).healthEntries : [],
+    medications: Array.isArray((parsed as any).medications) ? (parsed as any).medications : [],
+    medicationTreatments: Array.isArray((parsed as any).medicationTreatments)
+      ? (parsed as any).medicationTreatments
+      : [],
+    medicationDoseLogs: Array.isArray((parsed as any).medicationDoseLogs) ? (parsed as any).medicationDoseLogs : [],
     catalogAliases: Array.isArray(parsed.catalogAliases) ? parsed.catalogAliases : [],
     githubSources: Array.isArray(parsed.githubSources) ? parsed.githubSources : [],
   };
@@ -18421,6 +19076,9 @@ function applyImportedState(text: string) {
     'fluidLogs',
     'weightLogs',
     'healthEntries',
+    'medications',
+    'medicationTreatments',
+    'medicationDoseLogs',
     'catalogAliases',
     'githubSources',
   ];
@@ -18491,6 +19149,9 @@ function stateForBackupIncludeOptions(options: BackupIncludeOptions): AppState {
   }
   if (!options.healthDiary) {
     snapshot.healthEntries = [];
+    snapshot.medications = [];
+    snapshot.medicationTreatments = [];
+    snapshot.medicationDoseLogs = [];
   } else if (!options.healthMedia) {
     snapshot.healthEntries = snapshot.healthEntries.map((entry) => ({
       ...entry,
@@ -19932,7 +20593,8 @@ function setTab(tab: Tab) {
         </div>
       </article>
 
-      <article class="card dashboard-card" data-tour="dashboard">
+      <template v-for="cardKey in visibleHomeCards" :key="`home-card-${cardKey}`">
+      <article v-if="cardKey === 'dashboard'" class="card dashboard-card" data-tour="dashboard">
         <button
           class="home-weight-chip"
           type="button"
@@ -20025,20 +20687,19 @@ function setTab(tab: Tab) {
       </article>
 
       <article
-        v-for="section in sections"
-        :key="section.key"
+        v-else-if="isMealHomeCard(cardKey)"
         class="card meal-card"
-        :data-tour="section.key === 'breakfast' ? 'meal-logging' : undefined"
+        :data-tour="cardKey === 'breakfast' ? 'meal-logging' : undefined"
       >
-        <button class="meal-header" @click="section.key === 'activity' ? openActivityAdd() : openFoodAdd(section.key)">
-          <span class="material-icon" v-html="mealIconSvg[section.icon]"></span>
+        <button class="meal-header" @click="openHomeSection(cardKey)">
+          <span class="material-icon" v-html="homeSectionIcon(cardKey)"></span>
           <span
-            ><b>{{ t(section.key) }}</b
-            ><small>{{ sectionHint(section) }}</small></span
+            ><b>{{ t(cardKey) }}</b
+            ><small>{{ homeSectionHint(cardKey) }}</small></span
           >
-          <span class="section-summary-text">{{ sectionSummaryText(section) }}</span>
+          <span class="section-summary-text">{{ homeSectionSummaryText(cardKey) }}</span>
           <span
-            v-if="section.key === 'activity'"
+            v-if="cardKey === 'activity'"
             class="meal-micro-button"
             role="button"
             :aria-label="t('activityAnalysis')"
@@ -20052,12 +20713,12 @@ function setTab(tab: Tab) {
             role="button"
             :aria-label="t('mealMicronutrients')"
             :title="t('mealMicronutrients')"
-            @click.stop.prevent="openMealMicronutrients(section)"
+            @click.stop.prevent="openHomeMealMicronutrients(cardKey)"
             v-html="lucideSvg('flaskConical')"
           ></span>
           <span class="plus-button">+</span>
         </button>
-        <div v-if="section.key === 'activity'" class="entry-list">
+        <div v-if="cardKey === 'activity'" class="entry-list">
           <div
             v-for="activity in activitiesForSection()"
             :id="`activity-entry-${activity.id}`"
@@ -20101,7 +20762,7 @@ function setTab(tab: Tab) {
         </div>
         <div v-else class="entry-list">
           <div
-            v-for="entry in entriesForSection(section)"
+            v-for="entry in homeEntriesForSection(cardKey)"
             :id="`intake-entry-${entry.id}`"
             :key="entry.id"
             class="entry-row"
@@ -20145,11 +20806,14 @@ function setTab(tab: Tab) {
               ></button>
             </div>
           </div>
-          <p v-if="!entriesForSection(section).length" class="empty-line">{{ t('noEntries') }}</p>
+          <p v-if="!homeEntriesForSection(cardKey).length" class="empty-line">{{ t('noEntries') }}</p>
         </div>
       </article>
 
-      <article v-if="fluidTrackingEnabled" class="card meal-card fluid-summary-card home-fluid-summary-card">
+      <article
+        v-else-if="cardKey === 'fluids' && fluidTrackingEnabled"
+        class="card meal-card fluid-summary-card home-fluid-summary-card"
+      >
         <button class="meal-header" type="button" @click="!currentDayFluidSkipped && openFluidAdd()">
           <span class="material-icon" v-html="lucideSvg('glassWater')"></span>
           <span
@@ -20214,7 +20878,59 @@ function setTab(tab: Tab) {
           <p v-if="!currentDayFluidLogs.length" class="empty-line">{{ t('noFluids') }}</p>
         </div>
       </article>
-      <article v-if="healthDiaryEnabled" class="card meal-card home-health-card">
+      <article v-else-if="cardKey === 'medications' && medicationTrackingEnabled" class="card meal-card medication-card">
+        <button class="meal-header medication-header" type="button" @click="openMedicationAdd('today')">
+          <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
+          <span
+            ><b>{{ t('medications') }}</b
+            ><small>{{ t('medicationHomeHint') }}</small></span
+          >
+          <span class="section-summary-text">{{ medicationSummaryText }}</span>
+          <span
+            class="meal-micro-button"
+            role="button"
+            :aria-label="t('newTreatment')"
+            :title="t('newTreatment')"
+            @click.stop.prevent="openMedicationAdd('treatment')"
+            v-html="lucideSvg('clock')"
+          ></span>
+          <span
+            class="plus-button"
+            role="button"
+            :aria-label="t('addMedication')"
+            :title="t('addMedication')"
+            @click.stop.prevent="openMedicationAdd('today')"
+            >+</span
+          >
+        </button>
+        <div class="entry-list medication-entry-list">
+          <div
+            v-for="plan in currentDayMedicationPlans"
+            :id="`medication-dose-${plan.key}`"
+            :key="`medication-dose-${plan.key}`"
+            class="entry-row medication-dose-row"
+            :class="[`status-${plan.status}`, { 'today-only': plan.source === 'one_day' }]"
+          >
+            <div>
+              <b>{{ medicationDisplayName(plan.medication) }}</b>
+              <small>{{ medicationPlanSubtitle(plan) }}</small>
+            </div>
+            <div class="entry-actions">
+              <button
+                class="entry-icon-button medication-check-button"
+                :class="{ checked: plan.status === 'taken' }"
+                type="button"
+                :aria-label="plan.status === 'taken' ? t('markPending') : t('markTaken')"
+                :title="plan.status === 'taken' ? t('markPending') : t('markTaken')"
+                @click.stop="toggleMedicationDose(plan)"
+                v-html="lucideSvg(medicationDoseActionIcon(plan))"
+              ></button>
+            </div>
+          </div>
+          <p v-if="!currentDayMedicationPlans.length" class="empty-line">{{ t('noMedications') }}</p>
+        </div>
+      </article>
+      <article v-else-if="cardKey === 'health' && healthDiaryEnabled" class="card meal-card home-health-card">
         <button class="meal-header home-health-header" type="button" @click="openNewHealthEntry">
           <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
           <span
@@ -20290,6 +21006,7 @@ function setTab(tab: Tab) {
           <p v-if="!currentDayHealthEntries.length" class="empty-line">{{ t('noHealthEntries') }}</p>
         </div>
       </article>
+      </template>
     </section>
 
     <section v-if="activeTab === 'diary'" class="page-stack diary-page">
@@ -21426,6 +22143,18 @@ function setTab(tab: Tab) {
             >
           </button>
           <button
+            v-if="medicationTrackingEnabled"
+            class="quick-add-option quick-add-medication-option"
+            type="button"
+            @click="chooseQuickAddMedication"
+          >
+            <span class="material-icon" v-html="lucideSvg('heartPulse')"></span>
+            <span
+              ><b>{{ t('addMedication') }}</b
+              ><small>{{ t('medicationTodayHint') }}</small></span
+            >
+          </button>
+          <button
             v-if="healthDiaryEnabled"
             class="quick-add-option quick-add-health-option"
             @click="chooseQuickAddHealthEntry"
@@ -21529,6 +22258,225 @@ function setTab(tab: Tab) {
               :placeholder="t('fluidNotePlaceholder')"
             ></textarea>
             <button class="filled-button wide" type="button" @click="addFluidLog">{{ t('add') }}</button>
+          </template>
+          <template v-else-if="addMode === 'medication'">
+            <h2>{{ t('medications') }}</h2>
+            <p class="helper big">{{ t('medicationSheetHint') }}</p>
+            <div class="unit-toggle three segmented-pill-toggle medication-mode-toggle">
+              <button
+                type="button"
+                :class="{ active: medicationEntryMode === 'today' }"
+                @click="resetMedicationForm('today')"
+              >
+                {{ t('todayOnly') }}
+              </button>
+              <button
+                type="button"
+                :class="{ active: medicationEntryMode === 'treatment' }"
+                @click="resetMedicationForm('treatment')"
+              >
+                {{ t('newTreatment') }}
+              </button>
+              <button
+                type="button"
+                :class="{ active: medicationEntryMode === 'catalog' }"
+                @click="resetMedicationForm('catalog')"
+              >
+                {{ t('catalog') }}
+              </button>
+            </div>
+
+            <section class="medication-picker-panel">
+              <label class="field-label"
+                >{{ t('medication') }}
+                <input
+                  v-model="medicationSearch"
+                  class="input"
+                  type="search"
+                  :placeholder="t('searchOrNewMedication')"
+                />
+              </label>
+              <div v-if="medicationCatalogOptions.length && medicationSearch" class="medication-option-list">
+                <button
+                  v-for="entry in medicationCatalogOptions.slice(0, 8)"
+                  :key="`medication-option-${entry.id}`"
+                  class="dialog-option medication-option"
+                  type="button"
+                  :class="{ active: selectedMedicationId === entry.id }"
+                  @click="selectMedicationFromOption(entry)"
+                >
+                  <span v-html="lucideSvg('heartPulse')"></span>
+                  <span
+                    ><b>{{ medicationDisplayName(entry) }}</b
+                    ><small>{{ [entry.barcode, entry.note].filter(Boolean).join(' · ') || t('medicationCatalogItem') }}</small></span
+                  >
+                </button>
+              </div>
+            </section>
+
+            <section class="medication-form-grid">
+              <label class="field-label"
+                >{{ t('name') }}
+                <input v-model="medicationDraft.name" class="input" type="text" :placeholder="t('medicationName')" />
+              </label>
+              <label class="field-label medication-barcode-field"
+                >{{ t('barcodeQr') }}
+                <span class="field-with-action">
+                  <input v-model="medicationDraft.barcode" class="input" type="text" :placeholder="t('optional')" />
+                  <button
+                    class="entry-icon-button"
+                    type="button"
+                    :aria-label="t('scanBarcodeQr')"
+                    :title="t('scanBarcodeQr')"
+                    @click="openScanner('medicationBarcodeField')"
+                    v-html="lucideSvg('scanLine')"
+                  ></button>
+                </span>
+              </label>
+              <label class="field-label"
+                >{{ t('strengthMg') }}
+                <input
+                  v-model.number="medicationDraft.strength_mg"
+                  class="input"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  inputmode="decimal"
+                />
+              </label>
+              <label class="field-label"
+                >{{ t('medicationDoseUnits') }}
+                <input
+                  v-model.number="medicationDraft.dose_amount_units"
+                  class="input"
+                  type="number"
+                  min="0.25"
+                  step="0.25"
+                  inputmode="decimal"
+                />
+              </label>
+              <textarea
+                v-model="medicationDraft.note"
+                class="input note-textarea medication-note-input"
+                rows="2"
+                :placeholder="t('medicationNotePlaceholder')"
+              ></textarea>
+            </section>
+
+            <template v-if="medicationEntryMode === 'treatment'">
+              <section class="medication-treatment-panel">
+                <div class="medication-date-grid">
+                  <label class="field-label"
+                    >{{ t('startDate') }}
+                    <input v-model="medicationTreatmentDraft.start_date" class="input" type="date" />
+                  </label>
+                  <label class="field-label"
+                    >{{ t('endDateOptional') }}
+                    <span class="field-with-action">
+                      <input v-model="medicationTreatmentDraft.end_date" class="input" type="date" />
+                      <button class="text-button compact-today-button" type="button" @click="medicationTreatmentDraft.end_date = activeLogDateKey">
+                        {{ t('today') }}
+                      </button>
+                    </span>
+                  </label>
+                </div>
+                <div class="medication-dose-grid">
+                  <label class="field-label"
+                    >{{ t('totalUnitsOptional') }}
+                    <input
+                      v-model.number="medicationTreatmentDraft.total_units"
+                      class="input"
+                      type="number"
+                      min="0"
+                      step="1"
+                      inputmode="decimal"
+                    />
+                  </label>
+                  <label class="field-label"
+                    >{{ t('dailyDoseCount') }}
+                    <input
+                      v-model.number="medicationTreatmentDraft.doses_per_day"
+                      class="input"
+                      type="number"
+                      min="1"
+                      max="8"
+                      step="1"
+                      inputmode="numeric"
+                      @change="medicationReminderTimesText = defaultMedicationReminderTimes(medicationTreatmentDraft.doses_per_day).join(', ')"
+                    />
+                  </label>
+                  <label class="field-label"
+                    >{{ t('doseAmount') }}
+                    <input
+                      v-model.number="medicationTreatmentDraft.dose_amount_units"
+                      class="input"
+                      type="number"
+                      min="0.25"
+                      step="0.25"
+                      inputmode="decimal"
+                    />
+                  </label>
+                </div>
+                <label class="source-choice-card source-choice-card-simple medication-reminder-toggle">
+                  <span
+                    ><b>{{ t('medicationReminder') }}</b
+                    ><small>{{ t('medicationReminderHint') }}</small></span
+                  >
+                  <input
+                    v-model="medicationTreatmentDraft.reminder_enabled"
+                    type="checkbox"
+                    :disabled="!state.settings.medication_reminders_enabled"
+                    @change="ensureNotificationPermissionForReminders"
+                  />
+                </label>
+                <label class="field-label" :class="{ disabled: !medicationTreatmentDraft.reminder_enabled }"
+                  >{{ t('reminderTimes') }}
+                  <input
+                    v-model="medicationReminderTimesText"
+                    class="input"
+                    type="text"
+                    :disabled="!medicationTreatmentDraft.reminder_enabled"
+                    placeholder="08:00, 20:00"
+                  />
+                </label>
+                <textarea
+                  v-model="medicationTreatmentDraft.note"
+                  class="input note-textarea"
+                  rows="2"
+                  :placeholder="t('treatmentNotePlaceholder')"
+                ></textarea>
+              </section>
+              <section v-if="activeMedicationTreatments.length" class="active-treatment-list">
+                <b>{{ t('activeTreatments') }}</b>
+                <article
+                  v-for="treatment in activeMedicationTreatments"
+                  :key="`active-treatment-${treatment.id}`"
+                  class="active-treatment-row"
+                >
+                  <span
+                    ><b>{{ medicationDisplayName(activeMedications.find((entry) => entry.id === treatment.medication_id)) }}</b
+                    ><small>{{ medicationTreatmentSubtitle(treatment) }}</small></span
+                  >
+                  <button class="text-button" type="button" @click="setMedicationTreatmentEndToday(treatment.id)">
+                    {{ t('endToday') }}
+                  </button>
+                </article>
+              </section>
+              <button class="filled-button wide" type="button" @click="saveMedicationTreatment">
+                {{ t('saveTreatment') }}
+              </button>
+            </template>
+            <button
+              v-else-if="medicationEntryMode === 'catalog'"
+              class="filled-button wide"
+              type="button"
+              @click="saveMedicationCatalogItem"
+            >
+              {{ t('saveMedication') }}
+            </button>
+            <button v-else class="filled-button wide" type="button" @click="addMedicationTodayLog">
+              {{ t('logMedicationTaken') }}
+            </button>
           </template>
           <template v-else-if="addMode === 'food'">
             <h2>{{ editingIntakeId ? t('edit') : t('addTo') }} {{ t(addMealType) }}</h2>
@@ -23164,6 +24112,54 @@ function setTab(tab: Tab) {
                 {{ t(option.labelKey) }}
               </button></template
             >
+            <template v-else-if="settingsDialog === 'homeCards'">
+              <div class="dialog-title-row tracking-dialog-title">
+                <h2>{{ t('homeCardOrder') }}</h2>
+              </div>
+              <p class="helper big">{{ t('homeCardOrderBody') }}</p>
+              <div class="home-card-order-list">
+                <article
+                  v-for="(key, index) in normalizedHomeCardOrder"
+                  :key="`home-order-${key}`"
+                  class="home-card-order-row"
+                >
+                  <span class="settings-row-icon" v-html="lucideSvg(homeCardMetadata[key].icon)"></span>
+                  <span
+                    ><b>{{ homeCardLabel(key) }}</b
+                    ><small>{{
+                      key === 'medications'
+                        ? t('medicationHomeHint')
+                        : key === 'fluids'
+                          ? t('fluidHomeHint')
+                          : key === 'health'
+                            ? t('healthHomeHint')
+                            : t('homeCardVisible')
+                    }}</small></span
+                  >
+                  <span class="home-card-order-actions">
+                    <button
+                      class="entry-icon-button"
+                      type="button"
+                      :disabled="index === 0"
+                      :aria-label="t('moveUp')"
+                      @click="moveHomeCard(key, -1)"
+                      v-html="lucideSvg('chevronUp')"
+                    ></button>
+                    <button
+                      class="entry-icon-button"
+                      type="button"
+                      :disabled="index === normalizedHomeCardOrder.length - 1"
+                      :aria-label="t('moveDown')"
+                      @click="moveHomeCard(key, 1)"
+                      v-html="lucideSvg('chevronDown')"
+                    ></button>
+                  </span>
+                </article>
+              </div>
+              <div class="dialog-actions">
+                <button class="text-button" type="button" @click="settingsDialog = null">{{ t('ok') }}</button>
+              </div>
+            </template>
             <template v-else-if="settingsDialog === 'aiExport'">
               <div class="dialog-title-row">
                 <h2>{{ t('aiExportAllData') }}</h2>
@@ -23442,6 +24438,21 @@ function setTab(tab: Tab) {
                   <p class="helper tracking-fluid-summary">
                     {{ t('fluidCleanWaterTargetHint') }} {{ fluidIndicatorText }} · {{ t('fluidRemainingCleanWater') }}
                     {{ formatFluidAmount(remainingWaterEquivalentDl) }}
+                  </p>
+                </section>
+
+                <section v-if="state.settings.medication_tracking_enabled" class="tracking-settings-group">
+                  <label class="tracking-toggle-card"
+                    ><span
+                      ><b>{{ t('medicationReminder') }}</b
+                      ><small>{{ t('medicationReminderHint') }}</small></span
+                    ><input
+                      v-model="state.settings.medication_reminders_enabled"
+                      type="checkbox"
+                      @change="ensureNotificationPermissionForReminders"
+                  /></label>
+                  <p class="helper tracking-fluid-summary">
+                    {{ t('medicationReminderSettingsHint') }}
                   </p>
                 </section>
 

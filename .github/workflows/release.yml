@@ -60,6 +60,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      - name: Validate repository policy
+        uses: verzly/repository@latest
+        with:
+          args: check --config datarose.toml
+
       - name: Install github-release
         uses: verzly/github-release@latest
         with:
@@ -148,15 +153,18 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Restore aube cache
+      - name: Restore desktop build cache
         uses: actions/cache@v5
         with:
           path: |
-            .cache/aube
-          key: aube-store-release-v1-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
+            .cache
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: desktop-release-v3-${{ runner.os }}-${{ matrix.platform }}-${{ hashFiles('datarose.toml', 'aube-workspace.yaml', '**/package.json', 'apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/Cargo.toml', '.github/release/nutrino-desktop.tauri-release.toml') }}
           restore-keys: |
-            aube-store-release-v1-${{ runner.os }}-
-            aube-store-v1-${{ runner.os }}-
+            desktop-release-v3-${{ runner.os }}-${{ matrix.platform }}-
+            desktop-release-v3-${{ runner.os }}-
+            rust-tauri-release-v3-${{ runner.os }}-
 
       - name: Set up aube
         uses: verzly/setup-aube@v1
@@ -175,19 +183,15 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Restore Cargo and Tauri cache
-        uses: actions/cache@v5
+      - name: Install rust-cache
+        uses: verzly/rust-cache@latest
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cache/tauri-release
-            apps/desktop/src-tauri/target
-          key: cargo-tauri-desktop-v2-${{ runner.os }}-${{ matrix.platform }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/Cargo.toml', '.github/release/nutrino-desktop.tauri-release.toml') }}
-          restore-keys: |
-            cargo-tauri-desktop-v2-${{ runner.os }}-${{ matrix.platform }}-
-            cargo-tauri-desktop-v2-${{ runner.os }}-
-            cargo-tauri-v2-${{ runner.os }}-
+          install-only: true
+
+      - name: Install tauri-release
+        uses: verzly/tauri-release@latest
+        with:
+          install-only: true
 
       - name: Install Linux Tauri dependencies
         if: runner.os == 'Linux'
@@ -204,14 +208,13 @@ jobs:
             rpm
 
       - name: Build desktop artifacts
-        uses: verzly/tauri-release@latest
-        with:
-          args: >-
-            build
-            --config .github/release/nutrino-desktop.tauri-release.toml
-            --output dist/release/${{ matrix.artifact }}
-            ${{ matrix.flag }}
-            --verbose
+        shell: bash
+        run: >-
+          rust-cache run --config datarose.toml -- tauri-release build
+          --config .github/release/nutrino-desktop.tauri-release.toml
+          --output dist/release/${{ matrix.artifact }}
+          ${{ matrix.flag }}
+          --verbose
 
       - name: Upload desktop artifact bundle
         uses: actions/upload-artifact@v7
@@ -289,15 +292,17 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Restore aube cache
+      - name: Restore Android build cache
         uses: actions/cache@v5
         with:
           path: |
-            .cache/aube
-          key: aube-store-release-v1-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
+            .cache
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: android-release-v3-${{ runner.os }}-${{ hashFiles('datarose.toml', 'aube-workspace.yaml', '**/package.json', 'apps/mobile/src-tauri/Cargo.lock', 'apps/mobile/src-tauri/Cargo.toml', 'apps/mobile/src-tauri/gen/android/**/*.gradle*', 'apps/mobile/src-tauri/gen/android/**/gradle-wrapper.properties', '.github/release/nutrino-mobile.tauri-release.toml') }}
           restore-keys: |
-            aube-store-release-v1-${{ runner.os }}-
-            aube-store-v1-${{ runner.os }}-
+            android-release-v3-${{ runner.os }}-
+            rust-tauri-release-v3-${{ runner.os }}-
 
       - name: Set up aube
         uses: verzly/setup-aube@v1
@@ -320,21 +325,10 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Restore Android build cache
-        uses: actions/cache@v5
+      - name: Install rust-cache
+        uses: verzly/rust-cache@latest
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            ~/.cache/tauri-release
-            apps/mobile/src-tauri/target
-            apps/mobile/src-tauri/gen/android/.gradle
-          key: android-release-v2-${{ runner.os }}-${{ hashFiles('apps/mobile/src-tauri/Cargo.lock', 'apps/mobile/src-tauri/Cargo.toml', 'apps/mobile/src-tauri/gen/android/**/*.gradle*', 'apps/mobile/src-tauri/gen/android/**/gradle-wrapper.properties', '.github/release/nutrino-mobile.tauri-release.toml') }}
-          restore-keys: |
-            android-release-v2-${{ runner.os }}-
-            cargo-tauri-v2-${{ runner.os }}-
+          install-only: true
 
       - name: Install Android SDK packages
         shell: bash
@@ -360,20 +354,24 @@ jobs:
           echo "${ANDROID_HOME}/platform-tools" >> "${GITHUB_PATH}"
           echo "${ANDROID_HOME}/cmdline-tools/latest/bin" >> "${GITHUB_PATH}"
 
-      - name: Build Android artifacts
+      - name: Install tauri-release
         uses: verzly/tauri-release@latest
+        with:
+          install-only: true
+
+      - name: Build Android artifacts
+        shell: bash
         env:
           NUTRINO_ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           NUTRINO_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           NUTRINO_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           NUTRINO_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        with:
-          args: >-
-            build
-            --config .github/release/nutrino-mobile.tauri-release.toml
-            --output dist/release/mobile-android
-            --android
-            --verbose
+        run: >-
+          rust-cache run --config datarose.toml -- tauri-release build
+          --config .github/release/nutrino-mobile.tauri-release.toml
+          --output dist/release/mobile-android
+          --android
+          --verbose
 
       - name: Upload Android artifact bundle
         uses: actions/upload-artifact@v7
@@ -411,15 +409,17 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Restore aube cache
+      - name: Restore iOS build cache
         uses: actions/cache@v5
         with:
           path: |
-            .cache/aube
-          key: aube-store-release-v1-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
+            .cache
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ios-release-v3-${{ runner.os }}-${{ hashFiles('datarose.toml', 'aube-workspace.yaml', '**/package.json', 'apps/mobile/src-tauri/Cargo.lock', 'apps/mobile/src-tauri/Cargo.toml', '.github/release/nutrino-mobile.tauri-release.toml') }}
           restore-keys: |
-            aube-store-release-v1-${{ runner.os }}-
-            aube-store-v1-${{ runner.os }}-
+            ios-release-v3-${{ runner.os }}-
+            rust-tauri-release-v3-${{ runner.os }}-
 
       - name: Set up aube
         uses: verzly/setup-aube@v1
@@ -435,18 +435,10 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Restore iOS Cargo and Tauri cache
-        uses: actions/cache@v5
+      - name: Install rust-cache
+        uses: verzly/rust-cache@latest
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cache/tauri-release
-            apps/mobile/src-tauri/target
-          key: cargo-tauri-ios-v2-${{ runner.os }}-${{ hashFiles('apps/mobile/src-tauri/Cargo.lock', 'apps/mobile/src-tauri/Cargo.toml', '.github/release/nutrino-mobile.tauri-release.toml') }}
-          restore-keys: |
-            cargo-tauri-ios-v2-${{ runner.os }}-
-            cargo-tauri-v2-${{ runner.os }}-
+          install-only: true
 
       - name: Import Apple signing assets
         shell: bash
@@ -477,17 +469,21 @@ jobs:
           mkdir -p "${HOME}/Library/MobileDevice/Provisioning Profiles"
           cp "${PROFILE_PATH}" "${HOME}/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
 
-      - name: Build iOS artifact
+      - name: Install tauri-release
         uses: verzly/tauri-release@latest
+        with:
+          install-only: true
+
+      - name: Build iOS artifact
+        shell: bash
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        with:
-          args: >-
-            build
-            --config .github/release/nutrino-mobile.tauri-release.toml
-            --output dist/release/mobile-ios
-            --ios
-            --verbose
+        run: >-
+          rust-cache run --config datarose.toml -- tauri-release build
+          --config .github/release/nutrino-mobile.tauri-release.toml
+          --output dist/release/mobile-ios
+          --ios
+          --verbose
 
       - name: Upload iOS artifact bundle
         uses: actions/upload-artifact@v7

@@ -12961,3 +12961,177 @@ select:focus-visible,
   margin-top: 0 !important;
   margin-bottom: 12px !important;
 }
+
+.medication-card,
+.medication-entry-list,
+.medication-picker-panel,
+.medication-treatment-panel,
+.active-treatment-list,
+.home-card-order-list {
+  overflow: visible !important;
+}
+
+.medication-mode-toggle {
+  margin: 10px 0 14px !important;
+}
+
+.medication-picker-panel,
+.medication-form-grid,
+.medication-treatment-panel,
+.active-treatment-list,
+.home-card-order-list {
+  display: grid !important;
+  gap: 10px !important;
+}
+
+.field-with-action {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 40px !important;
+  gap: 8px !important;
+  align-items: center !important;
+}
+
+.medication-option-list {
+  display: grid !important;
+  gap: 6px !important;
+  margin-top: 8px !important;
+}
+
+.medication-option {
+  display: grid !important;
+  grid-template-columns: 38px minmax(0, 1fr) !important;
+  gap: 10px !important;
+  align-items: center !important;
+}
+
+.medication-date-grid,
+.medication-dose-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)) !important;
+  gap: 10px !important;
+}
+
+.medication-note-input {
+  grid-column: 1 / -1 !important;
+}
+
+.medication-dose-row.status-taken {
+  background: color-mix(in srgb, var(--mobile-flat-accent-soft, var(--secondary-container)) 72%, transparent) !important;
+}
+
+.medication-check-button.checked {
+  background: var(--mobile-flat-accent-soft, var(--secondary-container)) !important;
+  color: var(--mobile-flat-accent, var(--primary)) !important;
+}
+
+.active-treatment-row,
+.home-card-order-row {
+  display: grid !important;
+  grid-template-columns: 42px minmax(0, 1fr) auto !important;
+  gap: 10px !important;
+  align-items: center !important;
+  min-height: 56px !important;
+  padding: 8px !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  border-radius: 18px !important;
+  background: var(--mobile-flat-surface-soft, var(--surface-container)) !important;
+  color: var(--mobile-flat-text, var(--on-surface)) !important;
+}
+
+.active-treatment-row > span,
+.home-card-order-row > span:not(.settings-row-icon):not(.home-card-order-actions) {
+  min-width: 0 !important;
+  display: grid !important;
+  gap: 2px !important;
+}
+
+.active-treatment-row small,
+.home-card-order-row small {
+  color: var(--mobile-flat-muted, var(--on-surface-variant)) !important;
+  opacity: 1 !important;
+}
+
+.home-card-order-actions {
+  display: inline-flex !important;
+  gap: 4px !important;
+  justify-self: end !important;
+}
+
+.compact-today-button {
+  min-width: 54px !important;
+  padding: 0 8px !important;
+}
+
+@media (max-width: 420px) {
+  .active-treatment-row,
+  .home-card-order-row {
+    grid-template-columns: 38px minmax(0, 1fr) auto !important;
+  }
+}
+
+/* Mobile home card actions: keep Fluid visually aligned with meal cards. */
+.fluid-summary-card .meal-header {
+  grid-template-columns: auto minmax(0, 1fr) auto auto !important;
+  align-items: center !important;
+}
+
+.fluid-header-actions {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 6px !important;
+  min-width: max-content !important;
+}
+
+.fluid-header-actions .meal-micro-button,
+.fluid-header-actions .fluid-skip-inline-button,
+.fluid-header-actions .fluid-skip-inline-button.active,
+.fluid-header-actions .plus-button,
+.fluid-summary-card .meal-micro-button,
+.fluid-summary-card .fluid-skip-inline-button,
+.fluid-summary-card .fluid-skip-inline-button.active,
+.fluid-summary-card .plus-button {
+  display: inline-grid !important;
+  place-items: center !important;
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 34px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+  background: var(--mobile-flat-surface-soft, color-mix(in srgb, var(--primary-container) 76%, transparent)) !important;
+  color: var(--mobile-flat-text, var(--on-primary-container)) !important;
+}
+
+.fluid-header-actions .plus-button,
+.fluid-summary-card .plus-button {
+  color: var(--mobile-flat-accent, var(--primary)) !important;
+}
+
+.fluid-header-actions .fluid-skip-inline-button,
+.fluid-summary-card .fluid-skip-inline-button {
+  color: var(--mobile-flat-muted, var(--on-surface-variant)) !important;
+}
+
+.fluid-header-actions .fluid-skip-inline-button.active,
+.fluid-summary-card .fluid-skip-inline-button.active {
+  background: var(--mobile-flat-accent-soft, color-mix(in srgb, var(--primary-container) 76%, transparent)) !important;
+  color: var(--mobile-flat-accent, var(--primary)) !important;
+}
+
+.fluid-header-actions .meal-micro-button svg,
+.fluid-header-actions .fluid-skip-inline-button svg,
+.fluid-header-actions .plus-button svg,
+.fluid-summary-card .meal-micro-button svg,
+.fluid-summary-card .fluid-skip-inline-button svg,
+.fluid-summary-card .plus-button svg {
+  width: 17px !important;
+  height: 17px !important;
+  fill: none !important;
+  stroke: currentColor !important;
+}

@@ -1,0 +1,60 @@
+# Managed by repository. Project-specific overrides are allowed.
+version = 1
+
+[quality]
+workspace = "."
+languages = ["rust", "js"]
+js_runner = "aube"
+
+[release]
+enabled = true
+target_branch = "master"
+source_repository = "rozsazoltan/nutrino"
+secret_name = "GITHUB_TOKEN"
+release_all = false
+manage_cargo_packages = false
+manage_workflows = false
+
+[[release.targets]]
+name = "nutrino"
+path = "."
+strategy = "same-repo"
+workflow = "custom"
+source_kind = "custom"
+repository = "rozsazoltan/nutrino"
+version_files = false
+release_name_prefix = "Nutrino "
+source_release = true
+generate_notes = false
+include_scopes = ["nutrino", "desktop", "mobile", "release", "all"]
+include_paths = [
+  ".github/release/",
+  ".github/workflows/release.yml",
+  "apps/desktop/",
+  "apps/mobile/",
+  "packages/",
+  "package.json",
+]
+
+[rust_cache.cache]
+dir = ".cache"
+package = "nutrino"
+redirect_cargo_home = false
+redirect_gradle = true
+
+[rust_cache.cargo]
+target_dir = "rust/packages/{package}/target"
+
+[rust_cache.env]
+GRADLE_USER_HOME = "android/gradle"
+NPM_CONFIG_CACHE = "js/npm"
+PNPM_STORE_PATH = "js/pnpm-store"
+YARN_CACHE_FOLDER = "js/yarn"
+
+[tauri_release.project]
+root = "."
+frontend_install = "aube install"
+
+[tauri_release.build]
+out_dir = "dist"
+cache_dir = ".cache/tauri-release"

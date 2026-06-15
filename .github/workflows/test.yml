@@ -16,13 +16,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-  NODE_VERSION: '24'
-  AUBE_NO_UPDATE_CHECK: '1'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  NODE_VERSION: "24"
+  AUBE_NO_UPDATE_CHECK: "1"
   AUBE_STORE_DIR: ${{ github.workspace }}/.cache/aube/store
   AUBE_CACHE_DIR: ${{ github.workspace }}/.cache/aube/cache
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: '0'
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   wip-guard:
@@ -59,17 +59,21 @@ jobs:
       - name: Restore aube cache
         uses: actions/cache@v5
         with:
-          path: |
-            .cache/aube
-          key: aube-test-v2-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
+          path: .cache/aube
+          key: aube-test-v3-${{ runner.os }}-${{ hashFiles('aube-workspace.yaml', '**/package.json') }}
           restore-keys: |
-            aube-test-v2-${{ runner.os }}-
-            aube-v2-${{ runner.os }}-
+            aube-test-v3-${{ runner.os }}-
+            aube-v3-${{ runner.os }}-
 
       - name: Set up aube
         uses: verzly/setup-aube@v1
         with:
           run_install: true
+
+      - name: Validate repository policy
+        uses: verzly/repository@latest
+        with:
+          args: check --config datarose.toml
 
       - name: Format JavaScript sources
         shell: bash
@@ -122,18 +126,22 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Restore Cargo cache
+      - name: Restore Rust and Tauri cache
         uses: actions/cache@v5
         with:
           path: |
+            .cache
             ~/.cargo/registry
             ~/.cargo/git
-            apps/desktop/src-tauri/target
-            apps/mobile/src-tauri/target
-          key: cargo-test-v2-${{ runner.os }}-${{ hashFiles('apps/**/src-tauri/Cargo.lock', 'apps/**/src-tauri/Cargo.toml') }}
+          key: rust-tauri-test-v3-${{ runner.os }}-${{ hashFiles('datarose.toml', 'apps/**/src-tauri/Cargo.lock', 'apps/**/src-tauri/Cargo.toml') }}
           restore-keys: |
-            cargo-test-v2-${{ runner.os }}-
-            cargo-v2-${{ runner.os }}-
+            rust-tauri-test-v3-${{ runner.os }}-
+            rust-tauri-v3-${{ runner.os }}-
+
+      - name: Install rust-cache
+        uses: verzly/rust-cache@latest
+        with:
+          install-only: true
 
       - name: Install Linux Tauri dependencies
         shell: bash
@@ -153,27 +161,27 @@ jobs:
       - name: Format Rust sources
         shell: bash
         run: >-
-          cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml
-          && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml
+          rust-cache run --config datarose.toml -- cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml
+          && rust-cache run --config datarose.toml -- cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml
 
       - name: Check Rust formatting
         shell: bash
         run: >-
-          cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
-          && cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml -- --check
+          rust-cache run --config datarose.toml -- cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+          && rust-cache run --config datarose.toml -- cargo fmt --manifest-path apps/mobile/src-tauri/Cargo.toml -- --check
 
       - name: Check mobile Rust manifest
         shell: bash
-        run: cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml --no-deps >/dev/null
+        run: rust-cache run --config datarose.toml -- cargo metadata --manifest-path apps/mobile/src-tauri/Cargo.toml --no-deps
 
       - name: Check desktop Rust crate
         shell: bash
-        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+        run: rust-cache run --config datarose.toml -- cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 
       - name: Lint desktop Rust crate
         shell: bash
-        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+        run: rust-cache run --config datarose.toml -- cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Test desktop Rust crate
         shell: bash
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets
+        run: rust-cache run --config datarose.toml -- cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets

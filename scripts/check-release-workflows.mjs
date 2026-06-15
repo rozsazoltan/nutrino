@@ -39,6 +39,31 @@ expectContains(
 );
 expectContains(
   '.github/workflows/release.yml',
+  'verzly/repository@latest',
+  'Release workflow should validate repository policy through repository.',
+);
+expectContains(
+  '.github/workflows/release.yml',
+  'repository@latest',
+  'Release workflow should install the repository tool from the Verzly action.',
+);
+expectContains(
+  '.github/workflows/release.yml',
+  'check --config datarose.toml',
+  'Release workflow should validate datarose.toml before preparing a release.',
+);
+expectContains(
+  '.github/workflows/release.yml',
+  'verzly/rust-cache@latest',
+  'Release workflow should install rust-cache for Rust/Tauri builds.',
+);
+expectContains(
+  '.github/workflows/release.yml',
+  'rust-cache run --config datarose.toml -- tauri-release build',
+  'Release workflow should run tauri-release through rust-cache.',
+);
+expectContains(
+  '.github/workflows/release.yml',
   'verzly/android-signing@v0.3.0',
   'Android release workflow should pin android-signing for keystore fingerprint verification.',
 );
@@ -61,6 +86,26 @@ expectContains(
   '.github/workflows/test.yml',
   'actions/setup-node@v6',
   'Test workflow should install Node directly instead of failing during mise install.',
+);
+expectContains(
+  '.github/workflows/test.yml',
+  'verzly/repository@latest',
+  'Test workflow should validate shared repository policy.',
+);
+expectContains(
+  '.github/workflows/test.yml',
+  'check --config datarose.toml',
+  'Test workflow should run repository check against datarose.toml.',
+);
+expectContains(
+  '.github/workflows/test.yml',
+  'verzly/rust-cache@latest',
+  'Test workflow should install rust-cache for Rust/Tauri checks.',
+);
+expectContains(
+  '.github/workflows/test.yml',
+  'rust-cache run --config datarose.toml -- cargo',
+  'Test workflow should run cargo checks through rust-cache.',
 );
 
 expectContains('.github/workflows/test.yml', 'wip-guard:', 'Test workflow should define a WIP guard job.');
@@ -130,11 +175,15 @@ expectContains(
   'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets',
   'Test workflow should run desktop Rust tests.',
 );
-expectContains('.github/workflows/test.yml', 'Restore Cargo cache', 'Test workflow should cache Cargo dependencies.');
+expectContains(
+  '.github/workflows/test.yml',
+  'Restore Rust and Tauri cache',
+  'Test workflow should cache Rust/Tauri dependencies and generated output.',
+);
 expectContains(
   '.github/workflows/release.yml',
-  'Restore Cargo and Tauri cache',
-  'Release workflow should cache desktop Cargo/Tauri builds.',
+  'Restore desktop build cache',
+  'Release workflow should cache desktop Rust/Tauri builds.',
 );
 expectContains(
   '.github/workflows/release.yml',
@@ -143,7 +192,7 @@ expectContains(
 );
 expectContains(
   '.github/workflows/release.yml',
-  'Restore iOS Cargo and Tauri cache',
+  'Restore iOS build cache',
   'Release workflow should cache iOS Cargo/Tauri builds.',
 );
 expectContains('.gitignore', 'aube.lock', 'Aube lock files should be ignored.');
@@ -157,7 +206,39 @@ expectContains(
 expectContains('mise.toml', 'aube = "latest"', 'Mise should install aube for local development.');
 expectContains('mise.toml', 'hk = "1.47.0"', 'Mise should install hk for local Git hooks.');
 expectContains('mise.toml', 'pkl = "0.31.1"', 'Mise should install pkl for hk configuration compatibility.');
+expectContains('mise.toml', 'github:verzly/repository', 'Mise should install repository for local policy checks.');
+expectContains('mise.toml', 'github:verzly/rust-cache', 'Mise should install rust-cache for local Rust/Tauri builds.');
+expectContains(
+  'mise.toml',
+  'github:verzly/github-release',
+  'Mise should install github-release for local release dry runs.',
+);
+expectContains(
+  'mise.toml',
+  'github:verzly/tauri-release',
+  'Mise should install tauri-release for local release artifact builds.',
+);
 expectContains('hk.pkl', '["pre-push"]', 'hk should define pre-push checks.');
+expectContains('datarose.toml', '[quality]', 'Datarose config should define repository quality policy.');
+expectContains('datarose.toml', 'js_runner = "aube"', 'Datarose config should keep aube as the JavaScript runner.');
+expectContains('datarose.toml', '[release]', 'Datarose config should define release policy.');
+expectContains(
+  'datarose.toml',
+  'workflow = "custom"',
+  'Datarose release target should preserve the custom Nutrino release workflow.',
+);
+expectContains('datarose.toml', '[rust_cache.cache]', 'Datarose config should define rust-cache settings.');
+expectContains(
+  'datarose.toml',
+  'package = "nutrino"',
+  'Rust cache package should use a stable repository-specific key.',
+);
+expectContains('datarose.toml', '[tauri_release.build]', 'Datarose config should define shared tauri-release paths.');
+expectContains(
+  '.cargo/config.toml',
+  '.cache/rust/packages/nutrino/target',
+  'Cargo should route local target output through the rust-cache layout.',
+);
 expectContains(
   '.github/workflows/release.yml',
   'release_name_prefix',

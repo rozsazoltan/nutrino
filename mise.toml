@@ -4,4 +4,8 @@ aube = "latest"
 rust = "stable"
 hk = "1.47.0"
 pkl = "0.31.1"
+"github:verzly/repository" = { version = "latest", bin = "repository" }
+"github:verzly/rust-cache" = { version = "latest", bin = "rust-cache" }
+"github:verzly/github-release" = { version = "latest", bin = "github-release" }
+"github:verzly/tauri-release" = { version = "latest", bin = "tauri-release" }
 "github:verzly/android-signing" = { version = "0.3.0", bin = "android-signing" }

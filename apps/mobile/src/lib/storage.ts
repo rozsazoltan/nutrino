@@ -1,4 +1,5 @@
 import { drinkKindFromAlcoholKind, waterEquivalentDl } from './fluid';
+import { normalizeMedication, normalizeMedicationDoseLog, normalizeMedicationTreatment } from './medications';
 import type {
   ActivityDefinition,
   ActivityLevel,
@@ -21,11 +22,26 @@ import type {
   GitHubCsvSource,
   LocalizedNameMap,
   FluidLog,
+  HomeCardKey,
+  Medication,
+  MedicationDoseLog,
+  MedicationTreatment,
 } from '../types';
 
 const STORAGE_KEY = 'nutrino.mobile.v3.state';
 const KCAL_PER_KG_PER_WEEK_DAILY = 1100;
 const themeModes = new Set(['system', 'light', 'dark']);
+const homeCardKeys: HomeCardKey[] = [
+  'dashboard',
+  'activity',
+  'breakfast',
+  'lunch',
+  'dinner',
+  'snack',
+  'fluids',
+  'medications',
+  'health',
+];
 
 const fallbackActivities: ActivityDefinition[] = [
   {
@@ -163,8 +179,11 @@ export function defaultSettings(): AppSettings {
     show_meal_macros: true,
     show_micronutrients: false,
     health_diary_enabled: false,
+    medication_tracking_enabled: false,
+    medication_reminders_enabled: false,
     protect_external_catalog_items: true,
     include_inactive_catalog_items: false,
+    home_card_order: [...homeCardKeys],
     micronutrient_limits: { ...DEFAULT_MICRONUTRIENT_LIMITS },
     daily_reminder: false,
     daily_reminder_time: '20:00',
@@ -223,6 +242,9 @@ export function defaultState(): AppState {
     fluidLogs: [],
     weightLogs: [],
     healthEntries: [],
+    medications: [],
+    medicationTreatments: [],
+    medicationDoseLogs: [],
     catalogAliases: [],
     githubSources: [],
   };
@@ -230,6 +252,13 @@ export function defaultState(): AppState {
 
 function normalizeThemeMode(value: unknown): AppSettings['theme'] {
   return typeof value === 'string' && themeModes.has(value) ? (value as AppSettings['theme']) : 'system';
+}
+
+function normalizeHomeCardOrder(value: unknown): HomeCardKey[] {
+  const incoming = Array.isArray(value)
+    ? value.filter((key): key is HomeCardKey => typeof key === 'string' && homeCardKeys.includes(key as HomeCardKey))
+    : [];
+  return [...incoming, ...homeCardKeys.filter((key) => !incoming.includes(key))];
 }
 
 function normalizeFluidLog(entry: Partial<FluidLog> | null | undefined): FluidLog | null {
@@ -347,8 +376,11 @@ export function loadState(): AppState {
           )
         : [],
       health_diary_enabled: storedSettings.health_diary_enabled === true,
+      medication_tracking_enabled: storedSettings.medication_tracking_enabled === true,
+      medication_reminders_enabled: storedSettings.medication_reminders_enabled === true,
       protect_external_catalog_items: storedSettings.protect_external_catalog_items !== false,
       include_inactive_catalog_items: storedSettings.include_inactive_catalog_items === true,
+      home_card_order: normalizeHomeCardOrder(storedSettings.home_card_order),
       target_deficit_kcal: Number.isFinite(Number(storedSettings.target_deficit_kcal))
         ? Number(storedSettings.target_deficit_kcal)
         : defaults.settings.target_deficit_kcal,
@@ -413,6 +445,21 @@ export function loadState(): AppState {
       weightLogs: Array.isArray(parsed.weightLogs) ? parsed.weightLogs : [],
       healthEntries: Array.isArray((parsed as any).healthEntries)
         ? ((parsed as any).healthEntries as HealthEntry[]).map(normalizeHealthEntry)
+        : [],
+      medications: Array.isArray((parsed as any).medications)
+        ? ((parsed as any).medications as any[])
+            .map(normalizeMedication)
+            .filter((entry): entry is Medication => Boolean(entry))
+        : [],
+      medicationTreatments: Array.isArray((parsed as any).medicationTreatments)
+        ? ((parsed as any).medicationTreatments as any[])
+            .map(normalizeMedicationTreatment)
+            .filter((entry): entry is MedicationTreatment => Boolean(entry))
+        : [],
+      medicationDoseLogs: Array.isArray((parsed as any).medicationDoseLogs)
+        ? ((parsed as any).medicationDoseLogs as any[])
+            .map(normalizeMedicationDoseLog)
+            .filter((entry): entry is MedicationDoseLog => Boolean(entry))
         : [],
       catalogAliases: Array.isArray(parsed.catalogAliases) ? parsed.catalogAliases : [],
       githubSources: Array.isArray(parsed.githubSources)

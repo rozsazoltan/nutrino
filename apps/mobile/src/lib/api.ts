@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult, DesktopUpdateCheckResponse, MobileHandoffRequest, MobileHandoffResponseInput, MobileHandoffResultChunkAck, MobileHandoffResultChunkInput } from '../types';
+import type { AppState, Food, Ingredient, Recipe, RecipeItem, ActivityDefinition, GitHubCsvSource, ServerHealth, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncResult, DesktopUpdateCheckResponse, MobileHandoffRequest, MobileHandoffResponseInput, MobileHandoffResultChunkAck, MobileHandoffResultChunkInput, Medication } from '../types';
+import { normalizeMedication } from './medications';
 import { canonicalizeStateReferences, mergeAliases, mergeById, normalizeActivity, normalizeFood, normalizeIngredient, normalizeRecipe, resolveCatalogId } from './storage';
 
 const APP_CHANNEL = import.meta.env.DEV ? 'dev' : String(import.meta.env.VITE_NUTRINO_CHANNEL || 'stable');
@@ -544,9 +545,20 @@ async function fetchGitHubCsvFiles(source: GitHubCsvSource): Promise<Array<{ pat
   return files;
 }
 
-function classifyCsv(path: string, rows: Record<string, string>[]): 'ingredients' | 'foods' | 'recipes' | 'activities' | null {
+function classifyCsv(
+  path: string,
+  rows: Record<string, string>[],
+): 'ingredients' | 'foods' | 'recipes' | 'activities' | 'medications' | null {
   const headers = Object.keys(rows[0] || {});
   const name = path.toLowerCase();
+  if (
+    name.includes('medication') ||
+    name.includes('medicine') ||
+    name.includes('gyogyszer') ||
+    headers.includes('strength_mg') ||
+    headers.includes('dose_mg')
+  )
+    return 'medications';
   if (name.includes('ingredient') || name.includes('alapanyag')) return 'ingredients';
   if (headers.includes('kcal_per_100g') || name.includes('food')) return 'foods';
   if (headers.includes('ingredients_json') || headers.includes('recipe_id') || name.includes('recipe')) return 'recipes';
@@ -562,6 +574,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
   const foodMap = new Map(next.foods.map((food) => [food.id, food]));
   const recipeMap = new Map(next.recipes.map((recipe) => [recipe.id, recipe]));
   const activityMap = new Map(next.activities.map((activity) => [activity.id, activity]));
+  const medicationMap = new Map((next.medications || []).map((medication) => [medication.id, medication]));
   const itemMap = new Map(next.recipeItems.map((item) => [item.id, item]));
 
   for (const source of next.githubSources.filter((entry) => entry.enabled)) {
@@ -636,6 +649,24 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
             const id = row.id || `github-activity-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
             activityMap.set(id, normalizeActivity({ id, source_id: githubSourceId, code: row.code || id, name, name_i18n: parseNameI18n(row), description: row.description || null, activity_type: row.activity_type || row.type || 'custom', met: num(row.met, 1), kcal_per_min: num(row.kcal_per_min, 0), updated_at: now, deleted_at: null, ...githubMetadata(activityMap.get(id)) }));
             imported++;
+          } else if (kind === 'medications') {
+            const name = row.name || row.title;
+            if (!name) continue;
+            const id = row.id || `github-medication-${source.owner}-${source.repo}-${name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            const medication = normalizeMedication({
+              id,
+              source_id: githubSourceId,
+              name,
+              name_i18n: parseNameI18n(row),
+              barcode: row.barcode || row.ean || row.upc || null,
+              strength_mg: optionalNum(row.strength_mg) ?? optionalNum(row.dose_mg),
+              note: row.note || row.description || null,
+              updated_at: now,
+              deleted_at: null,
+              ...githubMetadata(medicationMap.get(id)),
+            } as Medication);
+            if (medication) medicationMap.set(id, medication);
+            imported++;
           } else if (kind === 'recipes') {
             const name = row.name || row.title;
             if (!name) continue;
@@ -666,6 +697,7 @@ export async function syncGitHubCsvSources(state: AppState, force = false): Prom
   next.foods = [...foodMap.values()].sort((a, b) => a.name.localeCompare(b.name));
   next.recipes = [...recipeMap.values()].sort((a, b) => a.name.localeCompare(b.name));
   next.activities = [...activityMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+  next.medications = [...medicationMap.values()].sort((a, b) => a.name.localeCompare(b.name));
   next.recipeItems = [...itemMap.values()];
   return { state: next, imported, message: imported ? `GitHub CSV sync imported ${imported} item(s).` : 'No GitHub CSV changes to import.' };
 }

@@ -174,9 +174,18 @@ Nutrino currently has no PHP package, so Rector and Pest are not installed here.
 Nutrino release automation is split by responsibility:
 
 ```text
+verzly/repository      -> shared repository policy, quality/release target validation
+verzly/rust-cache      -> project-local Rust, Tauri, and Gradle cache routing
 verzly/github-release  -> release branch, version bump, merge, tag, release, cleanup
 verzly/tauri-release   -> Android, iOS, Windows, macOS, Linux artifacts
 verzly/android-signing -> Android release keystore helper
+```
+
+Repository policy and shared cache paths are configured in:
+
+```text
+datarose.toml
+.cargo/config.toml
 ```
 
 Versioned files are configured in:
